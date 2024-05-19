@@ -105,6 +105,8 @@ class Visualizer {
             zOffset: 12,
             deltaZ: 5,
             foamLayers: 3,
+            extrudeFoamRate: 1,
+            extrudeFoamSpeed: 70,
             // useBoundsTree: true,
 
             // displayHelper: false,
@@ -233,6 +235,22 @@ class Visualizer {
                 this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: v, zOffset: this.selectParams.zOffset});
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
+        toolpathFolder.add(this.selectParams, 'extrudeFoamRate', 0, 5, 0.1)
+            .onChange(v => {
+                this.printer.extrusion_foam_rate = v;
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset});
+                this.#visualizeToolpath(this.toolpathZigzagPath);
+            });
+        toolpathFolder.add(this.selectParams, 'extrudeFoamSpeed', 0, 200, 1)
+            .onChange(v => {
+                this.printer.extrude_foam_speed = v;
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset});
+                this.#visualizeToolpath(this.toolpathZigzagPath);
+            });
+        
+        // save gcode
+        toolpathFolder.add({ saveBoundaryGcode: () => this.#saveGcodeToFile(this.printer.boundaryGcode, "boundary") }, 'saveBoundaryGcode').name('Save boundary G-Code');
+        toolpathFolder.add({ saveToolpathGcode: () => this.#saveGcodeToFile(this.printer.toolpathGcode, "toolpath") }, 'saveToolpathGcode').name('Save toolpath G-Code');
 
 
         this.gui.open();
@@ -247,6 +265,27 @@ class Visualizer {
         // this.animate();
         this.render();
     }
+
+    // save gcode to file 
+    #saveGcodeToFile(gcode, filename) {
+        // 创建一个 Blob 对象，其中包含 G-code 数据
+        const blob = new Blob([gcode], { type: 'text/plain' });
+    
+        // 创建一个链接并将其设置为指向 Blob
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = URL.createObjectURL(blob);
+        link.download = filename + '.gcode'; // 指定下载文件名
+    
+        // 添加链接到文档，触发点击，然后移除
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    
+        // 清理 Blob URL
+        URL.revokeObjectURL(link.href);
+    }
+    
 
     // add lights
     #addLights() {
@@ -1228,7 +1267,7 @@ class Visualizer {
         this.renderer.domElement.addEventListener('pointermove', e => {
             // console.log(e.metaKey);
             // If the left mouse button is not pressed
-            if ((1 & e.buttons) === 0 || !e.metaKey) {
+            if ((1 & e.buttons) === 0 || !e.altKey) {
                 return;
             }
 
@@ -1494,6 +1533,9 @@ class Printer {
         this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
         this.machine_depth = 302; // machine depth (x-axis and y-axis max length)
         this.machine_height = 402; // machine height (z-axis max length)
+        this.boundaryGcode = ""; // store the boundary gcode
+        this.toolpathGcode = ""; // store the toolpath gcode
+
         this.end_gcode = `
 ;SV04 end
 M107; turn off fan
@@ -1633,7 +1675,8 @@ M205 X16 Y16; set acceleration
         this.extrudedAmount = 0;
 
 
-        return this.#build_start_gcode(extruderId) + "\n\n" + body_gcode.join("\n") + "\n\n" + this.end_gcode;
+        this.boundaryGcode = this.#build_start_gcode(extruderId) + "\n\n" + body_gcode.join("\n") + "\n\n" + this.end_gcode;
+        return this.boundaryGcode;
     }
 
 
@@ -1668,7 +1711,8 @@ M205 X16 Y16; set acceleration
         body_gcode.push("G92 E0");
         this.extrudedAmount = 0;
 
-        return this.#build_start_gcode(extruderId) + "\n\n" + body_gcode.join("\n") + "\n\n" + this.end_gcode;
+        this.toolpathGcode = this.#build_start_gcode(extruderId) + "\n\n" + body_gcode.join("\n") + "\n\n" + this.end_gcode;
+        return this.toolpathGcode;
     }
 
     norm(p1, p0) {
