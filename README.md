@@ -4,10 +4,10 @@
 1. Drag & drop `stl` file into the interface. The app should load the model into the center of the print bed automatically. 
     - Click `Save boundary G-Code` to save the bottom rectangular boundary constraint print (1 layer, single-pass scan). This constraint is used as the reference area for manually placing the object to be augmented. Default setting uses right extruder (T1) to print the boundary constraint.
 
-!!! note
-    Now the web app only supports one model per upload.
-!!! warning
-    Potential bugs in the bottom boundary slice (e.g. 0.1mm) print generation: **to be fixed**.
+> [!NOTE]
+> Now the web app only supports one model per upload.
+> [!IMPORTANT]  
+> Potential bugs in the bottom boundary slice (e.g. 0.1mm) print generation: **to be fixed**.
 
 2. Hold `alt` (windows) or `option` (Mac) and draw with left cursor down to use lasso or rectangular selection to select part of the mesh. The specific parameters can be changed on the GUI menue. Hit `Save toolpath G-Code` button to download the gcode file for the foam printing toolpath. Default extruder is the left extruder (T0).
  - `selection` folder:
@@ -35,5 +35,4 @@
 
 
 > [!NOTE]
-> Now only supports one time selection: if unsatisfied with the current selection, needs to reselect again.
-> **To do**: add features like hold `shift` key to add mesh to selection; hold `control` key to remove mesh from selection. 
+> Now only supports one time selection: if unsatisfied with the current selection, needs to reselect again. **To do**: add features like hold `shift` key to add mesh to selection; hold `control` key to remove mesh from selection. 
