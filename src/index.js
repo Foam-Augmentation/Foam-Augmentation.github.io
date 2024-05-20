@@ -52,6 +52,7 @@ class Visualizer {
         this.xMax = this.printer.machine_depth;
         this.yMax = this.printer.machine_depth;
         this.zMax = this.printer.machine_height;
+        this.printBaseObjects = []; // store the printer base objects for visualization
 
         // translation of the stl mesh
         this.targetX = 0;
@@ -100,6 +101,8 @@ class Visualizer {
             bedTemp: 100,
             nozzleLeftTemp: 240,
             nozzleRightTemp: 260,
+            machineDepth: 302,
+            machineHeight: 402,
 
             // toolpath parameters
             zOffset: 12,
@@ -211,6 +214,21 @@ class Visualizer {
             .onChange(v => {
                 this.printer.print_temp_right_extruder = v;
             });
+        printerFolder.add(this.selectParams, 'machineDepth', 0, 1000, 1)
+            .onChange(v => {
+                this.printer.machine_depth = v;
+                this.xMax = v;
+                this.yMax = v;
+                this.#drawPrintBase();
+            });
+        printerFolder.add(this.selectParams, 'machineHeight', 0, 2000, 1)
+            .onChange(v => {
+                this.printer.machine_height = v;
+                this.zMax = v;
+                this.#drawPrintBase();
+            });
+        printerFolder.add({ customizeGcode: () => this.#customizeGcode() }, 'customizeGcode').name('Customize G-Code');
+        
 
 
         const toolpathFolder = this.gui.addFolder('foam toolpath');
@@ -218,36 +236,36 @@ class Visualizer {
             .onChange(v => {
                 console.log(v);
                 // this.#sampleSelectedMesh();
-                this.createZigzagPath({deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: v});
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: v });
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
         toolpathFolder.add(this.selectParams, 'deltaZ', 1, 20, 1)
             .onChange(v => {
                 console.log(v);
                 // this.#sampleSelectedMesh();
-                this.createZigzagPath({ deltaZ: v, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset});
+                this.createZigzagPath({ deltaZ: v, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset });
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
         toolpathFolder.add(this.selectParams, 'foamLayers', 1, 20, 1)
             .onChange(v => {
                 console.log(v);
                 // this.#sampleSelectedMesh();
-                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: v, zOffset: this.selectParams.zOffset});
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: v, zOffset: this.selectParams.zOffset });
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
         toolpathFolder.add(this.selectParams, 'extrudeFoamRate', 0, 5, 0.1)
             .onChange(v => {
                 this.printer.extrusion_foam_rate = v;
-                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset});
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset });
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
         toolpathFolder.add(this.selectParams, 'extrudeFoamSpeed', 0, 200, 1)
             .onChange(v => {
                 this.printer.extrude_foam_speed = v;
-                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset});
+                this.createZigzagPath({ deltaZ: this.selectParams.deltaZ, layerNum: this.selectParams.foamLayers, zOffset: this.selectParams.zOffset });
                 this.#visualizeToolpath(this.toolpathZigzagPath);
             });
-        
+
         // save gcode
         toolpathFolder.add({ saveBoundaryGcode: () => this.#saveGcodeToFile(this.printer.boundaryGcode, "boundary") }, 'saveBoundaryGcode').name('Save boundary G-Code');
         toolpathFolder.add({ saveToolpathGcode: () => this.#saveGcodeToFile(this.printer.toolpathGcode, "toolpath") }, 'saveToolpathGcode').name('Save toolpath G-Code');
@@ -270,22 +288,29 @@ class Visualizer {
     #saveGcodeToFile(gcode, filename) {
         // 创建一个 Blob 对象，其中包含 G-code 数据
         const blob = new Blob([gcode], { type: 'text/plain' });
-    
+
         // 创建一个链接并将其设置为指向 Blob
         const link = document.createElement('a');
         link.style.display = 'none';
         link.href = URL.createObjectURL(blob);
         link.download = filename + '.gcode'; // 指定下载文件名
-    
+
         // 添加链接到文档，触发点击，然后移除
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    
+
         // 清理 Blob URL
         URL.revokeObjectURL(link.href);
     }
-    
+
+    // customize gcode (start and end gcode)
+    #customizeGcode() {
+
+        
+    }
+
+
 
     // add lights
     #addLights() {
@@ -299,6 +324,15 @@ class Visualizer {
 
     // draw printer bounding box
     #drawPrintBase() {
+        // remove the previous printer base objects
+        this.printBaseObjects.forEach(obj => {
+            this.scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose(); // 如果对象包含几何体，释放资源
+            if (obj.material) obj.material.dispose(); // 如果对象包含材料，释放资源
+            if (obj.texture) obj.texture.dispose(); // 如果对象包含纹理，释放资源
+        });
+        this.printBaseObjects = []; // reset the printer base objects
+
         // printer bounding box
         const points = [
             new THREE.Vector3(0, 0, 0), // 0
@@ -354,20 +388,21 @@ class Visualizer {
 
         // add line to the scene
         this.scene.add(line);
+        this.printBaseObjects.push(line);
 
         // add origin point
         const originGeometry = new THREE.SphereGeometry(2);
         const originMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
         const originSphere = new THREE.Mesh(originGeometry, originMaterial);
         this.scene.add(originSphere);
+        this.printBaseObjects.push(originSphere);
 
         // Create an AxesHelper
         const axesHelper = new THREE.AxesHelper(50); // The parameter defines the length of each axis line
 
         // Add the AxesHelper to the scene
         this.scene.add(axesHelper);
-
-
+        this.printBaseObjects.push(axesHelper);
     }
 
     render = () => {
@@ -1613,7 +1648,7 @@ G92 E0
 G92 E0
 G1 F2400 E-0.5
 
-M106 S255; start fan
+;M106 S255; start fan
 M204 S500; set acceleration
 M205 X16 Y16; set acceleration
             `;

@@ -24,6 +24,8 @@
     - `bedTemp`: bed temperature.
     - `nozzleLeftTemp`: left extruder temperature.
     - `nozzleRightTemp`: right extruder temperature.
+    - `machineDepth`: the max width and length (in mm; assuming that the print bed is a square shape: width = length) of the print space.
+    - `machineHeight`: the max height (in mm) of the print space.
 - `foam toolpath` folder:
     - `zOffset`: the initial (first layer) distance (mm) between the nozzle and the print bed / object. 
     - `deltaZ`: the delta z distance between different layers of toolpath scan,
