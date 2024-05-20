@@ -34,7 +34,6 @@
     - `extrudeFoamSpeed`: nozzle foam print movement speed. Tuning this value will cause the extrusion speed change proportionally (according to the `extrudeFoamRate`). Faster `extrudeFoamSpeed` will lead to faster nozzle movement (less time for the extruded filament to cool down, which would be useful in the conductive TPU printing) and extrusion (might cause filament to get caught in the extruder, in which case might require a larger nozzle diameter).
 
 
-[!NOTE]
-    Now only supports one time selection: if unsatisfied with the current selection, needs to reselect again.
-    
-    **To do**: add features like hold `shift` key to add mesh to selection; hold `control` key to remove mesh from selection. 
+> [!NOTE]
+> Now only supports one time selection: if unsatisfied with the current selection, needs to reselect again.
+> **To do**: add features like hold `shift` key to add mesh to selection; hold `control` key to remove mesh from selection. 
