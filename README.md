@@ -6,6 +6,8 @@
 
 > [!NOTE]
 > Now the web app only supports one model per upload.
+
+
 > [!IMPORTANT]  
 > Potential bugs in the bottom boundary slice (e.g. 0.1mm) print generation: **to be fixed**.
 
