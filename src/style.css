@@ -1,0 +1,128 @@
+/* add tab space to 2nd folders */
+.lil-gui .children {
+    margin-left: 20px;
+    /* 或者使用 padding-left */
+}
+
+/* change position for the lil-gui to the left */
+.lil-gui.root {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+}
+
+
+
+.lil-gui .title.lil-gui-1st-title {
+    font-size: 16px;
+}
+
+.lil-gui .title.lil-gui-2nd-title {
+    font-size: 14px;
+}
+
+.lil-gui .title.lil-gui-3rd-title {
+    font-size: 12px;
+}
+
+.lil-gui.root {
+    width: 20vw;
+    min-width: 300px;
+}
+
+/* lil gui icon style */
+.lil-gui-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+}
+
+
+/* tooltip style */
+.tippy-box {
+    font-size: 12px;
+}
+
+/* model delete */
+.delete-icon {
+    width: 16px;
+    height: 16px;
+    vertical-align: middle;
+}
+
+/* selected model highlight in GUI */
+.foam-model-item.selectedModel {
+    /* background-color: #f0f8ff; */
+    /* 浅蓝色背景 */
+    border: 1px solid #2196F3 !important;
+    /* 蓝色边框 */
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+/* if has foam-model-item class but don't have selectedModel class */
+/* account for adding a 1px border */
+.foam-model-item:not(.selectedModel) {
+    padding: 3px 5px;
+}
+
+/* selected model highlight in GUI */
+.everyday-model-item.selectedModel {
+    /* background-color: #f0f8ff; */
+    /* 浅蓝色背景 */
+    border: 1px solid #2196F3 !important;
+    /* 蓝色边框 */
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+
+/* if has foam-model-item class but don't have selectedModel class */
+/* account for adding a 1px border */
+.everyday-model-item:not(.selectedModel) {
+    padding: 3px 5px;
+}
+
+
+/* transform panel style */
+.transform-inputs {
+    display: flex;
+}
+
+.transform-modes {
+    display: flex;
+}
+
+.transform-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+.model-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* set initial transform panel to non visible */
+.transform-panel {
+    display: none;
+}
+
+.controller-wrapper {
+    width: 100%;
+}
+
+.everyday-model-item > .title{
+    display: flex;
+    justify-content: space-between;
+}
+
+.foam-model-item > .title{
+    display: flex;
+    justify-content: space-between;
+}
+
+.transform-folder .name {
+    --name-width: 10%;
+}
