@@ -3,6 +3,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import Visualizer from '../Visualizer';
 import { refreshModelGUIList } from '../gui/refreshModelGUIList';
 import { FoamModel, EverydayModel, GUIItem } from '../types/modelTypes';
+import { MeshBVH } from 'three-mesh-bvh';
 
 /**
  * Imports an STL model file and integrates it with the Visualizer.
@@ -81,6 +82,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 };
                 visualizer.foamModelList.push(foamModelObj);
                 visualizer.uuid_to_modelObj_Map.set(mesh.uuid, foamModelObj);
+                foamModelObj.mesh.geometry.boundsTree = new MeshBVH(foamModelObj.geometry); // Add bounds tree for raycasting.
             } else {
                 const everydayModelObj: EverydayModel = {
                     name: file.name,
@@ -113,7 +115,9 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 };
                 visualizer.everydayModelList.push(everydayModelObj);
                 visualizer.uuid_to_modelObj_Map.set(mesh.uuid, everydayModelObj);
+                everydayModelObj.mesh.geometry.boundsTree = new MeshBVH(everydayModelObj.geometry); // Add bounds tree for raycasting.
             }
+
             // Add the mesh to the scene.
             visualizer.scene.add(mesh);
 

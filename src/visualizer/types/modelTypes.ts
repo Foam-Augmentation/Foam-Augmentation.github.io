@@ -92,9 +92,9 @@ interface ToolpathConfig {
  * EverydayModel: used for everyday objects. Extends BasicModel.
  */
 export interface EverydayModel extends BasicModel {
-    /** Mesh highlighting foam areas. */
+    /** Mesh highlighting foam areas, for visualization. */
     highlightFoamMesh?: THREE.Mesh;
-    /** Mesh highlighting sense areas. */
+    /** Mesh highlighting sense areas, for visualization. */
     highlightSenseMesh?: THREE.Mesh;
 
     pointsMesh?: THREE.Mesh;
@@ -106,10 +106,12 @@ export interface EverydayModel extends BasicModel {
     toolpathSamplePoints?: { point: THREE.Vector3, type: string }[];
     /** Group for Toolpath visualization. */
     toolpathVisualizationObject?: THREE.Group;
-    /** Selected Regular Foam Mesh Area. */
+    /** Selected Regular Foam Mesh Area, for intersection detection. */
     selectedRegularFoamMesh?: THREE.Mesh;
-    /** Selected Sense Foam Mesh Area. */
+    /** Selected Sense Foam Mesh Area, for intersection detection. */
     selectedSenseFoamMesh?: THREE.Mesh;
+    /** List of models for intersect detection (for sensing areas) */
+    sensingIntersectModelList?: THREE.Mesh[];
 
     /** Toolpath configurations */
     toolpathConfig: ToolpathConfig;

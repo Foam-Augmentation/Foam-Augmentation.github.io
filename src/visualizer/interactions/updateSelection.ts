@@ -264,6 +264,8 @@ export function updateSelection(
     } else {
         if (modelObj.highlightSenseMesh) {
             modelObj.selectedSenseFoamMesh = createSelectedMeshFromHighlight(modelObj.highlightSenseMesh);
+            // console.log('selectedSenseFoamMesh', modelObj.selectedSenseFoamMesh);
+            // console.log('highlightSenseMesh', modelObj.highlightSenseMesh);
         }
     }
 

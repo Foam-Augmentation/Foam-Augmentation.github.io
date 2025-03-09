@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { updateEscDiv } from './bottomTooltip';
 import { visualize_All_Layers, generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
+import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
 
 // Extend Object3D to include highlightFoamMesh and highlightSenseMesh properties
 declare module 'three' {
@@ -254,9 +255,45 @@ function addSelectedMeshFolder(
         }
     };
 
+    /**
+     * use intersection to select the sense mesh for the model.
+     *
+     * @param modelObj - The everyday model object.
+     */
+    const selectSenseMeshByIntersection = (modelObj: EverydayModel): void => {
+        if (!modelObj.mesh.geometry.boundsTree) {
+            modelObj.mesh.geometry.boundsTree = new MeshBVH(modelObj.geometry);
+        }
+        // visualizer.current_Obj = modelObj;
+        // visualizer.current_selection_type = 'sense';
+        if (!modelObj.highlightSenseMesh) {
+            modelObj.highlightSenseMesh = new THREE.Mesh();
+            modelObj.highlightSenseMesh.geometry = modelObj.mesh.geometry.clone();
+            modelObj.highlightSenseMesh.geometry.drawRange.count = 0;
+            modelObj.highlightSenseMesh.material = new THREE.MeshBasicMaterial({
+                opacity: 0.6,
+                transparent: true,
+                depthWrite: false,
+                wireframe: false,
+            });
+            (modelObj.highlightSenseMesh.material as THREE.MeshBasicMaterial)
+                .color.set(0x000000)
+                .convertSRGBToLinear();
+            modelObj.highlightSenseMesh.renderOrder = 1;
+            modelObj.highlightSenseMesh.position.copy(modelObj.mesh.position);
+            modelObj.highlightSenseMesh.rotation.copy(modelObj.mesh.rotation);
+            modelObj.highlightSenseMesh.scale.copy(modelObj.mesh.scale);
+            visualizer.scene.add(modelObj.highlightSenseMesh);
+        }
+
+        addSensingIntersectionGeo(modelObj, 'box', 20, visualizer) 
+    }
+
+
     const selectMeshBtn = {
         selectFoamMesh: () => selectFoamMesh(modelObj),
-        selectSenseMesh: () => selectSenseMesh(modelObj)
+        selectSenseMesh: () => selectSenseMesh(modelObj),
+        selectSenseMeshByIntersection: () => selectSenseMeshByIntersection(modelObj),
     };
 
     /** select regular foam mesh folder */
@@ -278,7 +315,7 @@ function addSelectedMeshFolder(
     });
 
     selectSenseMeshFolder.add(selectMeshBtn, 'selectSenseMesh').name('Select Sense Foam Area');
-    // selectSenseMeshFolder.add
+    selectSenseMeshFolder.add(selectMeshBtn, 'selectSenseMeshByIntersection').name('Add Sensing Intersection Cylinder');
 }
 
 /**
