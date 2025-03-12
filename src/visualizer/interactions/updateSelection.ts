@@ -217,28 +217,32 @@ export function updateSelection(
         }
     });
 
+    console.log('indices', indices);
+
     const indexAttr = modelObj.mesh.geometry.index;
     const newIndexAttr = (visualizer.current_selection_type === 'foam')
         ? modelObj.highlightFoamMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1)
         : modelObj.highlightSenseMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1);
-    if (indices.length && visualizer.config.selectModel) {
-        if (indexAttr) {
-            for (let i = 0, l = indexAttr.count; i < l; i++) {
-                const i2 = indexAttr.getX(i);
-                newIndexAttr.setX(i, i2);
-            }
-        }
-        if (visualizer.current_selection_type === 'foam') {
-            if (modelObj.highlightFoamMesh) {
-                modelObj.highlightFoamMesh.geometry.drawRange.count = Infinity;
-            }
-        } else {
-            if (modelObj.highlightSenseMesh) {
-                modelObj.highlightSenseMesh.geometry.drawRange.count = Infinity;
-            }
-        }
-        newIndexAttr.needsUpdate = true;
-    } else {
+    // if (indices.length && visualizer.config.selectModel) {
+    //     if (indexAttr) {
+    //         for (let i = 0, l = indexAttr.count; i < l; i++) {
+    //             const i2 = indexAttr.getX(i);
+    //             newIndexAttr.setX(i, i2);
+    //         }
+    //     }
+    //     if (visualizer.current_selection_type === 'foam') {
+    //         if (modelObj.highlightFoamMesh) {
+    //             modelObj.highlightFoamMesh.geometry.drawRange.count = Infinity;
+    //         }
+    //     } else {
+    //         if (modelObj.highlightSenseMesh) {
+    //             modelObj.highlightSenseMesh.geometry.drawRange.count = Infinity;
+    //         }
+    //     }
+    //     newIndexAttr.needsUpdate = true;
+    // } 
+    // else 
+    {
         for (let i = 0, l = indices.length; i < l; i++) {
             if (indexAttr) {
                 const i2 = indexAttr.getX(indices[i]);
