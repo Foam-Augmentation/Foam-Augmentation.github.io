@@ -16,6 +16,7 @@ import { createSelectedMeshFromHighlight } from './interactions/createSelectedMe
 import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer from '../printer/Printer';
+import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
@@ -102,6 +103,8 @@ export default class Visualizer {
     public foamModelListFolder: GUI;
     /** GUI folder for everyday model list */
     public everydayModelListFolder: GUI;
+
+    public saveFolder: GUI;
 
     /**
      * Creates an instance of Visualizer.
@@ -202,6 +205,8 @@ export default class Visualizer {
         this.gui = guiResult.gui;
         this.foamModelListFolder = guiResult.foamModelListFolder;
         this.everydayModelListFolder = guiResult.everydayModelListFolder;
+        //save folder for the gcode 
+        this.saveFolder = guiResult.saveFolder;
     }
 
     /**
@@ -254,5 +259,12 @@ export default class Visualizer {
 
         // Render the scene.
         this.renderer.render(this.scene, this.camera);
+    }
+
+    public saveToolpathGcodeToFile(): void {
+        const gcode = this.printer.toolpathGcode;
+        if (gcode) {
+            saveGcodeToFile(gcode, "toolpath"); // This will trigger the download
+        }
     }
 }

@@ -7,6 +7,9 @@ import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { getConvexHull, pointRayCrossesSegments, lineCrossesLine } from '../utils/geometryUtils';
 import { EverydayModel } from '../types/modelTypes';
+import  Printer  from '../../printer/Printer';
+import { saveGcodeToFile } from '../toolpath/saveGcodeToFile';
+
 
 /**
  * Updates the selection for a given model object based on the current lasso selection.
@@ -277,6 +280,16 @@ export function updateSelection(
     sampleSelectedMesh(visualizer, modelObj);
     console.log(modelObj);
     const toolpaths = generateFoamToolpath(visualizer, modelObj);
+    console.log("Generated Toolpaths:", toolpaths);
+    // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
+
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1);
+    console.log(gcode);
+    visualizer.printer.toolpathGcode = gcode;
+
+    //saveGcodeToFile(gcode, "toolpath");
+    
+
     return {
         all: toolpaths.all,
         foam: toolpaths.foam,

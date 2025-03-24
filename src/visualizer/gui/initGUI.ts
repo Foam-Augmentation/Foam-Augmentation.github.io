@@ -13,6 +13,7 @@ export interface InitGUIResult {
   gui: GUI;
   foamModelListFolder: GUI;        // Folder for foam models list.
   everydayModelListFolder: GUI;    // Folder for everyday models list.
+  saveFolder: GUI;
 }
 
 /**
@@ -26,10 +27,13 @@ export interface InitGUIResult {
  * @returns An object containing { gui, foamModelListFolder, everydayModelListFolder }.
  */
 export default function initGUI(visualizer: Visualizer): InitGUIResult {
+
+  console.log('initGUI function called');
   // Create a new GUI instance.
   const gui = new GUI();
   // Change the top-level GUI title.
   const titleElement = gui.domElement.querySelector('.title');
+  console.log('Title Element:', titleElement);
   if (titleElement) {
     titleElement.textContent = 'SMART FOAM SOFTWARE';
     titleElement.classList.add('lil-gui-1st-title');
@@ -80,7 +84,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     });
   }
   const everydayModelListFolder = everydayModelFolder.addFolder('everyday object model list');
-  everydayModelListFolder.add(importControls, 'importEverydayModel').name('Import Everyday STL Model');
+  everydayModelListFolder.add(importControls, 'importEverydayModel').name('Import Everyday STL Model!');
 
 
 
@@ -136,6 +140,12 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   // };
   // updateParamCalculation();
 
+  // adding a save folder for the save gcode for the toolpath output
+  const saveFolder = gui.addFolder('Saving');
+  saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');
+  saveFolder.close();
+  
+
   // Open the GUI.
   gui.open();
 
@@ -143,5 +153,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     gui,
     foamModelListFolder,
     everydayModelListFolder,
+    saveFolder
   };
 }
