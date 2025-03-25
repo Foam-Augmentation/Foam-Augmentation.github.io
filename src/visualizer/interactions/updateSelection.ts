@@ -67,7 +67,7 @@ export function updateSelection(
         line.end.x = sp[sNext];
         line.end.y = sp[sNext + 1];
     }
-
+    console.log("updateSelection called!");
     // Compute the camera's local position relative to the mesh.
     invWorldMatrix.copy(modelObj.mesh.matrixWorld).invert();
     camLocalPosition.set(0, 0, 0)
@@ -278,14 +278,20 @@ export function updateSelection(
 
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
-    console.log(modelObj);
+    console.log("modelob", modelObj);
     const toolpaths = generateFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
 
+    console.log("Calling generate_foam_gcode...");
+
+    console.log("Toolpaths before generating G-Code:", toolpaths.foam);
+   // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
+    //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
     const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1);
     console.log(gcode);
     visualizer.printer.toolpathGcode = gcode;
+    console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
 
     //saveGcodeToFile(gcode, "toolpath");
     

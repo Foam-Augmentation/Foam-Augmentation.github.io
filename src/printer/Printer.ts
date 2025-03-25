@@ -177,15 +177,46 @@ M205 X16 Y16; set jerk/acceleration
    * @param {number} printHead_speed_when_foam - The print head speed when extruding foam.
    * @returns {string} The G-code command for the extrusion segment.
    */
+
+  //OLD VERSION
+  // private extrude_single_segment(
+  //   p0: THREE.Vector3,
+  //   p1: THREE.Vector3,
+  //   extrusion_speed_when_foam: number,
+  //   printHead_speed_when_foam: number
+  // ): string {
+  //   console.log("📌 Extruding segment: ", { p0, p1 });
+
+  //   this.extrudedAmount += this.norm(p1, p0) * (extrusion_speed_when_foam / printHead_speed_when_foam);
+  //   console.log( `TESTING: G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`);
+  //   return `G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
+  // }
+
+  // NEW VERSION BECAUSE IT WAS GIVING ME AN ERROR THAT p0 WAS UNDEFINED SO INSTEAD
+  // ACCESSED THE POINT PROPERTY OF p0 AND p1 FOR THE RETURN 
   private extrude_single_segment(
-    p0: THREE.Vector3,
-    p1: THREE.Vector3,
+    p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
+    p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
     extrusion_speed_when_foam: number,
     printHead_speed_when_foam: number
   ): string {
-    this.extrudedAmount += this.norm(p1, p0) * (extrusion_speed_when_foam / printHead_speed_when_foam);
-    return `G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
+    // If p0 and p1 are objects with 'point' property, use the point. Otherwise, treat them as Vector3.
+    const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
+    const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
+  
+    console.log("📌 Extruding segment: ", { p0, p1 });
+  
+    this.extrudedAmount += this.norm(p1Point, p0Point) * (extrusion_speed_when_foam / printHead_speed_when_foam);
+    
+    console.log(
+      `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`
+    );
+  
+    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
   }
+  
+
+
 
   /**
    * Generates the base (boundary) G-code based on the bottom boundary of the model.
@@ -238,6 +269,7 @@ M205 X16 Y16; set jerk/acceleration
           this.printHead_speed_when_normal_print
         )
       );
+      
     }
 
     body_gcode.push("G92 E0");
@@ -311,6 +343,7 @@ M205 X16 Y16; set jerk/acceleration
       body_gcode.join("\n") +
       "\n\n" +
       this.end_gcode;
+    
     return this.toolpathGcode;
   }
 

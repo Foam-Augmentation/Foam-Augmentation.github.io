@@ -263,8 +263,11 @@ export default class Visualizer {
 
     public saveToolpathGcodeToFile(): void {
         const gcode = this.printer.toolpathGcode;
+        console.log("G-code content:", this.printer);
+        console.log("G-code content:", gcode);
+        console.log("saveToolpathGcodeToFile called");
         if (gcode) {
-            saveGcodeToFile(gcode, "toolpath"); // This will trigger the download
+            saveGcodeToFile(gcode, "toolpath"); 
         }
     }
 }
