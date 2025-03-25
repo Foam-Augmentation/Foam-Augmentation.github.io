@@ -304,9 +304,18 @@ M205 X16 Y16; set jerk/acceleration
 
     for (let i = 0; i < toolpath.length; i++) {
       if (i === 0) {
+        console.log("Toolpath element WITHOUT CAST:", toolpath[i][0]);
+        const toolpathElement = toolpath[i][0] as any;
+        console.log("Toolpath element WITH CAST:", toolpathElement);
+
+        console.log("x coord", toolpathElement.point?.x);
+        console.log("Toolpath element type:", typeof toolpath[i][0]);
+        console.log("Toolpath keys", Object.keys(toolpath[i][0]));
         body_gcode.push(
-          `G0 F2880 X${toolpath[i][0].x} Y${toolpath[i][0].y} Z${toolpath[i][0].z}; move to start point`
+          
+          `G0 F2880 X${toolpathElement.point?.x} Y${toolpathElement.point?.y} Z${toolpathElement.point?.z}; move to start point`
         );
+        
         body_gcode.push("M205 X8 Y8; tune down acceleration");
         body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
       } else {
