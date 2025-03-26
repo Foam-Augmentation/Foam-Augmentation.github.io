@@ -335,13 +335,13 @@ export function addParamsFolder_EverydayModel(
     const paramsFolder = modelGUIitem.addFolder('params');
     paramsFolder.domElement.classList.add('params-folder');
 
-    paramsFolder.add(modelObj.toolpathConfig, 'deltaZ', 0, 20, 0.1).name('Layer Thickness (deltaZ)').onChange(() => {
+    paramsFolder.add(modelObj.toolpathConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'zOffset', 0, 50, 1).name('Nozzle Z Offset').onChange(() => {
+    paramsFolder.add(modelObj.toolpathConfig, 'zOffset', 0, 50, 0.01).name('Nozzle Z Offset').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 1, 20, 1).name('Grid Size').onChange(() => {
+    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 1, 100, 0.01).name('Grid Size').onChange(() => {
         sampleSelectedMesh(visualizer, modelObj);
         generateFoamToolpath(visualizer, modelObj);
     });

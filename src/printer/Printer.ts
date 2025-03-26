@@ -48,16 +48,16 @@ export default class Printer {
   constructor() {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
-    this.dieSwelling = 1.1; // die swelling factor
-    this.extrusion_speed_when_foam = 70; // foam extrusion speed (mm/min)
+    this.dieSwelling = 0.94; // die swelling factor
+    this.extrusion_speed_when_foam = 35; // foam extrusion speed (mm/min)
     this.extrusion_foam_interlayer_rate = 0.2; // foam interlayer extrusion rate (0.07mm per 1mm move)
     this.extrusion_norm_rate = 0.07; // normal extrusion rate
     this.printHead_speed_when_free_move = 1000; // free move speed
-    this.printHead_speed_when_foam = 70; // print head speed when extruding foam
+    this.printHead_speed_when_foam = 5.25; // print head speed when extruding foam
     this.printHead_speed_when_interlayer_move = 200; // interlayer move speed for foam
     this.printHead_speed_when_normal_print = 800; // normal printing extrusion speed
-    this.material_bed_temperature = 110; // bed temperature
-    this.print_temp_left_extruder = 240; // left extruder temperature (TPU)
+    this.material_bed_temperature = 60; // bed temperature
+    this.print_temp_left_extruder = 230; // left extruder temperature (TPU)
     this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
     this.machine_depth = 302; // machine depth (max x/y)
     this.machine_height = 402; // machine height (max z)
@@ -121,6 +121,8 @@ G1 F2400 E-0.5
 ; M106 S255; start fan (if needed)
 M204 S500; set acceleration
 M205 X16 Y16; set jerk/acceleration
+
+M221 S92 ; Set flow percentage
       `;
     } else {
       return `
@@ -152,6 +154,8 @@ G1 F2400 E-0.5
 ;M106 S255; start fan (if needed)
 M204 S500; set acceleration
 M205 X16 Y16; set jerk/acceleration
+
+M221 S92 ; Set flow percentage
       `;
     }
   }
