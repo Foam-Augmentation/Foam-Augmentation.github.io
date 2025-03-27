@@ -62,7 +62,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
             // Position the mesh at the center of the printer's bed.
             mesh.position.set(
                 visualizer.printer.machine_depth / 2,
-                visualizer.printer.machine_depth / 2,
+                visualizer.printer.machine_depth_y / 2,
                 zOffset
             );
 

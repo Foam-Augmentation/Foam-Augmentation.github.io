@@ -39,7 +39,7 @@ export default function initScene(
   printBaseObjects = [];
 
   const xMax = printer.machine_depth;
-  const yMax = printer.machine_depth;
+  const yMax = printer.machine_depth_y;
   const zMax = printer.machine_height;
 
   // Draw the printer base

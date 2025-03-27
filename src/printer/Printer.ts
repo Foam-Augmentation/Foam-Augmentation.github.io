@@ -33,6 +33,7 @@ export default class Printer {
   public print_temp_right_extruder: number;
   /** Machine depth (maximum x/y axis length) */
   public machine_depth: number;
+  public machine_depth_y: number;
   /** Machine height (maximum z axis length) */
   public machine_height: number;
   /** Stores the generated boundary G-code */
@@ -59,8 +60,9 @@ export default class Printer {
     this.material_bed_temperature = 60; // bed temperature
     this.print_temp_left_extruder = 230; // left extruder temperature (TPU)
     this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
-    this.machine_depth = 302; // machine depth (max x/y)
-    this.machine_height = 402; // machine height (max z)
+    this.machine_depth = 250; // machine depth (max x)
+    this.machine_depth_y = 210; // machine y axis length
+    this.machine_height = 210; // machine height (max z)
     this.boundaryGcode = ""; // initialize boundary G-code
     this.toolpathGcode = ""; // initialize toolpath G-code
 
@@ -73,7 +75,7 @@ G1 E-2 Z0.2 F2400 ;Retract and raise Z
 G1 X0 Y240 F3000 ;Wipe out
 G1 Z10 ;Raise Z more
 G90 ;Absolute positioning
-G1 X0 Y${this.machine_depth} ;Present print
+G1 X0 Y${this.machine_depth_y} ;Present print
 M106 S0 ;Turn-off fan
 M104 S0 ;Turn-off hotend
 M140 S0 ;Turn-off bed
