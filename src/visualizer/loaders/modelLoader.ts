@@ -95,7 +95,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                     toolpathConfig: {
                         deltaZ: 1.7,
                         zOffset: 3.38,
-                        gridSize: 10,
+                        gridSize: 3.5,
                         dieSwell: 0.94,
                         initialFoamLayerCount: 3,
                         middleSenseLayerCount: 1,
