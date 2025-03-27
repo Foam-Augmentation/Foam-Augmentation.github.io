@@ -50,11 +50,11 @@ export default class Printer {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
     this.dieSwelling = 0.94; // die swelling factor
-    this.extrusion_speed_when_foam = 35; // foam extrusion speed (mm/min)
+    this.extrusion_speed_when_foam = 758.17; // foam extrusion speed (mm/min)
     this.extrusion_foam_interlayer_rate = 0.2; // foam interlayer extrusion rate (0.07mm per 1mm move)
     this.extrusion_norm_rate = 0.07; // normal extrusion rate
     this.printHead_speed_when_free_move = 1000; // free move speed
-    this.printHead_speed_when_foam = 5.25; // print head speed when extruding foam
+    this.printHead_speed_when_foam = 113.7; // print head speed when extruding foam
     this.printHead_speed_when_interlayer_move = 200; // interlayer move speed for foam
     this.printHead_speed_when_normal_print = 800; // normal printing extrusion speed
     this.material_bed_temperature = 60; // bed temperature
@@ -80,7 +80,7 @@ M106 S0 ;Turn-off fan
 M104 S0 ;Turn-off hotend
 M140 S0 ;Turn-off bed
 M84 X Y E ;Disable all steppers except Z
-M82 ;Set absolute extrusion mode
+M83 ;Set relative extrusion mode
         `;
   }
 
@@ -97,7 +97,7 @@ M82 ;Set absolute extrusion mode
       return `
 ;Generated with Cura_SteamEngine 5.4.0
 T0; left extruder
-M82 ;Set absolute extrusion mode
+M83 ;Set relative extrusion mode
 ;SV04 start
 M140 S${this.material_bed_temperature}; set bed temperature and heat
 M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
@@ -130,7 +130,7 @@ M221 S92 ; Set flow percentage
       return `
 ;Generated with Cura_SteamEngine 5.4.0
 T1; right extruder
-M82 ;Set absolute extrusion mode
+M83 ;Set relative extrusion mode
 ;SV04 start
 M140 S${this.material_bed_temperature}; set bed temperature and heat
 M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
@@ -212,13 +212,13 @@ M221 S92 ; Set flow percentage
   
     console.log("📌 Extruding segment: ", { p0, p1 });
   
-    this.extrudedAmount += this.norm(p1Point, p0Point) * (extrusion_speed_when_foam / printHead_speed_when_foam);
+    this.extrudedAmount = this.norm(p1Point, p0Point) * (extrusion_speed_when_foam / printHead_speed_when_foam);
     
     console.log(
       `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`
     );
   
-    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
+    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(printHead_speed_when_foam)}`;
   }
   
 
@@ -329,8 +329,8 @@ M221 S92 ; Set flow percentage
           this.extrude_single_segment(
             lastTarget,
             toolpath[i][0],
-            this.extrusion_foam_interlayer_rate,
-            this.printHead_speed_when_interlayer_move
+            this.extrusion_speed_when_foam,
+            this.printHead_speed_when_foam
           )
         );
       }
