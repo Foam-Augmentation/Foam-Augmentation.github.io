@@ -206,19 +206,34 @@ M221 S92 ; Set flow percentage
     extrusion_speed_when_foam: number,
     printHead_speed_when_foam: number
   ): string {
+
+    // Adding in the feedrate multiplier
+    const diameter_filament = 1.75;
+    const diameter_nozzle = 0.4;
+    const alpha = 1;
+    const V_star = 0.15;
+    
+    const beta = (Math.PI / 4) * Math.pow(diameter_filament, 2);
+    const gamma = (Math.PI / 4) * Math.pow(alpha * diameter_nozzle, 2);
+    
+    const S = gamma / (beta * V_star); // Feedrate multiplier (M221 = Feedrate percentage = S = Sm * 100), Assuming E = L
+    const Edot = 35;
+    const F = Edot / S;
+    
     // If p0 and p1 are objects with 'point' property, use the point. Otherwise, treat them as Vector3.
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
     const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
   
     console.log("📌 Extruding segment: ", { p0, p1 });
   
-    this.extrudedAmount = this.norm(p1Point, p0Point) * (extrusion_speed_when_foam / printHead_speed_when_foam);
+    // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
+    this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
     
     console.log(
-      `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`
+      `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${F}`
     );
   
-    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(printHead_speed_when_foam)}`;
+    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
   }
   
 
