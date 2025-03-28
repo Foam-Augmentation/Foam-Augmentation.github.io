@@ -279,6 +279,7 @@ export function updateSelection(
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);
+    console.log("vis", visualizer);
     const toolpaths = generateFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong

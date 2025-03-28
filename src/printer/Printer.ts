@@ -258,6 +258,9 @@ M221 S${this.extrusion_m} ; Set flow percentage
 
     // originally had p1Point.z added
     let Znew = H + (this.deltaZ * ZlayerIndex) + this.ZOffset;
+    console.log("Z index", ZlayerIndex)
+    console.log("Z new", Znew)
+    console.log("old z", p1Point.z.toFixed(4))
 
     console.log("📌 Extruding segment: ", { p0, p1 });
 
@@ -362,6 +365,7 @@ M221 S${this.extrusion_m} ; Set flow percentage
     this.extrudedAmount = 0;
 
 
+    console.log("Total layers:", toolpath.length);
 
     for (let i = 0; i < toolpath.length; i++) {
       let layerIndex = i
@@ -400,9 +404,10 @@ M221 S${this.extrusion_m} ; Set flow percentage
             toolpath[i][j],
             this.extrusion_speed_when_foam,
             this.printHead_speed_when_foam,
-            layerIndex
+            i
           )
         );
+        console.log("current i", i);
         lastTarget = toolpath[i][j];
       }
     }

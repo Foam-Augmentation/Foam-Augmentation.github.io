@@ -224,6 +224,8 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
         }
     } else {
@@ -234,6 +236,8 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             for (let i = 0; i < modelObj.toolpathConfig.middleSenseLayerCount; i++) {
                 const toolpathSense = _visualizeSegments(modelObj.sense_area_segments, 'sensing', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
@@ -241,11 +245,15 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 if (toolpathSense) visualizationGroup.add(toolpathSense);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             for (let i = 0; i < modelObj.toolpathConfig.finalFoamLayerCount; i++) {
                 const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             // const toolpathAll = visualizeSegments(modelObj.all_area_segments, 0xff00ff, 10);
             // const toolpathFoam = visualizeSegments(modelObj.regular_area_segments, 0x00ff00, 20);
@@ -292,7 +300,14 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
  *                   - foamToolpathLine: (optional) previous toolpath visualization.
  * @returns An object with properties 'all', 'foam', and 'sense' containing the generated segments.
  */
-export function generateFoamToolpath(visualizer: Visualizer, modelObj: EverydayModel): { all: any, foam: any, sense: any } {
+// 
+export function generateFoamToolpath(
+    visualizer: Visualizer,
+    modelObj: EverydayModel,
+    zOffset: number = 12,
+    deltaZ: number = 5,
+    layerNum: number = 3
+): { all: any; foam: any; sense: any } {
     // --- 1. Remove the previous foam toolpath visualization, if it exists.
     if (modelObj.toolpathVisualizationObject) {
         visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -301,62 +316,119 @@ export function generateFoamToolpath(visualizer: Visualizer, modelObj: EverydayM
             if (child.material) child.material.dispose();
         });
     }
+
     // --- 2. Check if there are sample points available.
     if (!modelObj.toolpathSamplePoints || modelObj.toolpathSamplePoints.length === 0) {
         console.warn("No sample points available. Cannot generate toolpath.");
         return { all: null, foam: null, sense: null };
     }
 
-    // --- 3. Define offsets for toolpath visualization.
-    const offsets = {
-        all: 10,
-        foam: 20,
-        sense: 30
-    };
+    // --- 3. Generate Zigzag Path
+    const toolpathZigzagPath: THREE.Vector3[][] = [];
+    let currentLayer = 1;
 
-    // --- 5. Generate three sets of toolpath segments.
-    const allPoints = modelObj.toolpathSamplePoints;  // All sample points.
-    const foamPoints = modelObj.toolpathSamplePoints.filter((item: any) => item.type === 'foam');
-    const sensePoints = modelObj.toolpathSamplePoints.filter((item: any) => item.type === 'sense');
+    while (currentLayer <= layerNum) {
+        const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
+        let tempPoints: THREE.Vector3[] = [];
+        let yDirection = 1;
+        let xDirection = 1;
+        let currentX: number | undefined, currentY: number | undefined;
 
-    const all_area_segments = _generatePath(allPoints, modelObj);
-    const regular_area_segments = _generatePath(foamPoints, modelObj);
-    const sense_area_segments = _generatePath(sensePoints, modelObj);
+        toolpathZigzagPath.push([]); // Add a new layer
 
-    // save the generated segments to the model object
-    modelObj.all_area_segments = all_area_segments;
-    modelObj.regular_area_segments = regular_area_segments;
-    modelObj.sense_area_segments = sense_area_segments;
+        if (scanDirection === 'x') {
+            // X-direction scan
+            modelObj.toolpathSamplePoints.sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y);
+            currentX = modelObj.toolpathSamplePoints[0].point.x;
 
-    // --- 6. Visualize the segments.
-    visualize_All_Layers(visualizer, modelObj);
-    // let visualizationGroup: THREE.Group | undefined;
-    // if (modelObj.toolpathSamplePoints.every((item: any) => item.type === 'foam')) {
-    //     visualizationGroup = visualizeSegments(regular_area_segments, 0x00ff00, offsets.foam) as THREE.Group;
-    // } else {
-    //     const toolpathAll = visualizeSegments(all_area_segments, 0xff00ff, offsets.all);
-    //     const toolpathFoam = visualizeSegments(regular_area_segments, 0x00ff00, offsets.foam);
-    //     const toolpathSense = visualizeSegments(sense_area_segments, 0x0000ff, offsets.sense);
-    //     visualizationGroup = new THREE.Group() as THREE.Group;
-    //     if (toolpathAll) visualizationGroup.add(toolpathAll);
-    //     if (toolpathFoam) visualizationGroup.add(toolpathFoam);
-    //     if (toolpathSense) visualizationGroup.add(toolpathSense);
-    // }
-    // // Position the parent group at the model's mesh position.
-    // if (visualizationGroup) {
-    //     if (modelObj.mesh && modelObj.mesh.position) {
-    //         visualizationGroup.position.copy(modelObj.mesh.position);
-    //     }
-    //     // Add the toolpath visualization to the scene.
-    //     visualizer.scene.add(visualizationGroup);
-    //     // Save the generated toolpath visualization to the model object.
-    //     modelObj.toolpathVisualizationObject = visualizationGroup as THREE.Group;
-    // }
-    // modelObj.toolpathVisualizationObject = visualizationGroup as THREE.Group | undefined;
+            modelObj.toolpathSamplePoints.forEach(point => {
+                if (point.point.x === currentX) {
+                    tempPoints.push(
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    );
+                } else {
+                    tempPoints.sort((a, b) => (yDirection > 0 ? a.y - b.y : b.y - a.y));
+                    toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+                    currentX = point.point.x;
+                    tempPoints = [
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    ];
+                    yDirection = -yDirection;
+                }
+            });
+        } else {
+            // Y-direction scan
+            modelObj.toolpathSamplePoints.sort((a, b) => a.point.y - b.point.y || a.point.x - b.point.x);
+            currentY = modelObj.toolpathSamplePoints[0].point.y;
+
+            modelObj.toolpathSamplePoints.forEach(point => {
+                if (point.point.y === currentY) {
+                    tempPoints.push(
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    );
+                } else {
+                    tempPoints.sort((a, b) => (xDirection > 0 ? a.x - b.x : b.x - a.x));
+                    toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+                    currentY = point.point.y;
+                    tempPoints = [
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    ];
+                    xDirection = -xDirection;
+                }
+            });
+        }
+        // Add remaining points to the path
+        if (tempPoints.length > 0) {
+            tempPoints.sort((a, b) =>
+                scanDirection === 'x' ? (yDirection > 0 ? a.y - b.y : b.y - a.y) : (xDirection > 0 ? a.x - b.x : b.x - a.x)
+            );
+            toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+        }
+
+        currentLayer++;
+    }
+
+    console.log("Generated Zigzag Toolpath:", toolpathZigzagPath);
+
+    // --- 4. Visualize the Zigzag Path
+    const visualizationGroup = new THREE.Group();
+    toolpathZigzagPath.forEach((layer, layerIndex) => {
+        const vertices: number[] = [];
+        layer.forEach(point => {
+            vertices.push(point.x, point.y, point.z);
+        });
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        const material = new THREE.LineBasicMaterial({ color: 0x0075ff });
+        const line = new THREE.Line(geometry, material);
+        visualizationGroup.add(line);
+    });
+
+    // Add the visualization to the scene
+    visualizationGroup.position.copy(modelObj.mesh.position);
+    visualizer.scene.add(visualizationGroup);
+    modelObj.toolpathVisualizationObject = visualizationGroup;
 
     return {
-        all: all_area_segments,
-        foam: regular_area_segments,
-        sense: sense_area_segments
+        all: toolpathZigzagPath,
+        foam: toolpathZigzagPath, // Assuming foam points are the same as the zigzag path
+        sense: [] // No sense points in this implementation
     };
 }
