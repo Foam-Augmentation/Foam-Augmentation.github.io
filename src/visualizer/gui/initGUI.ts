@@ -132,6 +132,11 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       visualizer.printer.machine_height = v;
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
+    printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.1)
+    .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
+
+
+  
   printerFolder.close();
   // Update parameter calculation.
   // const updateParamCalculation = () => {
@@ -141,6 +146,52 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   // updateParamCalculation();
 
   // adding a save folder for the save gcode for the toolpath output
+
+  const paramsFolder = settingFolder.addFolder('parameters');
+  paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
+    .onChange((v: number) => {
+      visualizer.printer.V_Star = v;
+      visualizer.config.VStar = v;
+    });
+  paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
+    .onChange((v: number) => {
+      visualizer.printer.Edot = v;
+      visualizer.config.Edot = v;
+  });
+  paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
+  .onChange((v: number) => {
+    visualizer.printer.diameter_filament = v;
+    visualizer.config.diameter_filament = v;
+});
+
+paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.ZOffset = v;
+  visualizer.config.zOffset = v;
+});
+
+paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.deltaZ = v;
+  visualizer.config.deltaZ = v;
+});
+// layer height
+// H Star
+// Z Offset
+
+paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.extrusion_m = v;
+  visualizer.config.extrusion_m = v;
+});
+
+paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.H_star = v;
+  visualizer.config.HStar = v;
+});
+
+  
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');
   saveFolder.close();

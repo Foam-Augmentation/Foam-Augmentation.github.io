@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import Visualizer from '../visualizer/Visualizer';
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -33,6 +34,7 @@ export default class Printer {
   public print_temp_right_extruder: number;
   /** Machine depth (maximum x/y axis length) */
   public machine_depth: number;
+  // Machine depth (maximum y axis lenght)
   public machine_depth_y: number;
   /** Machine height (maximum z axis length) */
   public machine_height: number;
@@ -42,6 +44,19 @@ export default class Printer {
   public toolpathGcode: string;
   /** End G-code string */
   public end_gcode: string;
+
+  public diameter_filament: number;
+
+  public V_Star: number;
+
+  public Edot: number;
+
+  public extrusion_m: number;
+
+  public deltaZ: number; // deltaZ (thickness of a single foam layer)
+
+  public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
+  public H_star: number; // H_star (height of the foam layer)
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -65,7 +80,13 @@ export default class Printer {
     this.machine_height = 210; // machine height (max z)
     this.boundaryGcode = ""; // initialize boundary G-code
     this.toolpathGcode = ""; // initialize toolpath G-code
-
+    this.diameter_filament = 1.75;
+    this.V_Star = 0.15;
+    this.Edot = 35;
+    this.extrusion_m = 0.92,
+    this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
+    this.ZOffset = 3.38
+    this.H_star = 6.0
     this.end_gcode = `
 ;SV04 end
 M107; turn off fan
@@ -124,7 +145,7 @@ G1 F2400 E-0.5
 M204 S500; set acceleration
 M205 X16 Y16; set jerk/acceleration
 
-M221 S92 ; Set flow percentage
+M221 S${this.extrusion_m} ; Set flow percentage
       `;
     } else {
       return `
@@ -157,7 +178,7 @@ G1 F2400 E-0.5
 M204 S500; set acceleration
 M205 X16 Y16; set jerk/acceleration
 
-M221 S92 ; Set flow percentage
+M221 S${this.extrusion_m} ; Set flow percentage
       `;
     }
   }
@@ -204,38 +225,52 @@ M221 S92 ; Set flow percentage
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
     extrusion_speed_when_foam: number,
-    printHead_speed_when_foam: number
+    printHead_speed_when_foam: number,
+    ZlayerIndex: number
   ): string {
 
     // Adding in the feedrate multiplier
-    const diameter_filament = 1.75;
-    const diameter_nozzle = 0.4;
-    const alpha = 1;
-    const V_star = 0.15;
+    // const diameter_filament = 1.75;
+    // const diameter_nozzle = 0.4;
+    // const alpha = 1;
+    // const V_star = 0.15;
+
+    // const beta = (Math.PI / 4) * Math.pow(diameter_filament, 2);
+    //const gamma = (Math.PI / 4) * Math.pow(alpha * diameter_nozzle, 2);
+    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
+    const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
+
+    const S = gamma / (beta * this.V_Star); // Feedrate multiplier (M221 = Feedrate percentage = S = Sm * 100), Assuming E = L
+    //const Edot = 35;
+    const F = this.Edot / S;
     
-    const beta = (Math.PI / 4) * Math.pow(diameter_filament, 2);
-    const gamma = (Math.PI / 4) * Math.pow(alpha * diameter_nozzle, 2);
-    
-    const S = gamma / (beta * V_star); // Feedrate multiplier (M221 = Feedrate percentage = S = Sm * 100), Assuming E = L
-    const Edot = 35;
-    const F = Edot / S;
-    
+  
+    //layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0)
     // If p0 and p1 are objects with 'point' property, use the point. Otherwise, treat them as Vector3.
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
     const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
-  
+
+
+    // From Jupyer notebook, line 85  return point_end[0], point_end[1], H, E, S, C, F, f'V* = {V_star} (S = {S:.2f}) H* = {H_star}' #NEW E, S,
+    // H was then used in  X,Y,Z,E,S,C,F,Comment = VEHF(V_star, H_star, Edot, α, diameter_nozzle, diameter_filament, point_start, point_end)
+    // Z = Z + (increment_z * layer_number) + Z_offset
+    let H = this.H_star*this.dieSwelling*this.nozzleDiameter
+
+    // originally had p1Point.z added
+    let Znew = H + (this.deltaZ * ZlayerIndex) + this.ZOffset;
+
     console.log("📌 Extruding segment: ", { p0, p1 });
-  
+
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
     this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
-    
+
     console.log(
       `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${F}`
     );
-  
-    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
+    // before Z was p1Point.z.toFixed(4)
+    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
   }
-  
+
 
 
 
@@ -281,16 +316,19 @@ M221 S92 ; Set flow percentage
     body_gcode.push("M205 X8 Y8; tune down acceleration");
     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
 
+   
+
     for (let i = 0; i < corners.length - 1; i++) {
       body_gcode.push(
         this.extrude_single_segment(
           corners[i],
           corners[i + 1],
           this.extrusion_norm_rate,
-          this.printHead_speed_when_normal_print
+          this.printHead_speed_when_normal_print,
+          0
         )
       );
-      
+
     }
 
     body_gcode.push("G92 E0");
@@ -323,7 +361,10 @@ M221 S92 ; Set flow percentage
     let lastTarget: THREE.Vector3 = toolpath[0][0];
     this.extrudedAmount = 0;
 
+
+
     for (let i = 0; i < toolpath.length; i++) {
+      let layerIndex = i
       if (i === 0) {
         console.log("Toolpath element WITHOUT CAST:", toolpath[i][0]);
         const toolpathElement = toolpath[i][0] as any;
@@ -333,10 +374,10 @@ M221 S92 ; Set flow percentage
         console.log("Toolpath element type:", typeof toolpath[i][0]);
         console.log("Toolpath keys", Object.keys(toolpath[i][0]));
         body_gcode.push(
-          
+
           `G0 F2880 X${toolpathElement.point?.x} Y${toolpathElement.point?.y} Z${toolpathElement.point?.z}; move to start point`
         );
-        
+
         body_gcode.push("M205 X8 Y8; tune down acceleration");
         body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
       } else {
@@ -345,7 +386,8 @@ M221 S92 ; Set flow percentage
             lastTarget,
             toolpath[i][0],
             this.extrusion_speed_when_foam,
-            this.printHead_speed_when_foam
+            this.printHead_speed_when_foam,
+            layerIndex
           )
         );
       }
@@ -357,7 +399,8 @@ M221 S92 ; Set flow percentage
             lastTarget,
             toolpath[i][j],
             this.extrusion_speed_when_foam,
-            this.printHead_speed_when_foam
+            this.printHead_speed_when_foam,
+            layerIndex
           )
         );
         lastTarget = toolpath[i][j];
@@ -373,7 +416,7 @@ M221 S92 ; Set flow percentage
       body_gcode.join("\n") +
       "\n\n" +
       this.end_gcode;
-    
+
     return this.toolpathGcode;
   }
 

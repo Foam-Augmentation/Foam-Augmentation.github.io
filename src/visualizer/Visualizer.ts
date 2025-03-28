@@ -79,6 +79,9 @@ export default class Visualizer {
         dieSwelling: number;
         VStar: number;
         HStar: number;
+        Edot: number;
+        diameter_filament: number;
+        extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
     };
 
     /**
@@ -166,6 +169,9 @@ export default class Visualizer {
             dieSwelling: 0.94,
             VStar: 0.15,
             HStar: 9,
+            Edot: 35,
+            diameter_filament: 1.75,
+            extrusion_m: 0.92,
         };
 
         // Initialize lasso selection state.
