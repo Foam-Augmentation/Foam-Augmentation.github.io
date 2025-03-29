@@ -72,6 +72,7 @@ export default class Visualizer {
         machineHeight: number;
         zOffset: number;
         deltaZ: number;
+        //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
         foamLayers: number;
         extrusion_speed_when_foam: number;
         printHead_speed_when_foam: number;
@@ -82,6 +83,7 @@ export default class Visualizer {
         Edot: number;
         diameter_filament: number;
         extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
+        height: number;
     };
 
     /**
@@ -108,6 +110,8 @@ export default class Visualizer {
     public everydayModelListFolder: GUI;
 
     public saveFolder: GUI;
+
+
 
     /**
      * Creates an instance of Visualizer.
@@ -146,6 +150,7 @@ export default class Visualizer {
         this.toolpathVisualize = null;
 
         // Set configuration parameters.
+      
         this.config = {
             toolMode: 'lasso',
             selectionMode: 'centroid-visible',
@@ -162,6 +167,8 @@ export default class Visualizer {
             machineHeight: 402,
             zOffset: 3.38,
             deltaZ: 1.7,
+            height: 20,
+            // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
             foamLayers: 3,
             extrusion_speed_when_foam: 758.17,
             printHead_speed_when_foam: 113.7,
@@ -172,6 +179,7 @@ export default class Visualizer {
             Edot: 35,
             diameter_filament: 1.75,
             extrusion_m: 0.92,
+            
         };
 
         // Initialize lasso selection state.

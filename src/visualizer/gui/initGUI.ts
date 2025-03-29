@@ -191,6 +191,15 @@ paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
   visualizer.config.HStar = v;
 });
 
+paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.config.height = v;
+  visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
+});
+  //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
+
+
+
   
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');

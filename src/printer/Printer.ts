@@ -87,22 +87,34 @@ export default class Printer {
     this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
-    this.end_gcode = `
-;SV04 end
-M107; turn off fan
-G91 ;Relative positioning
-G1 E-2 F2700 ;Retract a bit
-G1 E-2 Z0.2 F2400 ;Retract and raise Z
-G1 X0 Y240 F3000 ;Wipe out
-G1 Z10 ;Raise Z more
-G90 ;Absolute positioning
-G1 X0 Y${this.machine_depth_y} ;Present print
-M106 S0 ;Turn-off fan
-M104 S0 ;Turn-off hotend
-M140 S0 ;Turn-off bed
-M84 X Y E ;Disable all steppers except Z
-M83 ;Set relative extrusion mode
-        `;
+//     this.end_gcode = `
+// ;SV04 end
+// M107; turn off fan
+// G91 ;Relative positioning
+// G1 E-2 F2700 ;Retract a bit
+// G1 E-2 Z0.2 F2400 ;Retract and raise Z
+// G1 X0 Y240 F3000 ;Wipe out
+// G1 Z10 ;Raise Z more
+// G90 ;Absolute positioning
+// G1 X0 Y${this.machine_depth_y} ;Present print
+// M106 S0 ;Turn-off fan
+// M104 S0 ;Turn-off hotend
+// M140 S0 ;Turn-off bed
+// M84 X Y E ;Disable all steppers except Z
+// M83 ;Set relative extrusion mode
+//         `;
+this.end_gcode = `
+G1 F10800.000 
+G4 S20; Dwell for 20 Second(s) 
+M104 S0 ; turn off temperature 
+M140 S0 ; turn off heatbed 
+M107 ; turn off fan 
+G1 Z042.08 F5000 ; Move print head up 
+M73 P91 R0 
+G1 X0 Y190 F3000 ; home 
+M900 K0 ; reset LA 
+M84 ; disable motors 
+M73 P100 R0 `
   }
 
   /**
@@ -115,70 +127,138 @@ M83 ;Set relative extrusion mode
   private build_start_gcode(extruderId: number): string {
     if (extruderId === 1) {
       // Left extruder (TPU)
-      return `
-;Generated with Cura_SteamEngine 5.4.0
-T0; left extruder
-M83 ;Set relative extrusion mode
-;SV04 start
-M140 S${this.material_bed_temperature}; set bed temperature and heat
-M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
-M280 P0 S160;
-G4 P100; pause 100ms
-G28; home x, y, z
-M420 S1; enable bed leveling
-M190 S${this.material_bed_temperature}; wait for bed temperature
-M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
-G92 E0; reset extrusion count
+//       return `
+// ;Generated with Cura_SteamEngine 5.4.0
+// T0; left extruder
+// M83 ;Set relative extrusion mode
+// ;SV04 start
+// M140 S${this.material_bed_temperature}; set bed temperature and heat
+// M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
+// M280 P0 S160;
+// G4 P100; pause 100ms
+// G28; home x, y, z
+// M420 S1; enable bed leveling
+// M190 S${this.material_bed_temperature}; wait for bed temperature
+// M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
+// G92 E0; reset extrusion count
 
-; Test print of two segments of lines
-G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-G92 E0 ;Reset Extruder
-G1 Z2.0 F3000;
-G92 E0
-G92 E0
-G1 F2400 E-0.5
+// ; Test print of two segments of lines
+// G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+// G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+// G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+// G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+// G92 E0 ;Reset Extruder
+// G1 Z2.0 F3000;
+// G92 E0
+// G92 E0
+// G1 F2400 E-0.5
 
-; M106 S255; start fan (if needed)
-M204 S500; set acceleration
-M205 X16 Y16; set jerk/acceleration
+// ; M106 S255; start fan (if needed)
+// M204 S500; set acceleration
+// M205 X16 Y16; set jerk/acceleration
 
-M221 S${this.extrusion_m} ; Set flow percentage
+// M221 S${this.extrusion_m} ; Set flow percentage
+//       `;
+//     } else {
+//       return `
+// ;Generated with Cura_SteamEngine 5.4.0
+// T1; right extruder
+// M83 ;Set relative extrusion mode
+// ;SV04 start
+// M140 S${this.material_bed_temperature}; set bed temperature and heat
+// M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
+// M280 P0 S160;
+// G4 P100; pause 100ms
+// G28; home x, y, z
+// M420 S1; enable bed leveling
+// M190 S${this.material_bed_temperature}; wait for bed temperature
+// M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
+// G92 E0; reset extrusion count
+
+// ; Test print of two segments of lines
+// G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+// G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+// G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+// G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+// G92 E0 ;Reset Extruder
+// G1 Z2.0 F3000;
+// G92 E0
+// G92 E0
+// G1 F2400 E-0.5
+
+// ;M106 S255; start fan (if needed)
+// M204 S500; set acceleration
+// M205 X16 Y16; set jerk/acceleration
+
+// M221 S${this.extrusion_m} ; Set flow percentage
+//       `;
+
+// matching jupyter notebook
+return `
+      M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+      M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 \n',
+      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec \n',
+      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec \n',
+      M107 ; turns off fan
+      M862.1 P${this.nozzleDiameter} ; nozzle diameter check \n',
+      G90 ; use absolute coordinates 
+      M83  ; extruder relative mode 
+
+          
+
+      M104 S${this.print_temp_left_extruder} ; set extruder temp \n',
+      M140 S${this.material_bed_temperature} ; set bed temp \n',
+      M190 S${this.material_bed_temperature} ; wait for bed temp \n',
+      M109 S${this.print_temp_left_extruder} ; wait for extruder temp \n',
+
+      G28 W ; home all without mesh bed level \n',
+      G80 ; mesh bed leveling \n',
+ 
+
+      G21 ; set units to millimeters 
+      G90 ; use absolute coordinates 
+      M900 K0.05 ; Filament gcode LA 1.5 
+      M900 K30 ; Filament gcode LA 1.0 \n',
+      G92 E0.0 
+
+      G1 Z0.200 F10800.000 
+
+      M204 S1000 
+          
       `;
     } else {
       return `
-;Generated with Cura_SteamEngine 5.4.0
-T1; right extruder
-M83 ;Set relative extrusion mode
-;SV04 start
-M140 S${this.material_bed_temperature}; set bed temperature and heat
-M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
-M280 P0 S160;
-G4 P100; pause 100ms
-G28; home x, y, z
-M420 S1; enable bed leveling
-M190 S${this.material_bed_temperature}; wait for bed temperature
-M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
-G92 E0; reset extrusion count
+      M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+      M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
+      M107 ; turns off fan
+      M862.1 P${this.nozzleDiameter} ; nozzle diameter check \n',
+      G90 ; use absolute coordinates 
+      M83  ; extruder relative mode 
 
-; Test print of two segments of lines
-G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-G92 E0 ;Reset Extruder
-G1 Z2.0 F3000;
-G92 E0
-G92 E0
-G1 F2400 E-0.5
+          
 
-;M106 S255; start fan (if needed)
-M204 S500; set acceleration
-M205 X16 Y16; set jerk/acceleration
+      M104 S${this.print_temp_left_extruder} ; set extruder temp 
+      M140 S${this.material_bed_temperature} ; set bed temp 
+      M190 S${this.material_bed_temperature} ; wait for bed temp 
+      M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 
-M221 S${this.extrusion_m} ; Set flow percentage
+      G28 W ; home all without mesh bed level \n',
+      G80 ; mesh bed leveling \n',
+ 
+
+      G21 ; set units to millimeters 
+      G90 ; use absolute coordinates 
+      M900 K0.05 ; Filament gcode LA 1.5 
+      M900 K30 ; Filament gcode LA 1.0 
+      G92 E0.0 
+
+      G1 Z0.200 F10800.000 
+
+      M204 S1000 
       `;
     }
   }

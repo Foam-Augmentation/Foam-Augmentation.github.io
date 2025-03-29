@@ -304,9 +304,9 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
 export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObj: EverydayModel,
-    zOffset: number = 12,
-    deltaZ: number = 5,
-    layerNum: number = 3
+    zOffset: number = visualizer.config.zOffset,
+    deltaZ: number = visualizer.config.deltaZ,
+    layerNum: number = visualizer.config.foamLayers
 ): { all: any; foam: any; sense: any } {
     // --- 1. Remove the previous foam toolpath visualization, if it exists.
     if (modelObj.toolpathVisualizationObject) {
