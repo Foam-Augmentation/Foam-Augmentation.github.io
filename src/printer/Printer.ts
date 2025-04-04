@@ -84,26 +84,26 @@ export default class Printer {
     this.V_Star = 0.15;
     this.Edot = 35;
     this.extrusion_m = 0.92,
-    this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
+      this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
-//     this.end_gcode = `
-// ;SV04 end
-// M107; turn off fan
-// G91 ;Relative positioning
-// G1 E-2 F2700 ;Retract a bit
-// G1 E-2 Z0.2 F2400 ;Retract and raise Z
-// G1 X0 Y240 F3000 ;Wipe out
-// G1 Z10 ;Raise Z more
-// G90 ;Absolute positioning
-// G1 X0 Y${this.machine_depth_y} ;Present print
-// M106 S0 ;Turn-off fan
-// M104 S0 ;Turn-off hotend
-// M140 S0 ;Turn-off bed
-// M84 X Y E ;Disable all steppers except Z
-// M83 ;Set relative extrusion mode
-//         `;
-this.end_gcode = `
+    //     this.end_gcode = `
+    // ;SV04 end
+    // M107; turn off fan
+    // G91 ;Relative positioning
+    // G1 E-2 F2700 ;Retract a bit
+    // G1 E-2 Z0.2 F2400 ;Retract and raise Z
+    // G1 X0 Y240 F3000 ;Wipe out
+    // G1 Z10 ;Raise Z more
+    // G90 ;Absolute positioning
+    // G1 X0 Y${this.machine_depth_y} ;Present print
+    // M106 S0 ;Turn-off fan
+    // M104 S0 ;Turn-off hotend
+    // M140 S0 ;Turn-off bed
+    // M84 X Y E ;Disable all steppers except Z
+    // M83 ;Set relative extrusion mode
+    //         `;
+    this.end_gcode = `
 G1 F10800.000 
 G4 S20; Dwell for 20 Second(s) 
 M104 S0 ; turn off temperature 
@@ -127,99 +127,96 @@ M73 P100 R0 `
   private build_start_gcode(extruderId: number): string {
     if (extruderId === 1) {
       // Left extruder (TPU)
-//       return `
-// ;Generated with Cura_SteamEngine 5.4.0
-// T0; left extruder
-// M83 ;Set relative extrusion mode
-// ;SV04 start
-// M140 S${this.material_bed_temperature}; set bed temperature and heat
-// M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
-// M280 P0 S160;
-// G4 P100; pause 100ms
-// G28; home x, y, z
-// M420 S1; enable bed leveling
-// M190 S${this.material_bed_temperature}; wait for bed temperature
-// M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
-// G92 E0; reset extrusion count
+      //       return `
+      // ;Generated with Cura_SteamEngine 5.4.0
+      // T0; left extruder
+      // M83 ;Set relative extrusion mode
+      // ;SV04 start
+      // M140 S${this.material_bed_temperature}; set bed temperature and heat
+      // M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
+      // M280 P0 S160;
+      // G4 P100; pause 100ms
+      // G28; home x, y, z
+      // M420 S1; enable bed leveling
+      // M190 S${this.material_bed_temperature}; wait for bed temperature
+      // M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
+      // G92 E0; reset extrusion count
 
-// ; Test print of two segments of lines
-// G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-// G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-// G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-// G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-// G92 E0 ;Reset Extruder
-// G1 Z2.0 F3000;
-// G92 E0
-// G92 E0
-// G1 F2400 E-0.5
+      // ; Test print of two segments of lines
+      // G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+      // G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+      // G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+      // G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+      // G92 E0 ;Reset Extruder
+      // G1 Z2.0 F3000;
+      // G92 E0
+      // G92 E0
+      // G1 F2400 E-0.5
 
-// ; M106 S255; start fan (if needed)
-// M204 S500; set acceleration
-// M205 X16 Y16; set jerk/acceleration
+      // ; M106 S255; start fan (if needed)
+      // M204 S500; set acceleration
+      // M205 X16 Y16; set jerk/acceleration
 
-// M221 S${this.extrusion_m} ; Set flow percentage
-//       `;
-//     } else {
-//       return `
-// ;Generated with Cura_SteamEngine 5.4.0
-// T1; right extruder
-// M83 ;Set relative extrusion mode
-// ;SV04 start
-// M140 S${this.material_bed_temperature}; set bed temperature and heat
-// M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
-// M280 P0 S160;
-// G4 P100; pause 100ms
-// G28; home x, y, z
-// M420 S1; enable bed leveling
-// M190 S${this.material_bed_temperature}; wait for bed temperature
-// M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
-// G92 E0; reset extrusion count
+      // M221 S${this.extrusion_m} ; Set flow percentage
+      //       `;
+      //     } else {
+      //       return `
+      // ;Generated with Cura_SteamEngine 5.4.0
+      // T1; right extruder
+      // M83 ;Set relative extrusion mode
+      // ;SV04 start
+      // M140 S${this.material_bed_temperature}; set bed temperature and heat
+      // M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
+      // M280 P0 S160;
+      // G4 P100; pause 100ms
+      // G28; home x, y, z
+      // M420 S1; enable bed leveling
+      // M190 S${this.material_bed_temperature}; wait for bed temperature
+      // M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
+      // G92 E0; reset extrusion count
 
-// ; Test print of two segments of lines
-// G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-// G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-// G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-// G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-// G92 E0 ;Reset Extruder
-// G1 Z2.0 F3000;
-// G92 E0
-// G92 E0
-// G1 F2400 E-0.5
+      // ; Test print of two segments of lines
+      // G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+      // G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+      // G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+      // G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+      // G92 E0 ;Reset Extruder
+      // G1 Z2.0 F3000;
+      // G92 E0
+      // G92 E0
+      // G1 F2400 E-0.5
 
-// ;M106 S255; start fan (if needed)
-// M204 S500; set acceleration
-// M205 X16 Y16; set jerk/acceleration
+      // ;M106 S255; start fan (if needed)
+      // M204 S500; set acceleration
+      // M205 X16 Y16; set jerk/acceleration
 
-// M221 S${this.extrusion_m} ; Set flow percentage
-//       `;
+      // M221 S${this.extrusion_m} ; Set flow percentage
+      //       `;
 
-// matching jupyter notebook
-return `
+      // matching jupyter notebook
+      return `
       M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
       M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
-      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 \n',
-      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec \n',
-      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec \n',
+      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
       M107 ; turns off fan
-      M862.1 P${this.nozzleDiameter} ; nozzle diameter check \n',
+      M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
       G90 ; use absolute coordinates 
       M83  ; extruder relative mode 
 
-          
+      M104 S${this.print_temp_left_extruder} ; set extruder temp 
+      M140 S${this.material_bed_temperature} ; set bed temp
+      M190 S${this.material_bed_temperature} ; wait for bed temp 
+      M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 
-      M104 S${this.print_temp_left_extruder} ; set extruder temp \n',
-      M140 S${this.material_bed_temperature} ; set bed temp \n',
-      M190 S${this.material_bed_temperature} ; wait for bed temp \n',
-      M109 S${this.print_temp_left_extruder} ; wait for extruder temp \n',
-
-      G28 W ; home all without mesh bed level \n',
-      G80 ; mesh bed leveling \n',
- 
+      G28 W ; home all without mesh bed level 
+      G80 ; mesh bed leveling 
 
       G21 ; set units to millimeters 
       G90 ; use absolute coordinates 
       M900 K0.05 ; Filament gcode LA 1.5 
-      M900 K30 ; Filament gcode LA 1.0 \n',
+      M900 K30 ; Filament gcode LA 1.0 
       G92 E0.0 
 
       G1 Z0.200 F10800.000 
@@ -235,7 +232,7 @@ return `
       M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
       M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
       M107 ; turns off fan
-      M862.1 P${this.nozzleDiameter} ; nozzle diameter check \n',
+      M862.1 P${this.nozzleDiameter} ; nozzle diameter check
       G90 ; use absolute coordinates 
       M83  ; extruder relative mode 
 
@@ -246,8 +243,8 @@ return `
       M190 S${this.material_bed_temperature} ; wait for bed temp 
       M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 
-      G28 W ; home all without mesh bed level \n',
-      G80 ; mesh bed leveling \n',
+      G28 W ; home all without mesh bed level
+      G80 ; mesh bed leveling 
  
 
       G21 ; set units to millimeters 
@@ -306,7 +303,8 @@ return `
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
     extrusion_speed_when_foam: number,
     printHead_speed_when_foam: number,
-    ZlayerIndex: number
+    ZlayerIndex: number,
+    isFirstInLayer: boolean = false
   ): string {
 
     // Adding in the feedrate multiplier
@@ -323,8 +321,8 @@ return `
     const S = gamma / (beta * this.V_Star); // Feedrate multiplier (M221 = Feedrate percentage = S = Sm * 100), Assuming E = L
     //const Edot = 35;
     const F = this.Edot / S;
-    
-  
+
+
     //layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0)
     // If p0 and p1 are objects with 'point' property, use the point. Otherwise, treat them as Vector3.
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
@@ -334,7 +332,7 @@ return `
     // From Jupyer notebook, line 85  return point_end[0], point_end[1], H, E, S, C, F, f'V* = {V_star} (S = {S:.2f}) H* = {H_star}' #NEW E, S,
     // H was then used in  X,Y,Z,E,S,C,F,Comment = VEHF(V_star, H_star, Edot, α, diameter_nozzle, diameter_filament, point_start, point_end)
     // Z = Z + (increment_z * layer_number) + Z_offset
-    let H = this.H_star*this.dieSwelling*this.nozzleDiameter
+    let H = this.H_star * this.dieSwelling * this.nozzleDiameter
 
     // originally had p1Point.z added
     let Znew = H + (this.deltaZ * ZlayerIndex) + this.ZOffset;
@@ -346,12 +344,21 @@ return `
 
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
     this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
+    let gcode = '';
 
-    console.log(
-      `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${F}`
-    );
-    // before Z was p1Point.z.toFixed(4)
-    return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
+    // console.log(
+    //   `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${F}`
+    // );
+    // // before Z was p1Point.z.toFixed(4)
+    // return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
+    if (isFirstInLayer) {
+      gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${Znew.toFixed(4)} E0.0050 F600 ; Move Z up for new layer\n`;
+    }
+
+    // ✅ Now move to new X/Y and extrude
+    gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${Math.round(F)}\n`;
+
+    return gcode;
   }
 
 
@@ -399,7 +406,7 @@ return `
     body_gcode.push("M205 X8 Y8; tune down acceleration");
     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
 
-   
+
 
     for (let i = 0; i < corners.length - 1; i++) {
       body_gcode.push(
@@ -454,12 +461,12 @@ return `
         const toolpathElement = toolpath[i][0] as any;
         console.log("Toolpath element WITH CAST:", toolpathElement);
 
-        console.log("x coord", toolpathElement.point?.x);
+        console.log("x coord", toolpathElement.x);
         console.log("Toolpath element type:", typeof toolpath[i][0]);
         console.log("Toolpath keys", Object.keys(toolpath[i][0]));
         body_gcode.push(
 
-          `G0 F2880 X${toolpathElement.point?.x} Y${toolpathElement.point?.y} Z${toolpathElement.point?.z}; move to start point`
+          `G0 F2880 X${toolpathElement.x} Y${toolpathElement.y} Z${toolpathElement.z}; move to start point`
         );
 
         body_gcode.push("M205 X8 Y8; tune down acceleration");
@@ -471,7 +478,8 @@ return `
             toolpath[i][0],
             this.extrusion_speed_when_foam,
             this.printHead_speed_when_foam,
-            layerIndex
+            layerIndex,
+            true
           )
         );
       }
@@ -484,7 +492,8 @@ return `
             toolpath[i][j],
             this.extrusion_speed_when_foam,
             this.printHead_speed_when_foam,
-            i
+            i,
+            false
           )
         );
         console.log("current i", i);
