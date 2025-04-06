@@ -195,67 +195,58 @@ M73 P100 R0 `
 
       // matching jupyter notebook
       return `
-      M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
-      M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
-      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
-      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
-      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
-      M107 ; turns off fan
-      M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
-      G90 ; use absolute coordinates 
-      M83  ; extruder relative mode 
+M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
+M107 ; turns off fan
+M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
 
-      M104 S${this.print_temp_left_extruder} ; set extruder temp 
-      M140 S${this.material_bed_temperature} ; set bed temp
-      M190 S${this.material_bed_temperature} ; wait for bed temp 
-      M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 
-      G28 W ; home all without mesh bed level 
-      G80 ; mesh bed leveling 
+M104 S${this.print_temp_left_extruder} ; set extruder temp 
+M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M862.3 P "MK3S" ; printer model check 
 
-      G21 ; set units to millimeters 
-      G90 ; use absolute coordinates 
-      M900 K0.05 ; Filament gcode LA 1.5 
-      M900 K30 ; Filament gcode LA 1.0 
-      G92 E0.0 
 
-      G1 Z0.200 F10800.000 
 
-      M204 S1000 
+G21 ; set units to millimeters 
+G90 ; use absolute coordinates 
+M83  ; extruder relative mode 
+M900 K0.05 ; Filament gcode LA 1.5 
+M900 K30 ; Filament gcode LA 1.0 
+G92 E0.0 
+
+G1 Z0.200 F10800.000 
+
+M204 S1000 
           
       `;
     } else {
       return `
-      M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
-      M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
-      M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
-      M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
-      M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
-      M107 ; turns off fan
-      M862.1 P${this.nozzleDiameter} ; nozzle diameter check
-      G90 ; use absolute coordinates 
-      M83  ; extruder relative mode 
+M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
+M107 ; turns off fan
+M862.1 P${this.nozzleDiameter} ; nozzle diameter check
+   
 
-          
+M104 S${this.print_temp_left_extruder} ; set extruder temp 
+M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M862.3 P "MK3S" ; printer model check 
 
-      M104 S${this.print_temp_left_extruder} ; set extruder temp 
-      M140 S${this.material_bed_temperature} ; set bed temp 
-      M190 S${this.material_bed_temperature} ; wait for bed temp 
-      M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+G21 ; set units to millimeters 
+G90 ; use absolute coordinates 
+M83  ; extruder relative mode 
+M900 K0.05 ; Filament gcode LA 1.5 
+M900 K30 ; Filament gcode LA 1.0 
+G92 E0.0 
 
-      G28 W ; home all without mesh bed level
-      G80 ; mesh bed leveling 
- 
+G1 Z0.200 F10800.000 
 
-      G21 ; set units to millimeters 
-      G90 ; use absolute coordinates 
-      M900 K0.05 ; Filament gcode LA 1.5 
-      M900 K30 ; Filament gcode LA 1.0 
-      G92 E0.0 
-
-      G1 Z0.200 F10800.000 
-
-      M204 S1000 
+M204 S1000 
       `;
     }
   }
@@ -352,11 +343,11 @@ M73 P100 R0 `
     // // before Z was p1Point.z.toFixed(4)
     // return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
     if (isFirstInLayer) {
-      gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${Znew.toFixed(4)} E0.0050 F600 ; Move Z up for new layer\n`;
+      gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${Znew.toFixed(4)} E0.0050 F0114 ; Move Z up for new layer`;
     }
 
-    // ✅ Now move to new X/Y and extrude
-    gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${Math.round(F)}\n`;
+    
+    gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
 
     return gcode;
   }
