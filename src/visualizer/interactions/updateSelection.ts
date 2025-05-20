@@ -289,7 +289,7 @@ export function updateSelection(
     console.log("Toolpaths before generating G-Code:", toolpaths.foam);
    // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
     //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
     console.log(gcode);
     visualizer.printer.toolpathGcode = gcode;
     console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
