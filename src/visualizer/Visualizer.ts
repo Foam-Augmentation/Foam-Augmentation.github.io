@@ -53,6 +53,8 @@ export default class Visualizer {
     /** Visualization objects for the toolpath (if any) */
     public toolpathVisualize: THREE.Object3D[] | null;
 
+    public showGcodeVisualization: boolean = false;
+
     /**
      * Configuration for selection and toolpath parameters.
      */
@@ -84,6 +86,8 @@ export default class Visualizer {
         diameter_filament: number;
         extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
         height: number;
+        showGcodeVisualization: false,
+
     };
 
     /**
@@ -179,6 +183,8 @@ export default class Visualizer {
             Edot: 35,
             diameter_filament: 1.75,
             extrusion_m: 0.92,
+            showGcodeVisualization: false,
+
             
         };
 
