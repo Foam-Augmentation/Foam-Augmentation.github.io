@@ -54,6 +54,7 @@ export default class Visualizer {
     public toolpathVisualize: THREE.Object3D[] | null;
 
     public showGcodeVisualization: boolean = false;
+    public currentSelectedModel: EverydayModel | null = null;
 
     /**
      * Configuration for selection and toolpath parameters.
@@ -87,6 +88,9 @@ export default class Visualizer {
         extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
         height: number;
         showGcodeVisualization: false,
+        currentSelectedModel: EverydayModel | null;
+
+        
 
     };
 
@@ -184,6 +188,7 @@ export default class Visualizer {
             diameter_filament: 1.75,
             extrusion_m: 0.92,
             showGcodeVisualization: false,
+            currentSelectedModel: null
 
             
         };

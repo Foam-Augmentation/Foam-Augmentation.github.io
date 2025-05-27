@@ -276,6 +276,7 @@ export function updateSelection(
         }
     }
 
+    visualizer.currentSelectedModel = modelObj;
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);
@@ -292,9 +293,11 @@ export function updateSelection(
     const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
     console.log(gcode);
     visualizer.printer.toolpathGcode = gcode;
+
     console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
 
     //saveGcodeToFile(gcode, "toolpath");
+    generateFoamToolpath(visualizer, modelObj);
     
 
     return {

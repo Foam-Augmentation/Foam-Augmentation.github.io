@@ -199,7 +199,14 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
 });
 
   //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
-
+  paramsFolder.add(visualizer.config, 'showGcodeVisualization')
+    .name('Show G-code Visualization')
+    .onChange((value: boolean) => {
+        // Regenerate toolpath visualization when toggle changes
+        if (visualizer.currentSelectedModel) {
+            generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+        }
+    });
 
  
   
