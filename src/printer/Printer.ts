@@ -258,122 +258,6 @@ M204 S1000
    * @returns {string} The G-code command for the extrusion segment.
    */
 
-  //OLD VERSION
-  // private extrude_single_segment(
-  //   p0: THREE.Vector3,
-  //   p1: THREE.Vector3,
-  //   extrusion_speed_when_foam: number,
-  //   printHead_speed_when_foam: number
-  // ): string {
-  //   console.log("📌 Extruding segment: ", { p0, p1 });
-
-  //   this.extrudedAmount += this.norm(p1, p0) * (extrusion_speed_when_foam / printHead_speed_when_foam);
-  //   console.log( `TESTING: G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`);
-  //   return `G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
-  // }
-
-  // NEW VERSION BECAUSE IT WAS GIVING ME AN ERROR THAT p0 WAS UNDEFINED SO INSTEAD
-  // ACCESSED THE POINT PROPERTY OF p0 AND p1 FOR THE RETURN 
-  // private extrude_single_segment(
-  //   p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
-  //   p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-  //   extrusion_speed_when_foam: number,
-  //   printHead_speed_when_foam: number,
-  //   ZlayerIndex: number,
-  //   isFirstInLayer: boolean = false
-  // ): string {
-
-  //   // Adding in the feedrate multiplier
-  //   // const diameter_filament = 1.75;
-  //   // const diameter_nozzle = 0.4;
-  //   // const alpha = 1;
-  //   // const V_star = 0.15;
-
-  //   // const beta = (Math.PI / 4) * Math.pow(diameter_filament, 2);
-  //   //const gamma = (Math.PI / 4) * Math.pow(alpha * diameter_nozzle, 2);
-  //   const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
-  //   const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
-
-  //   const S = gamma / (beta * this.V_Star); // Feedrate multiplier (M221 = Feedrate percentage = S = Sm * 100), Assuming E = L
-  //   //const Edot = 35;
-  //   const F = this.Edot / S;
-
-
-  //   //layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0)
-  //   // If p0 and p1 are objects with 'point' property, use the point. Otherwise, treat them as Vector3.
-  //   const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
-  //   const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
-
-
-  //   // From Jupyer notebook, line 85  return point_end[0], point_end[1], H, E, S, C, F, f'V* = {V_star} (S = {S:.2f}) H* = {H_star}' #NEW E, S,
-  //   // H was then used in  X,Y,Z,E,S,C,F,Comment = VEHF(V_star, H_star, Edot, α, diameter_nozzle, diameter_filament, point_start, point_end)
-  //   // Z = Z + (increment_z * layer_number) + Z_offset
-  //   let H = this.H_star * this.dieSwelling * this.nozzleDiameter
-
-  //   // originally had p1Point.z added
-  //   let Znew = H + (this.deltaZ * ZlayerIndex) + this.ZOffset;
-  //   console.log("Z index", ZlayerIndex)
-  //   console.log("Z new", Znew)
-  //   console.log("old z", p1Point.z.toFixed(4))
-
-  //   console.log("📌 Extruding segment: ", { p0, p1 });
-
-  //   // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
-  //   this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
-  //   let gcode = '';
-
-  //   // console.log(
-  //   //   `TESTING: G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${F}`
-  //   // );
-  //   // // before Z was p1Point.z.toFixed(4)
-  //   // return `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
-  //   if (isFirstInLayer) {
-  //     gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${Znew.toFixed(4)} E0.0050 F0114 ; Move Z up for new layer`;
-  //   }
-
-
-  //   gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
-
-  //   return gcode;
-  // }
-
-
-  // Extrude single segment with just the location of the model for generating the gcode, stil no 
-  // nonplanar printing
-  //   private extrude_single_segment(
-  //   p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
-  //   p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-  //   extrusion_speed_when_foam: number,
-  //   printHead_speed_when_foam: number,
-  //   ZlayerIndex: number,
-  //   isFirstInLayer: boolean = false
-  // ): string {
-  //   // Extract Vector3 points regardless of input type
-  //   const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
-  //   const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
-
-  //   const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
-  //   const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
-
-  //   const S = gamma / (beta * this.V_Star);
-  //   const F = this.Edot / S;
-
-  //   let H = this.H_star * this.dieSwelling * this.nozzleDiameter;
-  //   let Znew = H + (this.deltaZ * ZlayerIndex) + this.ZOffset;
-
-  //   console.log("📌 Extruding segment: ", { p0Point, p1Point });
-  //   this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
-  //   let gcode = '';
-
-  //   if (isFirstInLayer) {
-  //     gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${Znew.toFixed(4)} E0.0050 F0114 ; Move Z up for new layer`;
-  //   }
-
-  //   gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${Znew.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
-
-  //   return gcode;
-  // }
-
   private extrude_single_segment(
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
@@ -383,6 +267,7 @@ M204 S1000
     isFirstInLayer: boolean = false
   ): string {
     // Extract Vector3 points regardless of input type
+
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
     const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
 
@@ -394,6 +279,8 @@ M204 S1000
 
 
     console.log("📌 Extruding segment: ", { p0Point, p1Point });
+    // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
+
     this.extrudedAmount += (this.norm(p1Point, p0Point)) * S;
     let gcode = '';
 
@@ -484,161 +371,7 @@ M204 S1000
    * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
    * @returns {string} The generated foam toolpath G-code.
    */
-  // public generate_foam_gcode(toolpath: THREE.Vector3[][], extruderId: number): string {
-
-  //   if (toolpath.length === 0 || toolpath[0].length === 0) {
-  //     console.error("Toolpath is empty.");
-  //     return "";
-  //   }
-
-  //   let body_gcode: string[] = [];
-  //   let lastTarget: THREE.Vector3 = toolpath[0][0];
-  //   this.extrudedAmount = 0;
-
-
-  //   console.log("Total layers:", toolpath.length);
-
-  //   for (let i = 0; i < toolpath.length; i++) {
-  //     let layerIndex = i
-  //     if (i === 0) {
-  //       console.log("Toolpath element WITHOUT CAST:", toolpath[i][0]);
-  //       const toolpathElement = toolpath[i][0] as any;
-  //       console.log("Toolpath element WITH CAST:", toolpathElement);
-
-  //       console.log("x coord", toolpathElement.x);
-  //       console.log("Toolpath element type:", typeof toolpath[i][0]);
-  //       console.log("Toolpath keys", Object.keys(toolpath[i][0]));
-  //       body_gcode.push(
-
-  //         `G0 F2880 X${toolpathElement.x + 60} Y${toolpathElement.y + 60} Z${toolpathElement.z}; move to start point`
-  //       );
-
-  //       body_gcode.push("M205 X8 Y8; tune down acceleration");
-  //       body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
-  //     } else {
-  //       body_gcode.push(
-  //         this.extrude_single_segment(
-  //           lastTarget,
-  //           toolpath[i][0],
-  //           this.extrusion_speed_when_foam,
-  //           this.printHead_speed_when_foam,
-  //           layerIndex,
-  //           true
-  //         )
-  //       );
-  //     }
-  //     lastTarget = toolpath[i][0];
-
-  //     for (let j = 1; j < toolpath[i].length; j++) {
-  //       body_gcode.push(
-  //         this.extrude_single_segment(
-  //           lastTarget,
-  //           toolpath[i][j],
-  //           this.extrusion_speed_when_foam,
-  //           this.printHead_speed_when_foam,
-  //           i,
-  //           false
-  //         )
-  //       );
-  //       console.log("current i", i);
-  //       lastTarget = toolpath[i][j];
-  //     }
-  //   }
-
-  //   body_gcode.push("G92 E0");
-  //   this.extrudedAmount = 0;
-
-  //   this.toolpathGcode =
-  //     this.build_start_gcode(extruderId) +
-  //     "\n\n" +
-  //     body_gcode.join("\n") +
-  //     "\n\n" +
-  //     this.end_gcode;
-
-  //   return this.toolpathGcode;
-  // }
-
-  // !!!! With just the model location in place !!!!!
-  // public generate_foam_gcode(
-  //   toolpath: THREE.Vector3[][],
-  //   extruderId: number,
-  //   modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
-  // ): string {
-  //   if (toolpath.length === 0 || toolpath[0].length === 0) {
-  //     console.error("Toolpath is empty.");
-  //     return "";
-  //   }
-
-  //   let body_gcode: string[] = [];
-  //   // Apply model position to first point
-  //   let firstPoint = toolpath[0][0].clone().add(modelPosition);
-  //   let lastTarget: THREE.Vector3 = firstPoint;
-  //   this.extrudedAmount = 0;
-
-  //   console.log("Total layers:", toolpath.length);
-  //   console.log("Model position applied:", modelPosition);
-
-  //   for (let i = 0; i < toolpath.length; i++) {
-  //     let layerIndex = i;
-  //     if (i === 0) {
-  //       const firstPointPos = {
-  //         x: firstPoint.x,
-  //         y: firstPoint.y,
-  //         z: firstPoint.z
-  //       };
-
-  //       body_gcode.push(
-  //         `G0 F2880 X${firstPointPos.x} Y${firstPointPos.y} Z${firstPointPos.z}; move to start point`
-  //       );
-
-  //       body_gcode.push("M205 X8 Y8; tune down acceleration");
-  //       body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
-  //     } else {
-  //       // Apply model position to the first point of each layer
-  //       const currentPoint = toolpath[i][0].clone().add(modelPosition);
-  //       body_gcode.push(
-  //         this.extrude_single_segment(
-  //           lastTarget,
-  //           currentPoint,
-  //           this.extrusion_speed_when_foam,
-  //           this.printHead_speed_when_foam,
-  //           layerIndex,
-  //           true
-  //         )
-  //       );
-  //       lastTarget = currentPoint;
-  //     }
-
-  //     // Process the rest of the points in the layer
-  //     for (let j = 1; j < toolpath[i].length; j++) {
-  //       // Apply model position to each point
-  //       const currentPoint = toolpath[i][j].clone().add(modelPosition);
-  //       body_gcode.push(
-  //         this.extrude_single_segment(
-  //           lastTarget,
-  //           currentPoint,
-  //           this.extrusion_speed_when_foam,
-  //           this.printHead_speed_when_foam,
-  //           i,
-  //           false
-  //         )
-  //       );
-  //       lastTarget = currentPoint;
-  //     }
-  //   }
-
-  //   body_gcode.push("G92 E0");
-  //   this.extrudedAmount = 0;
-
-  //   this.toolpathGcode =
-  //     this.build_start_gcode(extruderId) +
-  //     "\n\n" +
-  //     body_gcode.join("\n") +
-  //     "\n\n" +
-  //     this.end_gcode;
-
-  //   return this.toolpathGcode;
-  // }
+  
   public generate_foam_gcode(
     toolpath: THREE.Vector3[][],
     extruderId: number,
