@@ -281,7 +281,7 @@ M204 S1000
     console.log("📌 Extruding segment: ", { p0Point, p1Point });
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
 
-    this.extrudedAmount += (this.norm(p1Point, p0Point)) * S;
+    this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
     let gcode = '';
 
     if (isFirstInLayer) {
