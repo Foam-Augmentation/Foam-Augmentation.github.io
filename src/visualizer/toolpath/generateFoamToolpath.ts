@@ -224,6 +224,8 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
         }
     } else {
@@ -234,6 +236,8 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             for (let i = 0; i < modelObj.toolpathConfig.middleSenseLayerCount; i++) {
                 const toolpathSense = _visualizeSegments(modelObj.sense_area_segments, 'sensing', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
@@ -241,11 +245,15 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
                 if (toolpathSense) visualizationGroup.add(toolpathSense);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             for (let i = 0; i < modelObj.toolpathConfig.finalFoamLayerCount; i++) {
                 const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+
             }
             // const toolpathAll = visualizeSegments(modelObj.all_area_segments, 0xff00ff, 10);
             // const toolpathFoam = visualizeSegments(modelObj.regular_area_segments, 0x00ff00, 20);
@@ -292,7 +300,15 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
  *                   - foamToolpathLine: (optional) previous toolpath visualization.
  * @returns An object with properties 'all', 'foam', and 'sense' containing the generated segments.
  */
-export function generateFoamToolpath(visualizer: Visualizer, modelObj: EverydayModel): { all: any, foam: any, sense: any } {
+
+
+export function generateFoamToolpath(
+    visualizer: Visualizer,
+    modelObj: EverydayModel,
+    zOffset: number = visualizer.config.zOffset,
+    deltaZ: number = visualizer.config.deltaZ,
+    layerNum: number = visualizer.config.foamLayers
+): { all: any; foam: any; sense: any } {
     // --- 1. Remove the previous foam toolpath visualization, if it exists.
     if (modelObj.toolpathVisualizationObject) {
         visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -301,62 +317,279 @@ export function generateFoamToolpath(visualizer: Visualizer, modelObj: EverydayM
             if (child.material) child.material.dispose();
         });
     }
+
     // --- 2. Check if there are sample points available.
     if (!modelObj.toolpathSamplePoints || modelObj.toolpathSamplePoints.length === 0) {
         console.warn("No sample points available. Cannot generate toolpath.");
         return { all: null, foam: null, sense: null };
     }
 
-    // --- 3. Define offsets for toolpath visualization.
-    const offsets = {
-        all: 10,
-        foam: 20,
-        sense: 30
-    };
+    // --- 3. Generate Zigzag Path
+    const toolpathZigzagPath: THREE.Vector3[][] = [];
+    let currentLayer = 1;
 
-    // --- 5. Generate three sets of toolpath segments.
-    const allPoints = modelObj.toolpathSamplePoints;  // All sample points.
-    const foamPoints = modelObj.toolpathSamplePoints.filter((item: any) => item.type === 'foam');
-    const sensePoints = modelObj.toolpathSamplePoints.filter((item: any) => item.type === 'sense');
+    while (currentLayer <= layerNum) {
+        const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
+        let tempPoints: THREE.Vector3[] = [];
+        let yDirection = 1;
+        let xDirection = 1;
+        let currentX: number | undefined, currentY: number | undefined;
 
-    const all_area_segments = _generatePath(allPoints, modelObj);
-    const regular_area_segments = _generatePath(foamPoints, modelObj);
-    const sense_area_segments = _generatePath(sensePoints, modelObj);
+        toolpathZigzagPath.push([]); // Add a new layer
 
-    // save the generated segments to the model object
-    modelObj.all_area_segments = all_area_segments;
-    modelObj.regular_area_segments = regular_area_segments;
-    modelObj.sense_area_segments = sense_area_segments;
+        if (scanDirection === 'x') {
+            // X-direction scan
+            modelObj.toolpathSamplePoints.sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y);
+            currentX = modelObj.toolpathSamplePoints[0].point.x;
 
-    // --- 6. Visualize the segments.
-    visualize_All_Layers(visualizer, modelObj);
-    // let visualizationGroup: THREE.Group | undefined;
-    // if (modelObj.toolpathSamplePoints.every((item: any) => item.type === 'foam')) {
-    //     visualizationGroup = visualizeSegments(regular_area_segments, 0x00ff00, offsets.foam) as THREE.Group;
-    // } else {
-    //     const toolpathAll = visualizeSegments(all_area_segments, 0xff00ff, offsets.all);
-    //     const toolpathFoam = visualizeSegments(regular_area_segments, 0x00ff00, offsets.foam);
-    //     const toolpathSense = visualizeSegments(sense_area_segments, 0x0000ff, offsets.sense);
-    //     visualizationGroup = new THREE.Group() as THREE.Group;
-    //     if (toolpathAll) visualizationGroup.add(toolpathAll);
-    //     if (toolpathFoam) visualizationGroup.add(toolpathFoam);
-    //     if (toolpathSense) visualizationGroup.add(toolpathSense);
-    // }
-    // // Position the parent group at the model's mesh position.
-    // if (visualizationGroup) {
-    //     if (modelObj.mesh && modelObj.mesh.position) {
-    //         visualizationGroup.position.copy(modelObj.mesh.position);
-    //     }
-    //     // Add the toolpath visualization to the scene.
-    //     visualizer.scene.add(visualizationGroup);
-    //     // Save the generated toolpath visualization to the model object.
-    //     modelObj.toolpathVisualizationObject = visualizationGroup as THREE.Group;
-    // }
-    // modelObj.toolpathVisualizationObject = visualizationGroup as THREE.Group | undefined;
+            modelObj.toolpathSamplePoints.forEach(point => {
+                if (point.point.x === currentX) {
+                    tempPoints.push(
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    );
+                } else {
+                    tempPoints.sort((a, b) => (yDirection > 0 ? a.y - b.y : b.y - a.y));
+                    toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+                    currentX = point.point.x;
+                    tempPoints = [
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    ];
+                    yDirection = -yDirection;
+                }
+            });
+        } else {
+            // Y-direction scan
+            modelObj.toolpathSamplePoints.sort((a, b) => a.point.y - b.point.y || a.point.x - b.point.x);
+            currentY = modelObj.toolpathSamplePoints[0].point.y;
+
+            modelObj.toolpathSamplePoints.forEach(point => {
+                if (point.point.y === currentY) {
+                    tempPoints.push(
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    );
+                } else {
+                    tempPoints.sort((a, b) => (xDirection > 0 ? a.x - b.x : b.x - a.x));
+                    toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+                    currentY = point.point.y;
+                    tempPoints = [
+                        new THREE.Vector3(
+                            point.point.x,
+                            point.point.y,
+                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                        )
+                    ];
+                    xDirection = -xDirection;
+                }
+            });
+        }
+        // Add remaining points to the path
+        if (tempPoints.length > 0) {
+            tempPoints.sort((a, b) =>
+                scanDirection === 'x' ? (yDirection > 0 ? a.y - b.y : b.y - a.y) : (xDirection > 0 ? a.x - b.x : b.x - a.x)
+            );
+            toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+        }
+
+        currentLayer++;
+    }
+
+    console.log("Generated Zigzag Toolpath:", toolpathZigzagPath);
+
+    // --- 4. Decide what to visualize based on the boolean
+    let pathToVisualize: THREE.Vector3[][];
+    
+    if (visualizer.config.showGcodeVisualization && visualizer.printer.toolpathGcode) {
+        // Parse G-code and visualize actual G-code path
+        pathToVisualize = parseGcodeToPath(visualizer.printer.toolpathGcode);
+        console.log("Visualizing G-code path");
+    } else {
+        // Visualize the intended zigzag path
+        pathToVisualize = toolpathZigzagPath;
+        console.log("Visualizing intended toolpath");
+    }
+
+    // --- 5. Visualize the chosen path
+    const visualizationGroup = new THREE.Group();
+    
+    if (pathToVisualize.length === 0) {
+        console.warn("No path to visualize");
+        return {
+            all: toolpathZigzagPath,
+            foam: toolpathZigzagPath,
+            sense: []
+        };
+    }
+    
+    if (visualizer.config.showGcodeVisualization) {
+        // For G-code: Create one continuous line connecting all points across all layers
+        const allVertices: number[] = [];
+        pathToVisualize.forEach((layer) => {
+            layer.forEach(point => {
+                allVertices.push(point.x, point.y, point.z);
+            });
+        });
+
+        if (allVertices.length > 0) {
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
+            
+            const material = new THREE.LineBasicMaterial({ 
+                color: 0x00ff00,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            visualizationGroup.add(line);
+            console.log(`Added G-code visualization with ${allVertices.length / 3} total points`);
+        }
+    } else {
+        // For intended toolpath: Create separate lines for each layer (original behavior)
+        pathToVisualize.forEach((layer, layerIndex) => {
+            if (layer.length === 0) return;
+            
+            const vertices: number[] = [];
+            layer.forEach(point => {
+                vertices.push(point.x, point.y, point.z);
+            });
+
+            if (vertices.length === 0) return;
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            
+            const material = new THREE.LineBasicMaterial({ 
+                color: 0x0075ff,
+                linewidth: 2
+            });
+            
+            const line = new THREE.Line(geometry, material);
+            visualizationGroup.add(line);
+            console.log(`Added intended toolpath layer ${layerIndex} with ${layer.length} points`);
+        });
+    }
+
+    console.log(`Total visualization objects: ${visualizationGroup.children.length}`);
+
+    // Add the visualization to the scene
+    // Don't apply model position again since G-code already includes it
+    if (visualizer.config.showGcodeVisualization) {
+        // G-code coordinates are already in world space, don't add model position
+        visualizationGroup.position.set(0, 0, 0);
+    } else {
+        // Intended toolpath needs model position applied
+        visualizationGroup.position.copy(modelObj.mesh.position);
+    }
+    
+    visualizer.scene.add(visualizationGroup);
+    modelObj.toolpathVisualizationObject = visualizationGroup;
 
     return {
-        all: all_area_segments,
-        foam: regular_area_segments,
-        sense: sense_area_segments
+        all: toolpathZigzagPath,
+        foam: toolpathZigzagPath,
+        sense: []
     };
+}
+
+// NEW FUNCTION: Parse G-code to extract path points
+function parseGcodeToPath(gcode: string): THREE.Vector3[][] {
+    const lines = gcode.split('\n');
+    const path: THREE.Vector3[][] = [];
+    let currentLayer: THREE.Vector3[] = [];
+    let currentPosition = new THREE.Vector3(0, 0, 0);
+    let lastZ = -999999; // Track Z changes for layer detection
+    
+    console.log("Parsing G-code, total lines:", lines.length);
+    
+    for (let i = 0; i < lines.length; i++) {
+        const trimmedLine = lines[i].trim();
+        
+        // Skip comments and empty lines
+        if (!trimmedLine || trimmedLine.startsWith(';')) continue;
+        
+        // Check for movement commands (G0, G1) - be more flexible with spacing
+        if (trimmedLine.match(/^G[01]\s/)) {
+            const newPosition = parseGcodePosition(trimmedLine, currentPosition);
+            
+            // Debug first few positions
+            if (i < 20) {
+                console.log(`Line ${i}: ${trimmedLine} -> Position:`, newPosition);
+            }
+            
+            // If Z changed significantly (more than 0.05mm), start a new layer
+            if (Math.abs(newPosition.z - lastZ) > 0.05) {
+                if (currentLayer.length > 0) {
+                    console.log(`New layer detected at Z=${newPosition.z}, previous layer had ${currentLayer.length} points`);
+                    path.push([...currentLayer]);
+                    currentLayer = [];
+                }
+                lastZ = newPosition.z;
+            }
+            
+            currentLayer.push(newPosition.clone());
+            currentPosition = newPosition;
+        }
+    }
+    
+    // Add the last layer if it has points
+    if (currentLayer.length > 0) {
+        console.log(`Final layer has ${currentLayer.length} points`);
+        path.push(currentLayer);
+    }
+    
+    console.log(`Parsed G-code into ${path.length} layers with total points:`, path.map(layer => layer.length));
+    
+    // If no layers were created, create one layer with all points
+    if (path.length === 0 && currentLayer.length === 0) {
+        console.warn("No valid G-code movements found, creating single layer");
+        // Try to extract any coordinates we can find
+        const allPoints: THREE.Vector3[] = [];
+        for (const line of lines) {
+            if (line.match(/[XYZ]/)) {
+                const pos = parseGcodePosition(line, currentPosition);
+                if (pos.x !== 0 || pos.y !== 0 || pos.z !== 0) {
+                    allPoints.push(pos);
+                    currentPosition = pos;
+                }
+            }
+        }
+        if (allPoints.length > 0) {
+            path.push(allPoints);
+        }
+    }
+    
+    return path;
+}
+
+// HELPER FUNCTION: Parse position from G-code line
+function parseGcodePosition(line: string, currentPos: THREE.Vector3): THREE.Vector3 {
+    const newPos = currentPos.clone();
+    
+    // Extract X, Y, Z coordinates - handle different formats and spacing
+    const xMatch = line.match(/X\s*([-+]?\d*\.?\d+)/i);
+    const yMatch = line.match(/Y\s*([-+]?\d*\.?\d+)/i);
+    const zMatch = line.match(/Z\s*([-+]?\d*\.?\d+)/i);
+    
+    if (xMatch) {
+        newPos.x = parseFloat(xMatch[1]);
+    }
+    if (yMatch) {
+        newPos.y = parseFloat(yMatch[1]);
+    }
+    if (zMatch) {
+        newPos.z = parseFloat(zMatch[1]);
+    }
+    
+    return newPos;
 }

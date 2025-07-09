@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import Visualizer from '../visualizer/Visualizer';
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -33,6 +34,8 @@ export default class Printer {
   public print_temp_right_extruder: number;
   /** Machine depth (maximum x/y axis length) */
   public machine_depth: number;
+  // Machine depth (maximum y axis lenght)
+  public machine_depth_y: number;
   /** Machine height (maximum z axis length) */
   public machine_height: number;
   /** Stores the generated boundary G-code */
@@ -42,44 +45,61 @@ export default class Printer {
   /** End G-code string */
   public end_gcode: string;
 
+  public diameter_filament: number;
+
+  public V_Star: number;
+
+  public Edot: number;
+
+  public extrusion_m: number;
+
+  public deltaZ: number; // deltaZ (thickness of a single foam layer)
+
+  public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
+  public H_star: number; // H_star (height of the foam layer)
+
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
    */
   constructor() {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
-    this.dieSwelling = 1.1; // die swelling factor
-    this.extrusion_speed_when_foam = 70; // foam extrusion speed (mm/min)
+    this.dieSwelling = 0.94; // die swelling factor
+    this.extrusion_speed_when_foam = 758.17; // foam extrusion speed (mm/min)
     this.extrusion_foam_interlayer_rate = 0.2; // foam interlayer extrusion rate (0.07mm per 1mm move)
     this.extrusion_norm_rate = 0.07; // normal extrusion rate
     this.printHead_speed_when_free_move = 1000; // free move speed
-    this.printHead_speed_when_foam = 70; // print head speed when extruding foam
+    this.printHead_speed_when_foam = 113.7; // print head speed when extruding foam
     this.printHead_speed_when_interlayer_move = 200; // interlayer move speed for foam
     this.printHead_speed_when_normal_print = 800; // normal printing extrusion speed
-    this.material_bed_temperature = 110; // bed temperature
-    this.print_temp_left_extruder = 240; // left extruder temperature (TPU)
+    this.material_bed_temperature = 60; // bed temperature
+    this.print_temp_left_extruder = 230; // left extruder temperature (TPU)
     this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
-    this.machine_depth = 302; // machine depth (max x/y)
-    this.machine_height = 402; // machine height (max z)
+    this.machine_depth = 250; // machine depth (max x)
+    this.machine_depth_y = 210; // machine y axis length
+    this.machine_height = 210; // machine height (max z)
     this.boundaryGcode = ""; // initialize boundary G-code
     this.toolpathGcode = ""; // initialize toolpath G-code
-
+    this.diameter_filament = 1.75;
+    this.V_Star = 0.15;
+    this.Edot = 35;
+    this.extrusion_m = 0.92,
+      this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
+    this.ZOffset = 3.38
+    this.H_star = 6.0
+   
     this.end_gcode = `
-;SV04 end
-M107; turn off fan
-G91 ;Relative positioning
-G1 E-2 F2700 ;Retract a bit
-G1 E-2 Z0.2 F2400 ;Retract and raise Z
-G1 X0 Y240 F3000 ;Wipe out
-G1 Z10 ;Raise Z more
-G90 ;Absolute positioning
-G1 X0 Y${this.machine_depth} ;Present print
-M106 S0 ;Turn-off fan
-M104 S0 ;Turn-off hotend
-M140 S0 ;Turn-off bed
-M84 X Y E ;Disable all steppers except Z
-M82 ;Set absolute extrusion mode
-        `;
+G1 F10800.000 
+G4 S20; Dwell for 20 Second(s) 
+M104 S0 ; turn off temperature 
+M140 S0 ; turn off heatbed 
+M107 ; turn off fan 
+G1 Z042.08 F5000 ; Move print head up 
+M73 P91 R0 
+G1 X0 Y190 F3000 ; home 
+M900 K0 ; reset LA 
+M84 ; disable motors 
+M73 P100 R0 `
   }
 
   /**
@@ -92,66 +112,126 @@ M82 ;Set absolute extrusion mode
   private build_start_gcode(extruderId: number): string {
     if (extruderId === 1) {
       // Left extruder (TPU)
+      //       return `
+      // ;Generated with Cura_SteamEngine 5.4.0
+      // T0; left extruder
+      // M83 ;Set relative extrusion mode
+      // ;SV04 start
+      // M140 S${this.material_bed_temperature}; set bed temperature and heat
+      // M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
+      // M280 P0 S160;
+      // G4 P100; pause 100ms
+      // G28; home x, y, z
+      // M420 S1; enable bed leveling
+      // M190 S${this.material_bed_temperature}; wait for bed temperature
+      // M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
+      // G92 E0; reset extrusion count
+
+      // ; Test print of two segments of lines
+      // G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+      // G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+      // G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+      // G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+      // G92 E0 ;Reset Extruder
+      // G1 Z2.0 F3000;
+      // G92 E0
+      // G92 E0
+      // G1 F2400 E-0.5
+
+      // ; M106 S255; start fan (if needed)
+      // M204 S500; set acceleration
+      // M205 X16 Y16; set jerk/acceleration
+
+      // M221 S${this.extrusion_m} ; Set flow percentage
+      //       `;
+      //     } else {
+      //       return `
+      // ;Generated with Cura_SteamEngine 5.4.0
+      // T1; right extruder
+      // M83 ;Set relative extrusion mode
+      // ;SV04 start
+      // M140 S${this.material_bed_temperature}; set bed temperature and heat
+      // M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
+      // M280 P0 S160;
+      // G4 P100; pause 100ms
+      // G28; home x, y, z
+      // M420 S1; enable bed leveling
+      // M190 S${this.material_bed_temperature}; wait for bed temperature
+      // M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
+      // G92 E0; reset extrusion count
+
+      // ; Test print of two segments of lines
+      // G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
+      // G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
+      // G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
+      // G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
+      // G92 E0 ;Reset Extruder
+      // G1 Z2.0 F3000;
+      // G92 E0
+      // G92 E0
+      // G1 F2400 E-0.5
+
+      // ;M106 S255; start fan (if needed)
+      // M204 S500; set acceleration
+      // M205 X16 Y16; set jerk/acceleration
+
+      // M221 S${this.extrusion_m} ; Set flow percentage
+      //       `;
+
+      // matching jupyter notebook
       return `
-;Generated with Cura_SteamEngine 5.4.0
-T0; left extruder
-M82 ;Set absolute extrusion mode
-;SV04 start
-M140 S${this.material_bed_temperature}; set bed temperature and heat
-M104 S${this.print_temp_left_extruder}; set nozzle temperature and heat
-M280 P0 S160;
-G4 P100; pause 100ms
-G28; home x, y, z
-M420 S1; enable bed leveling
-M190 S${this.material_bed_temperature}; wait for bed temperature
-M109 S${this.print_temp_left_extruder}; wait for nozzle temperature
-G92 E0; reset extrusion count
+M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
+M107 ; turns off fan
+M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
 
-; Test print of two segments of lines
-G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-G92 E0 ;Reset Extruder
-G1 Z2.0 F3000;
-G92 E0
-G92 E0
-G1 F2400 E-0.5
 
-; M106 S255; start fan (if needed)
-M204 S500; set acceleration
-M205 X16 Y16; set jerk/acceleration
+M104 S${this.print_temp_left_extruder} ; set extruder temp 
+M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M862.3 P "MK3S" ; printer model check 
+
+
+
+G21 ; set units to millimeters 
+G90 ; use absolute coordinates 
+M83  ; extruder relative mode 
+M900 K0.05 ; Filament gcode LA 1.5 
+M900 K30 ; Filament gcode LA 1.0 
+G92 E0.0 
+
+G1 Z0.200 F10800.000 
+
+M204 S1000 
+          
       `;
     } else {
       return `
-;Generated with Cura_SteamEngine 5.4.0
-T1; right extruder
-M82 ;Set absolute extrusion mode
-;SV04 start
-M140 S${this.material_bed_temperature}; set bed temperature and heat
-M104 S${this.print_temp_right_extruder}; set nozzle temperature and heat
-M280 P0 S160;
-G4 P100; pause 100ms
-G28; home x, y, z
-M420 S1; enable bed leveling
-M190 S${this.material_bed_temperature}; wait for bed temperature
-M109 S${this.print_temp_right_extruder}; wait for nozzle temperature
-G92 E0; reset extrusion count
+M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
+M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
+M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
+M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
+M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
+M107 ; turns off fan
+M862.1 P${this.nozzleDiameter} ; nozzle diameter check
+   
 
-; Test print of two segments of lines
-G1 X10.1 Y20 Z0.28 F5000.0; fast move to position
-G1 X10.1 Y200.0 Z0.28 F1500.0 E15; print the first segment
-G1 X10.4 Y200.0 Z0.28 F5000.0; fast move to the second position
-G1 X10.4 Y20 Z0.28 F1500.0 E30; print the second segment
-G92 E0 ;Reset Extruder
-G1 Z2.0 F3000;
-G92 E0
-G92 E0
-G1 F2400 E-0.5
+M104 S${this.print_temp_left_extruder} ; set extruder temp 
+M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M862.3 P "MK3S" ; printer model check 
 
-;M106 S255; start fan (if needed)
-M204 S500; set acceleration
-M205 X16 Y16; set jerk/acceleration
+G21 ; set units to millimeters 
+G90 ; use absolute coordinates 
+M83  ; extruder relative mode 
+M900 K0.05 ; Filament gcode LA 1.5 
+M900 K30 ; Filament gcode LA 1.0 
+G92 E0.0 
+
+G1 Z0.200 F10800.000 
+
+M204 S1000 
       `;
     }
   }
@@ -177,15 +257,43 @@ M205 X16 Y16; set jerk/acceleration
    * @param {number} printHead_speed_when_foam - The print head speed when extruding foam.
    * @returns {string} The G-code command for the extrusion segment.
    */
+
   private extrude_single_segment(
-    p0: THREE.Vector3,
-    p1: THREE.Vector3,
+    p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
+    p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
     extrusion_speed_when_foam: number,
-    printHead_speed_when_foam: number
+    printHead_speed_when_foam: number,
+    ZlayerIndex: number,
+    isFirstInLayer: boolean = false
   ): string {
-    this.extrudedAmount += this.norm(p1, p0) * (extrusion_speed_when_foam / printHead_speed_when_foam);
-    return `G1 X${p1.x.toFixed(4)} Y${p1.y.toFixed(4)} Z${p1.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F${printHead_speed_when_foam}`;
+    // Extract Vector3 points regardless of input type
+
+    const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
+    const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
+
+    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
+    const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
+
+    const S = gamma / (beta * this.V_Star);
+    const F = this.Edot / S;
+
+
+    console.log("📌 Extruding segment: ", { p0Point, p1Point });
+    // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
+
+    this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
+    let gcode = '';
+
+    if (isFirstInLayer) {
+      gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${p0Point.z.toFixed(4)} E0.0050 F0114 ; Move to start of new layer\n`;
+    }
+
+    gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
+
+    return gcode;
   }
+
+
 
   /**
    * Generates the base (boundary) G-code based on the bottom boundary of the model.
@@ -229,15 +337,19 @@ M205 X16 Y16; set jerk/acceleration
     body_gcode.push("M205 X8 Y8; tune down acceleration");
     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
 
+
+
     for (let i = 0; i < corners.length - 1; i++) {
       body_gcode.push(
         this.extrude_single_segment(
           corners[i],
           corners[i + 1],
           this.extrusion_norm_rate,
-          this.printHead_speed_when_normal_print
+          this.printHead_speed_when_normal_print,
+          0
         )
       );
+
     }
 
     body_gcode.push("G92 E0");
@@ -259,46 +371,72 @@ M205 X16 Y16; set jerk/acceleration
    * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
    * @returns {string} The generated foam toolpath G-code.
    */
-  public generate_foam_gcode(toolpath: THREE.Vector3[][], extruderId: number): string {
-
+  
+  public generate_foam_gcode(
+    toolpath: THREE.Vector3[][],
+    extruderId: number,
+    modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
+  ): string {
     if (toolpath.length === 0 || toolpath[0].length === 0) {
       console.error("Toolpath is empty.");
       return "";
     }
 
     let body_gcode: string[] = [];
-    let lastTarget: THREE.Vector3 = toolpath[0][0];
+    // Apply model position to first point
+    let firstPoint = toolpath[0][0].clone().add(modelPosition);
+    let lastTarget: THREE.Vector3 = firstPoint;
     this.extrudedAmount = 0;
 
+    console.log("Total layers:", toolpath.length);
+    console.log("Model position applied:", modelPosition);
+
     for (let i = 0; i < toolpath.length; i++) {
+      let layerIndex = i;
       if (i === 0) {
+        const firstPointPos = {
+          x: firstPoint.x,
+          y: firstPoint.y,
+          z: firstPoint.z
+        };
+
         body_gcode.push(
-          `G0 F2880 X${toolpath[i][0].x} Y${toolpath[i][0].y} Z${toolpath[i][0].z}; move to start point`
+          `G0 F2880 X${firstPointPos.x.toFixed(4)} Y${firstPointPos.y.toFixed(4)} Z${firstPointPos.z.toFixed(4)}; move to start point`
         );
+
         body_gcode.push("M205 X8 Y8; tune down acceleration");
         body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
       } else {
+        // Apply model position to the first point of each layer
+        const currentPoint = toolpath[i][0].clone().add(modelPosition);
         body_gcode.push(
           this.extrude_single_segment(
             lastTarget,
-            toolpath[i][0],
-            this.extrusion_foam_interlayer_rate,
-            this.printHead_speed_when_interlayer_move
-          )
-        );
-      }
-      lastTarget = toolpath[i][0];
-
-      for (let j = 1; j < toolpath[i].length; j++) {
-        body_gcode.push(
-          this.extrude_single_segment(
-            lastTarget,
-            toolpath[i][j],
+            currentPoint,
             this.extrusion_speed_when_foam,
-            this.printHead_speed_when_foam
+            this.printHead_speed_when_foam,
+            layerIndex,
+            true
           )
         );
-        lastTarget = toolpath[i][j];
+        lastTarget = currentPoint;
+      }
+
+      // Process the rest of the points in the layer
+      for (let j = 1; j < toolpath[i].length; j++) {
+        // Apply model position to each point
+        const currentPoint = toolpath[i][j].clone().add(modelPosition);
+        body_gcode.push(
+          this.extrude_single_segment(
+            lastTarget,
+            currentPoint,
+            this.extrusion_speed_when_foam,
+            this.printHead_speed_when_foam,
+            i,
+            false
+          )
+        );
+        lastTarget = currentPoint;
       }
     }
 
@@ -311,8 +449,10 @@ M205 X16 Y16; set jerk/acceleration
       body_gcode.join("\n") +
       "\n\n" +
       this.end_gcode;
+
     return this.toolpathGcode;
   }
+
 
   /**
    * Computes the Euclidean distance between two THREE.Vector3 points.

@@ -5,6 +5,7 @@ import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
+import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -13,6 +14,7 @@ export interface InitGUIResult {
   gui: GUI;
   foamModelListFolder: GUI;        // Folder for foam models list.
   everydayModelListFolder: GUI;    // Folder for everyday models list.
+  saveFolder: GUI;
 }
 
 /**
@@ -26,10 +28,13 @@ export interface InitGUIResult {
  * @returns An object containing { gui, foamModelListFolder, everydayModelListFolder }.
  */
 export default function initGUI(visualizer: Visualizer): InitGUIResult {
+
+  console.log('initGUI function called');
   // Create a new GUI instance.
   const gui = new GUI();
   // Change the top-level GUI title.
   const titleElement = gui.domElement.querySelector('.title');
+  console.log('Title Element:', titleElement);
   if (titleElement) {
     titleElement.textContent = 'SMART FOAM SOFTWARE';
     titleElement.classList.add('lil-gui-1st-title');
@@ -80,7 +85,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     });
   }
   const everydayModelListFolder = everydayModelFolder.addFolder('everyday object model list');
-  everydayModelListFolder.add(importControls, 'importEverydayModel').name('Import Everyday STL Model');
+  everydayModelListFolder.add(importControls, 'importEverydayModel').name('Import Everyday STL Model!');
 
 
 
@@ -128,6 +133,11 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       visualizer.printer.machine_height = v;
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
+    printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.1)
+    .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
+
+
+  
   printerFolder.close();
   // Update parameter calculation.
   // const updateParamCalculation = () => {
@@ -136,6 +146,75 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   // };
   // updateParamCalculation();
 
+  // adding a save folder for the save gcode for the toolpath output
+
+  const paramsFolder = settingFolder.addFolder('parameters');
+  paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
+    .onChange((v: number) => {
+      visualizer.printer.V_Star = v;
+      visualizer.config.VStar = v;
+    });
+  paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
+    .onChange((v: number) => {
+      visualizer.printer.Edot = v;
+      visualizer.config.Edot = v;
+  });
+  paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
+  .onChange((v: number) => {
+    visualizer.printer.diameter_filament = v;
+    visualizer.config.diameter_filament = v;
+});
+
+paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.ZOffset = v;
+  visualizer.config.zOffset = v;
+});
+
+paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.deltaZ = v;
+  visualizer.config.deltaZ = v;
+});
+// layer height
+// H Star
+// Z Offset
+
+paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.extrusion_m = v;
+  visualizer.config.extrusion_m = v;
+});
+
+paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.printer.H_star = v;
+  visualizer.config.HStar = v;
+});
+
+paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
+.onChange((v: number) => {
+  visualizer.config.height = v;
+  visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
+});
+
+  //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
+  paramsFolder.add(visualizer.config, 'showGcodeVisualization')
+    .name('Show G-code Visualization')
+    .onChange((value: boolean) => {
+        // Regenerate toolpath visualization when toggle changes
+        if (visualizer.currentSelectedModel) {
+            generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+        }
+    });
+
+ 
+  
+  const saveFolder = gui.addFolder('Saving');
+  saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');
+  saveFolder.close();
+  
+
   // Open the GUI.
   gui.open();
 
@@ -143,5 +222,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     gui,
     foamModelListFolder,
     everydayModelListFolder,
+    saveFolder
   };
 }

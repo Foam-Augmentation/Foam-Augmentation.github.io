@@ -16,6 +16,7 @@ import { createSelectedMeshFromHighlight } from './interactions/createSelectedMe
 import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer from '../printer/Printer';
+import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
@@ -52,6 +53,9 @@ export default class Visualizer {
     /** Visualization objects for the toolpath (if any) */
     public toolpathVisualize: THREE.Object3D[] | null;
 
+    public showGcodeVisualization: boolean = false;
+    public currentSelectedModel: EverydayModel | null = null;
+
     /**
      * Configuration for selection and toolpath parameters.
      */
@@ -71,6 +75,7 @@ export default class Visualizer {
         machineHeight: number;
         zOffset: number;
         deltaZ: number;
+        //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
         foamLayers: number;
         extrusion_speed_when_foam: number;
         printHead_speed_when_foam: number;
@@ -78,6 +83,15 @@ export default class Visualizer {
         dieSwelling: number;
         VStar: number;
         HStar: number;
+        Edot: number;
+        diameter_filament: number;
+        extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
+        height: number;
+        showGcodeVisualization: false,
+        currentSelectedModel: EverydayModel | null;
+
+        
+
     };
 
     /**
@@ -102,6 +116,10 @@ export default class Visualizer {
     public foamModelListFolder: GUI;
     /** GUI folder for everyday model list */
     public everydayModelListFolder: GUI;
+
+    public saveFolder: GUI;
+
+
 
     /**
      * Creates an instance of Visualizer.
@@ -140,6 +158,7 @@ export default class Visualizer {
         this.toolpathVisualize = null;
 
         // Set configuration parameters.
+      
         this.config = {
             toolMode: 'lasso',
             selectionMode: 'centroid-visible',
@@ -149,20 +168,29 @@ export default class Visualizer {
             objectWireframe: false,
             objectBoundingBox: false,
             selectBoundingBox: false,
-            bedTemp: 100,
-            nozzleLeftTemp: 240,
-            nozzleRightTemp: 260,
+            bedTemp: 60,
+            nozzleLeftTemp: 230,
+            nozzleRightTemp: 230,
             machineDepth: 302,
             machineHeight: 402,
-            zOffset: 12,
-            deltaZ: 5,
+            zOffset: 3.38,
+            deltaZ: 1.7,
+            height: 20,
+            // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
             foamLayers: 3,
-            extrusion_speed_when_foam: 70,
-            printHead_speed_when_foam: 70,
+            extrusion_speed_when_foam: 758.17,
+            printHead_speed_when_foam: 113.7,
             nozzleDiameter: 0.4,
-            dieSwelling: 1.1,
-            VStar: 0,
-            HStar: 0,
+            dieSwelling: 0.94,
+            VStar: 0.15,
+            HStar: 9,
+            Edot: 35,
+            diameter_filament: 1.75,
+            extrusion_m: 0.92,
+            showGcodeVisualization: false,
+            currentSelectedModel: null
+
+            
         };
 
         // Initialize lasso selection state.
@@ -202,6 +230,8 @@ export default class Visualizer {
         this.gui = guiResult.gui;
         this.foamModelListFolder = guiResult.foamModelListFolder;
         this.everydayModelListFolder = guiResult.everydayModelListFolder;
+        //save folder for the gcode 
+        this.saveFolder = guiResult.saveFolder;
     }
 
     /**
@@ -254,5 +284,15 @@ export default class Visualizer {
 
         // Render the scene.
         this.renderer.render(this.scene, this.camera);
+    }
+
+    public saveToolpathGcodeToFile(): void {
+        const gcode = this.printer.toolpathGcode;
+        console.log("G-code content:", this.printer);
+        console.log("G-code content:", gcode);
+        console.log("saveToolpathGcodeToFile called");
+        if (gcode) {
+            saveGcodeToFile(gcode, "toolpath"); 
+        }
     }
 }

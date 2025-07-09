@@ -7,6 +7,9 @@ import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { getConvexHull, pointRayCrossesSegments, lineCrossesLine } from '../utils/geometryUtils';
 import { EverydayModel } from '../types/modelTypes';
+import  Printer  from '../../printer/Printer';
+import { saveGcodeToFile } from '../toolpath/saveGcodeToFile';
+
 
 /**
  * Updates the selection for a given model object based on the current lasso selection.
@@ -64,7 +67,7 @@ export function updateSelection(
         line.end.x = sp[sNext];
         line.end.y = sp[sNext + 1];
     }
-
+    console.log("updateSelection called!");
     // Compute the camera's local position relative to the mesh.
     invWorldMatrix.copy(modelObj.mesh.matrixWorld).invert();
     camLocalPosition.set(0, 0, 0)
@@ -273,10 +276,30 @@ export function updateSelection(
         }
     }
 
+    visualizer.currentSelectedModel = modelObj;
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
-    console.log(modelObj);
+    console.log("modelob", modelObj);
+    console.log("vis", visualizer);
     const toolpaths = generateFoamToolpath(visualizer, modelObj);
+    console.log("Generated Toolpaths:", toolpaths);
+    // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
+
+    console.log("Calling generate_foam_gcode...");
+
+    console.log("Toolpaths before generating G-Code:", toolpaths.foam);
+   // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
+    //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
+    console.log(gcode);
+    visualizer.printer.toolpathGcode = gcode;
+
+    console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
+
+    //saveGcodeToFile(gcode, "toolpath");
+    generateFoamToolpath(visualizer, modelObj);
+    
+
     return {
         all: toolpaths.all,
         foam: toolpaths.foam,
