@@ -89,9 +89,7 @@ export default class Visualizer {
         height: number;
         showGcodeVisualization: false,
         currentSelectedModel: EverydayModel | null;
-
-        
-
+        useTreeSlicer: boolean;
     };
 
     /**
@@ -188,9 +186,8 @@ export default class Visualizer {
             diameter_filament: 1.75,
             extrusion_m: 0.92,
             showGcodeVisualization: false,
-            currentSelectedModel: null
-
-            
+            currentSelectedModel: null,
+            useTreeSlicer: false
         };
 
         // Initialize lasso selection state.

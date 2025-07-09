@@ -15,6 +15,7 @@ export interface InitGUIResult {
   foamModelListFolder: GUI;        // Folder for foam models list.
   everydayModelListFolder: GUI;    // Folder for everyday models list.
   saveFolder: GUI;
+  treeSlicerFolder: GUI;          // New folder for TreeSlicer operations
 }
 
 /**
@@ -215,6 +216,40 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
   saveFolder.close();
   
 
+  // Create TreeSlicer folder
+  const treeSlicerFolder = gui.addFolder('TreeSlicer Operations');
+  treeSlicerFolder.add({ sliceModel: () => {
+    console.log('Slice Model button clicked');
+    if (!visualizer.currentSelectedModel) {
+        console.warn('No model selected. Please select a model first.');
+        return;
+    }
+    console.log('Selected model:', visualizer.currentSelectedModel);
+    console.log('Selected model mesh:', visualizer.currentSelectedModel.mesh);
+    console.log('Selected model position:', visualizer.currentSelectedModel.mesh.position);
+    
+    // Generate toolpath
+    console.log('Generating toolpath...');
+    const toolpaths = generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+    console.log('Generated toolpaths:', toolpaths);
+    
+    if (!toolpaths || !toolpaths.foam) {
+        console.warn('Failed to generate toolpath. Please try again.');
+        return;
+    }
+    
+    // Create G-code
+    console.log('Creating G-code...');
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, visualizer.currentSelectedModel.mesh.position);
+    console.log('Generated G-code:', gcode);
+    
+    // Save G-code file
+    console.log('Saving G-code file...');
+    visualizer.saveToolpathGcodeToFile();
+    console.log('G-code file saved successfully');
+  }}, 'sliceModel').name('Slice Selected Model');
+  treeSlicerFolder.close();
+
   // Open the GUI.
   gui.open();
 
@@ -222,6 +257,7 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
     gui,
     foamModelListFolder,
     everydayModelListFolder,
-    saveFolder
+    saveFolder,
+    treeSlicerFolder
   };
 }
