@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import Visualizer from '../visualizer/Visualizer';
-import {getSegmentsFromMesh, getTrianglePlaneIntersection} from '../visualizer/utils/TreeSlicer'
+import {getSegmentsFromMesh, connectSegments} from '../visualizer/utils/TreeSlicer'
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -318,7 +318,8 @@ M204 S1000
     return getSegmentsFromMesh(mesh, plane);
   }
 
-  /**
+
+    /**
    * Takes in a contour in the form of a list of line segments and returns an ordered list 
    * of points representing the contour.
    * 
@@ -359,6 +360,46 @@ M204 S1000
     return baseContour;
   }
 
+
+  /**
+   * Expands a contour outwards (or inwards if offset is negative) by a given amount.
+   * 
+   * @param {THREE.Vector3[]} contour The contour to be offset.
+   * @param {number} offset How much to offset the contour outwards by
+   * @returns {THREE.Vector3[]}
+   */
+  private offset_contour(
+    contour: THREE.Vector3[],
+    offset: number,
+  ): THREE.Vector3[] {
+    // find the center of the contour
+    const centroid = new THREE.Vector2(0, 0);
+    contour.forEach(p => centroid.add(new THREE.Vector2(p.x, p.y)));
+    centroid.divideScalar(contour.length);
+
+    const expandedContour: THREE.Vector3[] = [];
+    for (let i = 0; i < contour.length; i++) {
+      const lastPoint = i <= 0 ? contour[contour.length - 1 - i] : contour[i - 1];
+      const point = contour[i];
+      const nextPoint = i + 1 >= contour.length ? contour[i + 1 - contour.length] : contour[i + 1];
+
+      // compute the normal using the two points next to the current point
+      const bisector = new THREE.Vector2(nextPoint.x - lastPoint.x, nextPoint.y - lastPoint.y);
+      let norm = new THREE.Vector2(-bisector.y, bisector.x).normalize();
+
+      // flip the normal if it points towards the center
+      const toCenter = new THREE.Vector2(point.x, point.y).sub(centroid);
+      if (norm.dot(toCenter) < 0) {
+        norm.negate();
+      }
+
+      expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
+                                             point.y + norm.y * offset, 
+                                             point.z));
+    }
+    return expandedContour;
+  }
+
   /**
    * Generates the gcode for a brim around the bottom of a mesh.
    * 
@@ -373,58 +414,45 @@ M204 S1000
     extruderId: number = 1
   ): string {
     // get ordered set of points representing the boundary of the bottom layer
-    const baseContour: THREE.Vector3[] = this.make_ordered_contour(this.get_base_contour(mesh));
-
-    const centroid = new THREE.Vector2(0, 0);
-    baseContour.forEach(p => centroid.add(new THREE.Vector2(p.x, p.y)));
-    centroid.divideScalar(baseContour.length);
+    const baseContours: THREE.Vector3[][] = connectSegments(this.get_base_contour(mesh));
 
     // push the contour out by offset
-    const expandedContour: THREE.Vector3[] = [];
-    for (let i = 0; i < baseContour.length; i++) {
-      const lastPoint = i <= 0 ? baseContour[baseContour.length - 1 - i] : baseContour[i - 1];
-      const point = baseContour[i];
-      const nextPoint = i + 1 >= baseContour.length ? baseContour[i + 1 - baseContour.length] : baseContour[i + 1];
 
-      // compute the normal using the two points next to the current point
-      const bisector = new THREE.Vector2(nextPoint.x - lastPoint.x, nextPoint.y - lastPoint.y);
-      let norm = new THREE.Vector2(-bisector.y, bisector.x).normalize();
+    const expandedContours: THREE.Vector3[][] = [];
 
-      // flip the normal if it points towards the center
-      const toCenter = new THREE.Vector2(point.x, point.y).sub(centroid);
-      if (norm.dot(toCenter) < 0) {
-        norm.negate();
-      }
-
-      expandedContour.push(new THREE.Vector3(point.x + norm.x * offset + mesh.position.x, 
-                                             point.y + norm.y * offset + mesh.position.y, 
-                                             point.z + mesh.position.z));
+    for (const contour of baseContours) {
+      expandedContours.push(this.offset_contour(contour, offset))
     }
 
-    let boundary_gcode: string[] = [];
+    // align contour with model
+    expandedContours.forEach(contour => contour.forEach(p => p.add(mesh.position)))
 
-    // create gcode for following the expanded contour
-    const firstPoint = expandedContour[0];
-    boundary_gcode.push(`G0 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}
-                         F${this.printHead_speed_when_free_move}`) // move to first point
-    for (let i = 0; i < expandedContour.length; i++) {
-      const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 -expandedContour.length] : expandedContour[i +  1];
-      const point = expandedContour[i];
-      boundary_gcode.push(
-        this.extrude_single_segment(
-          point,
-          nextPoint,
-          this.extrusion_norm_rate,
-          this.printHead_speed_when_normal_print,
-          0
-        )
-      );
+    let boundaryGcode: string[] = [];
+
+    // create gcode for following the expanded contours
+    for (const expandedContour of expandedContours) {
+      const firstPoint = expandedContour[0];
+      boundaryGcode.push(`G0 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}
+                          F${this.printHead_speed_when_free_move}`) // move to first point in contour
+      for (let i = 0; i < expandedContour.length; i++) {
+        const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 -expandedContour.length] : expandedContour[i +  1];
+        const point = expandedContour[i];
+        boundaryGcode.push(
+          this.extrude_single_segment(
+            point,
+            nextPoint,
+            this.extrusion_norm_rate,
+            this.printHead_speed_when_normal_print,
+            0
+          )
+        );
+      }
     }
 
     this.boundaryGcode =
       this.build_start_gcode(extruderId) +
       "\n\n" +
-      boundary_gcode.join("\n") +
+      boundaryGcode.join("\n") +
       "\n\n" +
       this.end_gcode;
 

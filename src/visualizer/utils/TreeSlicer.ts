@@ -118,19 +118,32 @@ export function getTrianglePlaneIntersection(a: THREE.Vector3, b: THREE.Vector3,
             const intersection = new THREE.Vector3();
             intersection.lerpVectors(p1, p2, t);
             points.push(intersection);
+        } 
+        if (d1 === 0) {
+            points.push(p1);
+        }
+        if (d2 === 0) {
+            points.push(p2);
         }
     }
     
     return points;
 }
 
-// connect line segments end to end to make closed loops
-function connectSegments(segments: { start: THREE.Vector3; end: THREE.Vector3 }[]): THREE.Vector3[][] {
+/**
+ * Takes in a list of line segments and connects the line segments to create contours, 
+ * returning a matrix of points representing the contours.
+ * 
+ * @private
+ * @param {{ start: THREE.Vector3; end: THREE.Vector3 }[]} segments - The contour in the form of line segments.
+ * @returns {THREE.Vector3[][]} The ordered lists of points making up the contour.
+ */
+export function connectSegments(segments: { start: THREE.Vector3; end: THREE.Vector3 }[]): THREE.Vector3[][] {
     if (segments.length === 0) return [];
     
     const contours: THREE.Vector3[][] = [];
     const used = new Set<number>();
-    const tolerance = 0.01; // how close endpoints need to be to connect
+    const tolerance = 0.00001; // how close endpoints need to be to connect
     
     while (used.size < segments.length) {
         // find unused segment to start new contour

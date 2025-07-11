@@ -208,7 +208,7 @@ function _visualizeSegments(globalSegments: { point: THREE.Vector3, type: string
 }
 
 /**
- * visualize and organize all layers of segments (based on toolpathConfig.deltaZ, toolpathConfig.zOffset, and sandwiched strcuture layer counts), call visualzieSegments for each layer
+ * visualize and organize all layers of segments (based on toolpathConfig.deltaZ, toolpathConfig.zOffset, and sandwiched structure layer counts), call visualizeSegments for each layer
  * @param visualizer 
  * @param modelObj 
  */
@@ -289,7 +289,7 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
 }
 
 // --- Add zigzag infill generator for a 2D polygon (contour) ---
-function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spacing: number }): THREE.Vector3[] {
+function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spacing: number }, flipY: boolean): THREE.Vector3[] {
     // Project contour to 2D (XY)
     const points2D = contour.map(pt => new THREE.Vector2(pt.x, pt.y));
     // Find bounds
@@ -299,7 +299,14 @@ function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spa
         if (pt.y > maxY) maxY = pt.y;
     }
     const lines: THREE.Vector3[] = [];
+    // Flip the y direction to go from maxY to minY instead if passed in
+    if (flipY) {
+        let temp = minY;
+        minY = maxY;
+        maxY = temp;
+    }
     // For each horizontal line at spacing, find intersections with the polygon
+    let atTop = false;
     for (let y = minY; y <= maxY; y += params.spacing) {
         // Find intersections with contour edges
         const intersections: number[] = [];
@@ -317,7 +324,7 @@ function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spa
         // Pair up intersections to form zigzag lines
         for (let i = 0; i + 1 < intersections.length; i += 2) {
             const x0 = intersections[i], x1 = intersections[i + 1];
-            if (y % (2 * params.spacing) < params.spacing) {
+            if (atTop) {
                 lines.push(new THREE.Vector3(x0, y, z));
                 lines.push(new THREE.Vector3(x1, y, z));
             } else {
@@ -325,6 +332,7 @@ function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spa
                 lines.push(new THREE.Vector3(x0, y, z));
             }
         }
+        atTop = !atTop;
     }
     return lines;
 }
@@ -386,10 +394,13 @@ export function generateFoamToolpath(
     // --- 4. For each chunk, for each region, generate zigzag toolpath ---
     const toolpaths: THREE.Vector3[][] = [];
     for (const chunk of orderedChunks) {
+        // flip the y direction every layer to minimize travel time between layers
+        let flipY = false;
         for (const region of chunk.regions) {
             if (!region.contour || region.contour.length === 0) continue;
-            const zigzag = generateZigzagInfill(region.contour, region.height, { spacing: modelObj.toolpathConfig.gridSize });
+            const zigzag = generateZigzagInfill(region.contour, region.height, { spacing: modelObj.toolpathConfig.gridSize }, flipY);
             toolpaths.push(zigzag);
+            // flipY = !flipY;
         }
     }
     // --- 5. Visualize toolpaths ---
@@ -403,6 +414,21 @@ export function generateFoamToolpath(
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2, opacity: 0.8, transparent: true });
+        const line = new THREE.Line(geometry, material);
+        visualizationGroup.add(line);
+    }
+
+    // visualize contours
+    for (const region of allRegions) {
+        const path = region.contour;
+        if (path.length < 2) continue;
+        const vertices: number[] = [];
+        for (const pt of path) {
+            vertices.push(pt.x, pt.y, pt.z);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        const material = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2, opacity: 0.8, transparent: true });
         const line = new THREE.Line(geometry, material);
         visualizationGroup.add(line);
     }
