@@ -6,6 +6,7 @@ import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
 import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
+import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -212,7 +213,15 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
  
   
   const saveFolder = gui.addFolder('Saving');
-  saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');
+  saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
+  saveFolder.add({ saveBoundaryGcode: () => {
+    if (visualizer.current_Obj) {
+      visualizer.printer.generate_boundary_gcode(visualizer.current_Obj.mesh);
+      visualizer.saveGcodeToFile(visualizer.printer.boundaryGcode, "boundary");
+    } else {
+      console.warn("You need to select a model to save the boundary gcode for it.");
+    }
+  } }, 'saveBoundaryGcode').name('Save Boundary G-Code');
   saveFolder.close();
   
 
@@ -220,6 +229,11 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
   const treeSlicerFolder = gui.addFolder('TreeSlicer Operations');
   treeSlicerFolder.add({ sliceModel: () => {
     console.log('Slice Model button clicked');
+
+    if (visualizer.everydayModelList.length > 0) {
+      visualizer.currentSelectedModel = visualizer.everydayModelList[0];
+    }
+
     if (!visualizer.currentSelectedModel) {
         console.warn('No model selected. Please select a model first.');
         return;
@@ -245,7 +259,7 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
     
     // Save G-code file
     console.log('Saving G-code file...');
-    visualizer.saveToolpathGcodeToFile();
+    visualizer.saveGcodeToFile(gcode, "toolpath");
     console.log('G-code file saved successfully');
   }}, 'sliceModel').name('Slice Selected Model');
   treeSlicerFolder.close();

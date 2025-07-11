@@ -67,8 +67,15 @@ export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vect
     return regions;
 }
 
-// get line segments where mesh intersects with plane
-function getSegmentsFromMesh(mesh: THREE.Mesh, plane: THREE.Plane): { start: THREE.Vector3; end: THREE.Vector3 }[] {
+/**
+ * Gets the outer contour of a mesh on a specific plane
+ * 
+ * @private
+ * @param {THREE.Mesh} mesh - The mesh to get segments from.
+ * @param {THREE.Plane} plane - The plane on which to extract segments from the mesh on.
+ * @returns {{ start: THREE.Vector3; end: THREE.Vector3 }[]} A list of line segments that make up the contour.
+ */
+export function getSegmentsFromMesh(mesh: THREE.Mesh, plane: THREE.Plane): { start: THREE.Vector3; end: THREE.Vector3 }[] {
     const geometry = mesh.geometry as THREE.BufferGeometry;
     const positions = geometry.attributes.position.array as Float32Array;
     const segments: { start: THREE.Vector3; end: THREE.Vector3 }[] = [];
@@ -88,8 +95,16 @@ function getSegmentsFromMesh(mesh: THREE.Mesh, plane: THREE.Plane): { start: THR
     return segments;
 }
 
-// find where triangle edges cross the plane
-function getTrianglePlaneIntersection(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, plane: THREE.Plane): THREE.Vector3[] {
+/**
+ * Gets the intersection points between a triangle and a plane.
+ * 
+ * @param {THREE.Vector3} a - First vertex of the triangle.
+ * @param {THREE.Vector3} b - Second vertex of the triangle.
+ * @param {THREE.Vector3} c - Third vertex of the triangle.
+ * @param {THREE.Plane} plane - The plane to check intersections with.
+ * @returns {THREE.Vector3[]} The list of intersection points.
+ */
+export function getTrianglePlaneIntersection(a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, plane: THREE.Plane): THREE.Vector3[] {
     const points: THREE.Vector3[] = [];
     const edges = [[a, b], [b, c], [c, a]];
     
@@ -258,9 +273,6 @@ export function splitRegionsByOverlapOrSupport(regions: SliceRegion[]): SliceReg
 
 // build tree structure to minimize travel path
 export function buildRegionTree(regions: SliceRegion[], layerHeight: number): RegionNode[] {
-    // sort by height so we process bottom up
-    regions.sort((a, b) => a.height - b.height);
-    
     const nodes = new Map<string, RegionNode>();
     
     // create nodes for each region
@@ -274,12 +286,22 @@ export function buildRegionTree(regions: SliceRegion[], layerHeight: number): Re
         };
         nodes.set(region.id, node);
     }
+
+    // sort in descending order to start from the top of the tree
+    // do this after making nodes because maps don't preserve order
+    const sortedNodeRegions = Array.from(nodes.entries()).sort((a, b) => b[1].layer - a[1].layer)
     
-    // figure out parent-child relationships
-    for (const [id, node] of Array.from(nodes.entries())) {
-        for (const [otherId, otherNode] of Array.from(nodes.entries())) {
-            if (id === otherId) continue;
-            
+    // figure out parent-child relationshipds
+    for (let i = 0; i < sortedNodeRegions.length; i++) {
+        const [id, node] = sortedNodeRegions[i];
+        for (let j = i + 1; j < sortedNodeRegions.length; j++) {
+            const [otherId, otherNode] = sortedNodeRegions[j];
+
+            // break out of for loop after checking all nodes in the next layer down.
+            if (node.layer - otherNode.layer > 1) {
+                break;
+            }
+
             if (shouldBeParent(node.region, otherNode.region)) {
                 node.children.push(otherNode);
                 otherNode.parent = node;

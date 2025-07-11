@@ -22,14 +22,14 @@ import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
  * Visualizer class handles the rendering of 3D models, GUI initialization,
  * and user interactions (such as lasso selection and transform controls).
  */
-export default class Visualizer {
-    /** The container HTML element */
-    public container: HTMLElement;
-    /** Printer instance (used for generating G-code) */
-    public printer: Printer; 
-    /** Three.js renderer */
-    public renderer: THREE.WebGLRenderer;
-    /** Three.js scene */
+export default class Visualizer { 
+    /** The container HTML element */ 
+    public container: HTMLElement; 
+    /** Printer instance (used for generating G-code) */ 
+    public printer: Printer;  
+    /** Three.js renderer */ 
+    public renderer: THREE.WebGLRenderer; 
+    /** Three.js scene */ 
     public scene: THREE.Scene;
     /** Perspective camera */
     public camera: THREE.PerspectiveCamera;
@@ -236,7 +236,6 @@ export default class Visualizer {
      */
     public render = (): void => {
         requestAnimationFrame(this.render);
-
         // Update the selection lasso lines if needed.
         if (this.lassoState.selectionShapeNeedsUpdate) {
             if (this.config.toolMode === 'lasso') {
@@ -283,13 +282,12 @@ export default class Visualizer {
         this.renderer.render(this.scene, this.camera);
     }
 
-    public saveToolpathGcodeToFile(): void {
-        const gcode = this.printer.toolpathGcode;
+    public saveGcodeToFile(gcode: string, name: string): void {
         console.log("G-code content:", this.printer);
         console.log("G-code content:", gcode);
         console.log("saveToolpathGcodeToFile called");
         if (gcode) {
-            saveGcodeToFile(gcode, "toolpath"); 
+            saveGcodeToFile(gcode, name); 
         }
     }
 }

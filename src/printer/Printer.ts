@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import Visualizer from '../visualizer/Visualizer';
+import {getSegmentsFromMesh, getTrianglePlaneIntersection} from '../visualizer/utils/TreeSlicer'
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -293,6 +294,142 @@ M204 S1000
     return gcode;
   }
 
+
+  /**
+   * Gets the contour of the bottom of a mesh.
+   * 
+   * @private
+   * @param {THREE.Mesh} mesh - The mesh to get the base contour from.
+   * @returns {{ start: THREE.Vector3; end: THREE.Vector3 }[]} The contour in the form of a list of line segments.
+   */
+  private get_base_contour(mesh: THREE.Mesh): { start: THREE.Vector3; end: THREE.Vector3 }[] {
+    const geometry = mesh.geometry as THREE.BufferGeometry;
+    const positions = geometry.attributes.position.array as Float32Array;
+
+    // find the minimum z value
+    let minZ = Infinity;
+    for (let i = 2; i < positions.length; i += 3) {
+        minZ = Math.min(minZ, positions[i]);
+    }
+    minZ += 0.01; // add a small amount to avoid issues with being exactly at the bottom of the mesh
+
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -minZ);
+
+    return getSegmentsFromMesh(mesh, plane);
+  }
+
+  /**
+   * Takes in a contour in the form of a list of line segments and returns an ordered list 
+   * of points representing the contour.
+   * 
+   * @private
+   * @param {{ start: THREE.Vector3; end: THREE.Vector3 }[]} segments - The contour in the form of line segments.
+   * @returns {THREE.Vector3} The ordered list of points making up the contour.
+   */
+  private make_ordered_contour(
+    segments: { start: THREE.Vector3; end: THREE.Vector3 }[]
+  ): THREE.Vector3[] {
+    const baseContour: THREE.Vector3[] = [];
+
+    if (segments.length === 0) return baseContour;
+
+    let current = segments[0];
+    baseContour.push(current.start.clone());
+    baseContour.push(current.end.clone());
+    segments.splice(0, 1);
+
+    while (segments.length > 0) {
+      const lastPoint = baseContour[baseContour.length - 1];
+
+      // find next connected segment
+      const nextIndex = segments.findIndex(
+        s => s.start.distanceTo(lastPoint) < 1e-6 || s.end.distanceTo(lastPoint) < 1e-6
+      );
+
+      if (nextIndex === -1) break; // contour is open or broken
+
+      const nextSegment = segments.splice(nextIndex, 1)[0];
+
+      if (nextSegment.start.distanceTo(lastPoint) < 1e-6) {
+        baseContour.push(nextSegment.end.clone());
+      } else {
+        baseContour.push(nextSegment.start.clone());
+      }
+    }
+    return baseContour;
+  }
+
+  /**
+   * Generates the gcode for a brim around the bottom of a mesh.
+   * 
+   * @param {THREE.Mesh} mesh - The mesh to get the brim of.
+   * @param {number} offset - How far away the brim should be from the mesh.
+   * @param {number} extruderId - The ID of the extruder. 1 For left 2 for right.
+   * @returns {string} The gcode as a string.
+   */
+  public generate_boundary_gcode(
+    mesh: THREE.Mesh,
+    offset: number = 3,
+    extruderId: number = 1
+  ): string {
+    // get ordered set of points representing the boundary of the bottom layer
+    const baseContour: THREE.Vector3[] = this.make_ordered_contour(this.get_base_contour(mesh));
+
+    const centroid = new THREE.Vector2(0, 0);
+    baseContour.forEach(p => centroid.add(new THREE.Vector2(p.x, p.y)));
+    centroid.divideScalar(baseContour.length);
+
+    // push the contour out by offset
+    const expandedContour: THREE.Vector3[] = [];
+    for (let i = 0; i < baseContour.length; i++) {
+      const lastPoint = i <= 0 ? baseContour[baseContour.length - 1 - i] : baseContour[i - 1];
+      const point = baseContour[i];
+      const nextPoint = i + 1 >= baseContour.length ? baseContour[i + 1 - baseContour.length] : baseContour[i + 1];
+
+      // compute the normal using the two points next to the current point
+      const bisector = new THREE.Vector2(nextPoint.x - lastPoint.x, nextPoint.y - lastPoint.y);
+      let norm = new THREE.Vector2(-bisector.y, bisector.x).normalize();
+
+      // flip the normal if it points towards the center
+      const toCenter = new THREE.Vector2(point.x, point.y).sub(centroid);
+      if (norm.dot(toCenter) < 0) {
+        norm.negate();
+      }
+
+      expandedContour.push(new THREE.Vector3(point.x + norm.x * offset + mesh.position.x, 
+                                             point.y + norm.y * offset + mesh.position.y, 
+                                             point.z + mesh.position.z));
+    }
+
+    let boundary_gcode: string[] = [];
+
+    // create gcode for following the expanded contour
+    const firstPoint = expandedContour[0];
+    boundary_gcode.push(`G0 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}
+                         F${this.printHead_speed_when_free_move}`) // move to first point
+    for (let i = 0; i < expandedContour.length; i++) {
+      const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 -expandedContour.length] : expandedContour[i +  1];
+      const point = expandedContour[i];
+      boundary_gcode.push(
+        this.extrude_single_segment(
+          point,
+          nextPoint,
+          this.extrusion_norm_rate,
+          this.printHead_speed_when_normal_print,
+          0
+        )
+      );
+    }
+
+    this.boundaryGcode =
+      this.build_start_gcode(extruderId) +
+      "\n\n" +
+      boundary_gcode.join("\n") +
+      "\n\n" +
+      this.end_gcode;
+
+    return this.boundaryGcode;
+  }
 
 
   /**

@@ -3,7 +3,7 @@ import Visualizer from '../Visualizer';
 import { createSelectedMeshFromHighlight } from './createSelectedMeshFromHighlight';
 import { updateSelectedMeshBoundingBox } from '../toolpath/updateSelectedMeshBoundingBox';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
-import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
+import { generateAugmentFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { getConvexHull, pointRayCrossesSegments, lineCrossesLine } from '../utils/geometryUtils';
 import { EverydayModel } from '../types/modelTypes';
@@ -281,7 +281,7 @@ export function updateSelection(
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);
     console.log("vis", visualizer);
-    const toolpaths = generateFoamToolpath(visualizer, modelObj);
+    const toolpaths = generateAugmentFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
 
@@ -297,8 +297,7 @@ export function updateSelection(
     console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
 
     //saveGcodeToFile(gcode, "toolpath");
-    generateFoamToolpath(visualizer, modelObj);
-    
+    generateAugmentFoamToolpath(visualizer, modelObj);
 
     return {
         all: toolpaths.all,
