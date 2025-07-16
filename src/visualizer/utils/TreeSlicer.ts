@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+import ClipperLib from 'clipper-lib';
+
+
+
+const CLIPPER_SCALE = 1000;
+const MIN_AREA = 3;
+
 
 // basic data structures for slicing
 export interface SliceRegion {
@@ -22,6 +29,13 @@ export interface PrintChunk {
     minHeight: number;
     maxHeight: number;
     dependencies: PrintChunk[];
+}
+
+
+interface ContourNode {
+  path: ClipperLib.IntPoint[];
+  contour: THREE.Vector3[];
+  children: ContourNode[];
 }
 
 // slice mesh into horizontal layers
@@ -119,12 +133,6 @@ export function getTrianglePlaneIntersection(a: THREE.Vector3, b: THREE.Vector3,
             intersection.lerpVectors(p1, p2, t);
             points.push(intersection);
         } 
-        if (d1 === 0) {
-            points.push(p1);
-        }
-        if (d2 === 0) {
-            points.push(p2);
-        }
     }
     
     return points;
@@ -419,4 +427,417 @@ export function topologicalSortChunks(chunks: PrintChunk[]): PrintChunk[] {
     }
     
     return sorted;
+}
+
+
+function toClipperPath(loop: THREE.Vector2[]) {
+  return loop.map(pt => ({
+    X: Math.round(pt.x * CLIPPER_SCALE),
+    Y: Math.round(pt.y * CLIPPER_SCALE),
+  }));
+}
+
+
+function fromClipperPath(path: ClipperLib.IntPoint[]) {
+  return path.map(pt =>
+    new THREE.Vector2(pt.X / CLIPPER_SCALE, pt.Y / CLIPPER_SCALE)
+  );
+}
+
+
+function clipperArea(path: ClipperLib.IntPoint[]) {
+  let area = 0;
+  for (let i = 0; i < path.length; i++) {
+    const p1 = path[i], p2 = path[(i + 1) % path.length];
+    area += p1.X * p2.Y - p2.X * p1.Y;
+  }
+  return area / 2;
+}
+
+
+function preparePaths(
+  outer: THREE.Vector3[],
+  holes: THREE.Vector3[][]
+): THREE.Vector2[][] {
+  if (get_winding_order(outer)) {
+    outer.reverse();
+  }
+  holes.forEach(hole => {
+    if (!get_winding_order(hole)) {
+      holes.reverse();
+    }
+  })
+
+  const twoDimContours: THREE.Vector2[][] = [];
+
+  const twoDimOuter: THREE.Vector2[] = [];
+  outer.forEach(point => {
+      twoDimOuter.push(new THREE.Vector2(point.x, point. y));
+  });
+  twoDimContours.push(twoDimOuter);
+
+  holes.forEach(hole => {
+      const twoDimContour: THREE.Vector2[] = [];
+      hole.forEach(point => {
+          twoDimContour.push(new THREE.Vector2(point.x, point. y));
+      });
+      twoDimContours.push(twoDimContour);
+  });
+  return twoDimContours;
+}
+
+
+function pointAlongLine(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  distance: number
+): THREE.Vector3 {
+  const totalLen = a.distanceTo(b);
+  if (totalLen === 0) return a.clone();
+  const t = distance / totalLen;
+  return a.clone().lerp(b, t);
+}
+
+
+function spiralContours(
+  isocontours: THREE.Vector3[][],
+  indicesToSpiral: number[],
+  initialStartIndex: number,
+  step: number
+): THREE.Vector3[] {
+  let path: THREE.Vector3[] = [];
+
+  let startIndex = initialStartIndex;
+  let initialDist = 0;
+  for (const i of indicesToSpiral) {
+    let totalDist = initialDist;
+    let endIndex = 0;
+    let lastPointIndex = startIndex
+    let endPoint = new THREE.Vector3;
+    const offsetAmount = i + 1 >= isocontours.length ? step : 2 * step;
+    for (let j = 1; totalDist < offsetAmount; j++) {
+      endIndex = startIndex - j;
+      while (endIndex < 0) {
+        endIndex += isocontours[i].length;
+      }
+      endIndex = endIndex % isocontours[i].length;
+      const dist = isocontours[i][lastPointIndex].distanceTo(isocontours[i][endIndex]);
+      if (totalDist + dist >= offsetAmount) {
+        endPoint = pointAlongLine(isocontours[i][lastPointIndex], isocontours[i][endIndex], offsetAmount - totalDist);
+      }
+      totalDist += dist;
+      lastPointIndex = endIndex;
+    }
+
+    let curIndex = startIndex;
+    while(curIndex != endIndex) {
+      path.push(isocontours[i][curIndex]);
+      curIndex++;
+      if (curIndex >= isocontours[i].length) {
+        curIndex -= isocontours[i].length;
+      }
+    }
+    path.push(isocontours[i][endIndex]);
+
+    path.push(endPoint);
+
+    const checkContourIndex = i + 2;
+    if (checkContourIndex < isocontours.length) {
+      let lowestDist = Infinity;
+      let closestIndex = 0;
+      let closestPoint = new THREE.Vector3;
+      let lastPoint = isocontours[checkContourIndex][isocontours[checkContourIndex].length - 1];
+      for (let j = 0; j < isocontours[checkContourIndex].length; j++) {
+        const point = isocontours[checkContourIndex][j];
+        const line = new THREE.Line3(lastPoint, point);
+        let closestPointOnLine = new THREE.Vector3;
+        line.closestPointToPoint(endPoint, true, closestPointOnLine);
+        const dist = endPoint.distanceTo(closestPointOnLine);
+        if (dist < lowestDist) {
+          lowestDist = dist;
+          closestIndex = j;
+          closestPoint = closestPointOnLine;
+        }
+
+        lastPoint = point;
+      }
+      
+      path.push(closestPoint);
+      startIndex = closestIndex;
+      initialDist = -isocontours[checkContourIndex][startIndex].distanceTo(closestPoint);
+    }
+  }
+
+  return path;
+}
+
+
+export function connectIsocontours(
+  isocontours: THREE.Vector3[][],
+  step: number,
+  lastLayerEndPoint: THREE.Vector3,
+): THREE.Vector3[] {
+  // if (isocontoursRoot.contour.length === 0) {
+  //   return [];
+  // }
+  if (isocontours.length === 0) {
+    return [];
+  }
+  isocontours[0].reverse();
+  // isocontoursRoot.contour.reverse();
+  // iso
+
+  // const isocontours: THREE.Vector3[][] = [];
+
+  // let currentNode = isocontoursRoot;
+  // while (currentNode.children.length === 1) {
+  //   isocontours.push(currentNode.contour);
+  //   currentNode = currentNode.children[0];
+  // }
+  // isocontours.push(currentNode);
+
+  let startIndex = 0;
+  let startPoint = new THREE.Vector3;
+  let lowestDist = Infinity;
+  let lastPointIndex = isocontours[0].length - 1;
+  for (let i = 0; i < isocontours[0].length; i++) {
+    const point = isocontours[0][i];
+    const line = new THREE.Line3(isocontours[0][lastPointIndex], point);
+    let closestPointOnLine = new THREE.Vector3;
+    line.closestPointToPoint(lastLayerEndPoint, true, closestPointOnLine);
+    const dist = lastLayerEndPoint.distanceTo(closestPointOnLine);
+    if (dist < lowestDist) {
+      lowestDist = dist;
+      startIndex = i;
+      startPoint = closestPointOnLine;
+    }
+    lastPointIndex = i;
+  }
+
+  isocontours[0].splice(startIndex, 0, startPoint);
+
+
+  const oddIndices: number[] = [];
+  const evenIndices: number[] = [];
+
+  for (let i = 0; i < isocontours.length; i++) {
+    if (i % 2  === 0) {
+      evenIndices.push(i);
+    } else {
+      oddIndices.push(i);
+    }
+  }
+
+  // make inwards path
+  const path = spiralContours(isocontours, evenIndices, startIndex, step);
+
+  if (isocontours.length > 1) {
+    let totalDist = 0;
+    let endIndex = 0;
+    let lastPointIndex = startIndex
+    let endPoint = new THREE.Vector3;
+    const offsetAmount = step;
+    for (let j = 1; totalDist < offsetAmount; j++) {
+      endIndex = startIndex - j;
+      while (endIndex < 0) {
+        endIndex += isocontours[0].length;
+      }
+      endIndex = endIndex % isocontours[0].length;
+      const dist = isocontours[0][lastPointIndex].distanceTo(isocontours[0][endIndex]);
+      if (totalDist + dist >= offsetAmount) {
+        endPoint = pointAlongLine(isocontours[0][lastPointIndex], isocontours[0][endIndex], offsetAmount - totalDist);
+      }
+      totalDist += dist;
+      lastPointIndex = endIndex;
+    }
+
+    let lowestDist = Infinity;
+    startIndex = 0;
+    let lastPoint = isocontours[1][isocontours[1].length - 1];
+    let closestPoint = new THREE.Vector3;
+    for (let j = 0; j < isocontours[1].length; j++) {
+      const point = isocontours[1][j];
+      const line = new THREE.Line3(lastPoint, point);
+      let closestPointOnLine = new THREE.Vector3;
+      line.closestPointToPoint(endPoint, true, closestPointOnLine);
+      const dist = endPoint.distanceTo(closestPointOnLine);
+      if (dist < lowestDist) {
+        lowestDist = dist;
+        startIndex = j;
+        closestPoint = closestPointOnLine;
+      }
+      lastPoint = point;
+    }
+
+    isocontours[1].splice(startIndex, 0, closestPoint);
+
+    // make outwards path
+    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step);
+    path.push(...inwardSpiralPath.reverse());
+    path.push(endPoint);
+  }
+  return path
+}
+
+
+// function connectIsocontourTree(
+//   root: ContourNode,
+//   step: number,
+// ): THREE.Vector3[] {
+//   const isocontours: THREE.Vector3[][] = [];
+//   const path: THREE.Vector3[] = [];
+//   let currentNode = root;
+//   while (currentNode.children.length === 1) {
+//     isocontours.push(currentNode.contour);
+//     currentNode = currentNode.children[0];
+//   }
+//   isocontours.push(currentNode.contour);
+//   path.push(...connectIsocontours(isocontours, step, new THREE.Vector3));
+// }
+
+
+export function generateInsetContours(
+  outer: THREE.Vector3[],
+  holes: THREE.Vector3[][],
+  step: number
+): THREE.Vector2[][] {
+  const inputLoops = preparePaths(outer, holes);
+  const co = new ClipperLib.ClipperOffset(
+    2,
+    ClipperLib.ClipperOffset.def_arc_tolerance
+  );
+
+  // convert input loops to clipper format
+  let current: ClipperLib.IntPoint[][] = inputLoops.map(toClipperPath);
+  const allInsets: THREE.Vector2[][] = [];
+
+  // iteratively inset until nothing remains
+  while (current.length) {
+    co.Clear();
+    // add all loops (outer and holes), ClipperOffset will handle each
+    current.forEach(path =>
+      co.AddPath(
+        path,
+        ClipperLib.JoinType.jtRound,
+        ClipperLib.EndType.etClosedPolygon
+      )
+    );
+
+    const next: ClipperLib.Paths = [];
+    co.Execute(next, -step * CLIPPER_SCALE);
+
+    // filter out degenerate pieces
+    const filtered = next.filter(p => Math.abs(clipperArea(p)) > MIN_AREA);
+    if (!filtered.length) break;
+
+    filtered.forEach(p => allInsets.push(fromClipperPath(p)));
+    current = filtered;
+  }
+
+  return allInsets;
+}
+
+
+/**
+ * Generates the contours for a boundary/brim around a mesh.
+ * 
+ * @param {THREE.Mesh} mesh - The mesh to make the contours for.
+ * @param {number} offset - How offset the contours should be from the mesh.
+ * @returns {THREE.Vector3[][]} A matrix containing the contours as a list of ordered points.
+ */
+export function generateBoundaryContours(
+  mesh: THREE.Mesh,
+  offset: number
+): THREE.Vector3[][] {
+  // get ordered set of points representing the boundary of the bottom layer
+  const baseContours: THREE.Vector3[][] = connectSegments(getBaseContour(mesh));
+
+  // push the contours out by offset
+  const expandedContours: THREE.Vector3[][] = [];
+  for (const contour of baseContours) {
+    expandedContours.push(offsetContour(contour, offset));
+  }
+
+  // align contour with model
+  expandedContours.forEach(contour => contour.forEach(p => p.add(mesh.position)));
+  return expandedContours;
+}
+
+
+/**
+ * Gets the contour of the bottom of a mesh.
+ * 
+ * @private
+ * @param {THREE.Mesh} mesh - The mesh to get the base contour from.
+ * @returns {{ start: THREE.Vector3; end: THREE.Vector3 }[]} The contour in the form of a list of line segments.
+ */
+export function getBaseContour(mesh: THREE.Mesh): { start: THREE.Vector3; end: THREE.Vector3 }[] {
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  const positions = geometry.attributes.position.array as Float32Array;
+
+  // find the minimum z value
+  let minZ = Infinity;
+  for (let i = 2; i < positions.length; i += 3) {
+      minZ = Math.min(minZ, positions[i]);
+  }
+  minZ += 0.01; // add a small amount to avoid issues with being exactly at the bottom of the mesh
+
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -minZ);
+
+  return getSegmentsFromMesh(mesh, plane);
+}
+
+
+/**
+ * Expands a contour outwards (or inwards if offset is negative) by a given amount.
+ * 
+ * @param {THREE.Vector3[]} contour The contour to be offset.
+ * @param {number} offset How much to offset the contour outwards by.
+ * @returns {THREE.Vector3[]} The offset contour.
+ */
+export function offsetContour(
+  contour: THREE.Vector3[],
+  offset: number,
+): THREE.Vector3[] {
+  const expandedContour: THREE.Vector3[] = [];
+  for (let i = 0; i < contour.length; i++) {
+    const point = contour[i];
+
+    // compute the normal using the two points next to the current point
+    const tangent = get_tangent_at_point(contour, i);
+    let norm = new THREE.Vector2(-tangent.y, tangent.x).normalize();
+    if (get_winding_order(contour)) {
+      norm.negate();
+    }
+
+    expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
+                                            point.y + norm.y * offset, 
+                                            point.z));
+  }
+  return expandedContour;
+}
+
+
+function get_tangent_at_point(
+  contour: THREE.Vector3[],
+  pointIndex: number
+): THREE.Vector2 {
+  const lastPoint = contour[(pointIndex - 1 + contour.length) % contour.length];
+  const point = contour[pointIndex];
+  const nextPoint = contour[(pointIndex + 1) % contour.length];
+
+  const lastToCur = new THREE.Vector2(point.x - lastPoint.x, point.y - lastPoint.y).normalize();
+  const curToNext = new THREE.Vector2(nextPoint.x - point.x, nextPoint.y - point.y).normalize();
+  return lastToCur.add(curToNext).normalize();
+}
+
+
+function get_winding_order(
+  contour: THREE.Vector3[]
+): boolean {
+  let signedArea = 0;
+  for (let i = 1; i < contour.length; i++) {
+    signedArea += contour[i - 1].x * contour[i].y - contour[i].x * contour[i - 1].y;
+  }
+  return signedArea > 0;
 }

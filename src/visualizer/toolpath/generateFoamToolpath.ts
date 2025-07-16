@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
+import { generateBoundaryContours, generateInsetContours, connectIsocontours } from "../utils/TreeSlicer";
 import {
   sliceMeshIntoLayers,
   extractRegionsFromLayer,
@@ -367,6 +368,7 @@ export function generateFoamToolpath(
         });
     }
     // --- 1. Slice mesh into layers and extract regions ---
+    // modelObj.mesh.geometry.scale(0.3, 0.3, 0.3);
     const layers = sliceMeshIntoLayers(modelObj.mesh, deltaZ);
     console.log('Sliced layers:', layers.length, layers);
     let allRegions: SliceRegion[] = [];
@@ -393,13 +395,35 @@ export function generateFoamToolpath(
     const orderedChunks = topologicalSortChunks(chunks);
     // --- 4. For each chunk, for each region, generate zigzag toolpath ---
     const toolpaths: THREE.Vector3[][] = [];
+    orderedChunks.reverse();
     for (const chunk of orderedChunks) {
         // flip the y direction every layer to minimize travel time between layers
-        let flipY = false;
+        // let flipY = false;
+
+        let lastLayerEndPoint = new THREE.Vector3(100, 200, 0);
         for (const region of chunk.regions) {
             if (!region.contour || region.contour.length === 0) continue;
-            const zigzag = generateZigzagInfill(region.contour, region.height, { spacing: modelObj.toolpathConfig.gridSize }, flipY);
-            toolpaths.push(zigzag);
+            const contours: THREE.Vector3[][] = [];
+
+            const holes: THREE.Vector3[][] = [];
+            // holes.push(baseContours[1]);
+
+            contours.push(region.contour);
+
+            const twoDimInsetContours = generateInsetContours(region.contour, holes, modelObj.toolpathConfig.gridSize);
+
+            twoDimInsetContours.forEach(contour => {
+                const threeDimContour: THREE.Vector3[] = [];
+                contour.forEach(point => {
+                    threeDimContour.push(new THREE.Vector3(point.x, point.y, region.height));
+                });
+                contours.push(threeDimContour);
+            });
+
+            const path = connectIsocontours(contours, modelObj.toolpathConfig.gridSize, lastLayerEndPoint);
+            lastLayerEndPoint = path[path.length - 1];
+            // const zigzag = generateZigzagInfill(region.contour, region.height, { spacing: modelObj.toolpathConfig.gridSize }, flipY);
+            toolpaths.push(path);
             // flipY = !flipY;
         }
     }
@@ -432,6 +456,54 @@ export function generateFoamToolpath(
         const line = new THREE.Line(geometry, material);
         visualizationGroup.add(line);
     }
+
+    // const contours: THREE.Vector3[][] = [];
+
+    // const baseContours = generateBoundaryContours(modelObj.mesh, 0);
+
+    // const holes: THREE.Vector3[][] = [];
+    // // holes.push(baseContours[1]);
+
+    // contours.push(...baseContours);
+
+    // const twoDimInsetContours = generateInsetContours(baseContours[0], holes, 3);
+
+    // twoDimInsetContours.forEach(contour => {
+    //     const threeDimContour: THREE.Vector3[] = [];
+    //     contour.forEach(point => {
+    //         threeDimContour.push(new THREE.Vector3(point.x, point.y, 0.01));
+    //     });
+    //     contours.push(threeDimContour);
+    // });
+
+    // const path = connectIsocontours(contours, 3, new THREE.Vector3);
+
+    // const vertices: number[] = [];
+    // for (const pt of path) {
+    //     vertices.push(pt.x, pt.y, pt.z);
+    // }
+    // const geometry = new THREE.BufferGeometry();
+    // geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    // const material = new THREE.PointsMaterial({ color: 0x0000ff, opacity: 0.8, transparent: true });
+    // const line = new THREE.Line(geometry, material);
+    // visualizationGroup.add(line);
+
+
+    // for (const contour of contours) {
+    //     const path = contour;
+    //     if (path.length < 2) continue;
+    //     const vertices: number[] = [];
+    //     for (const pt of path) {
+    //         vertices.push(pt.x, pt.y, pt.z);
+    //     }
+    //     const geometry = new THREE.BufferGeometry();
+    //     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    //     const material = new THREE.PointsMaterial({ color: 0x00ff00, opacity: 0.8, transparent: true });
+    //     const line = new THREE.Points(geometry, material);
+    //     visualizationGroup.add(line);
+    // }
+
+
     visualizationGroup.position.copy(modelObj.mesh.position);
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;

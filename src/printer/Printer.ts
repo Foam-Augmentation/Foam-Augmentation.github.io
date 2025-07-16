@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import Visualizer from '../visualizer/Visualizer';
-import {getSegmentsFromMesh, connectSegments} from '../visualizer/utils/TreeSlicer'
+import {generateBoundaryContours} from "../visualizer/utils/TreeSlicer";
+
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -85,7 +85,7 @@ export default class Printer {
     this.V_Star = 0.15;
     this.Edot = 35;
     this.extrusion_m = 0.92,
-      this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
+    this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
    
@@ -279,7 +279,7 @@ M204 S1000
     const F = this.Edot / S;
 
 
-    console.log("📌 Extruding segment: ", { p0Point, p1Point });
+    // console.log("📌 Extruding segment: ", { p0Point, p1Point });
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
 
     this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
@@ -296,111 +296,6 @@ M204 S1000
 
 
   /**
-   * Gets the contour of the bottom of a mesh.
-   * 
-   * @private
-   * @param {THREE.Mesh} mesh - The mesh to get the base contour from.
-   * @returns {{ start: THREE.Vector3; end: THREE.Vector3 }[]} The contour in the form of a list of line segments.
-   */
-  private get_base_contour(mesh: THREE.Mesh): { start: THREE.Vector3; end: THREE.Vector3 }[] {
-    const geometry = mesh.geometry as THREE.BufferGeometry;
-    const positions = geometry.attributes.position.array as Float32Array;
-
-    // find the minimum z value
-    let minZ = Infinity;
-    for (let i = 2; i < positions.length; i += 3) {
-        minZ = Math.min(minZ, positions[i]);
-    }
-    minZ += 0.01; // add a small amount to avoid issues with being exactly at the bottom of the mesh
-
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -minZ);
-
-    return getSegmentsFromMesh(mesh, plane);
-  }
-
-
-    /**
-   * Takes in a contour in the form of a list of line segments and returns an ordered list 
-   * of points representing the contour.
-   * 
-   * @private
-   * @param {{ start: THREE.Vector3; end: THREE.Vector3 }[]} segments - The contour in the form of line segments.
-   * @returns {THREE.Vector3} The ordered list of points making up the contour.
-   */
-  private make_ordered_contour(
-    segments: { start: THREE.Vector3; end: THREE.Vector3 }[]
-  ): THREE.Vector3[] {
-    const baseContour: THREE.Vector3[] = [];
-
-    if (segments.length === 0) return baseContour;
-
-    let current = segments[0];
-    baseContour.push(current.start.clone());
-    baseContour.push(current.end.clone());
-    segments.splice(0, 1);
-
-    while (segments.length > 0) {
-      const lastPoint = baseContour[baseContour.length - 1];
-
-      // find next connected segment
-      const nextIndex = segments.findIndex(
-        s => s.start.distanceTo(lastPoint) < 1e-6 || s.end.distanceTo(lastPoint) < 1e-6
-      );
-
-      if (nextIndex === -1) break; // contour is open or broken
-
-      const nextSegment = segments.splice(nextIndex, 1)[0];
-
-      if (nextSegment.start.distanceTo(lastPoint) < 1e-6) {
-        baseContour.push(nextSegment.end.clone());
-      } else {
-        baseContour.push(nextSegment.start.clone());
-      }
-    }
-    return baseContour;
-  }
-
-
-  /**
-   * Expands a contour outwards (or inwards if offset is negative) by a given amount.
-   * 
-   * @param {THREE.Vector3[]} contour The contour to be offset.
-   * @param {number} offset How much to offset the contour outwards by
-   * @returns {THREE.Vector3[]}
-   */
-  private offset_contour(
-    contour: THREE.Vector3[],
-    offset: number,
-  ): THREE.Vector3[] {
-    // find the center of the contour
-    const centroid = new THREE.Vector2(0, 0);
-    contour.forEach(p => centroid.add(new THREE.Vector2(p.x, p.y)));
-    centroid.divideScalar(contour.length);
-
-    const expandedContour: THREE.Vector3[] = [];
-    for (let i = 0; i < contour.length; i++) {
-      const lastPoint = i <= 0 ? contour[contour.length - 1 - i] : contour[i - 1];
-      const point = contour[i];
-      const nextPoint = i + 1 >= contour.length ? contour[i + 1 - contour.length] : contour[i + 1];
-
-      // compute the normal using the two points next to the current point
-      const bisector = new THREE.Vector2(nextPoint.x - lastPoint.x, nextPoint.y - lastPoint.y);
-      let norm = new THREE.Vector2(-bisector.y, bisector.x).normalize();
-
-      // flip the normal if it points towards the center
-      const toCenter = new THREE.Vector2(point.x, point.y).sub(centroid);
-      if (norm.dot(toCenter) < 0) {
-        norm.negate();
-      }
-
-      expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
-                                             point.y + norm.y * offset, 
-                                             point.z));
-    }
-    return expandedContour;
-  }
-
-  /**
    * Generates the gcode for a brim around the bottom of a mesh.
    * 
    * @param {THREE.Mesh} mesh - The mesh to get the brim of.
@@ -413,19 +308,7 @@ M204 S1000
     offset: number = 3,
     extruderId: number = 1
   ): string {
-    // get ordered set of points representing the boundary of the bottom layer
-    const baseContours: THREE.Vector3[][] = connectSegments(this.get_base_contour(mesh));
-
-    // push the contour out by offset
-
-    const expandedContours: THREE.Vector3[][] = [];
-
-    for (const contour of baseContours) {
-      expandedContours.push(this.offset_contour(contour, offset))
-    }
-
-    // align contour with model
-    expandedContours.forEach(contour => contour.forEach(p => p.add(mesh.position)))
+    const expandedContours = generateBoundaryContours(mesh, offset);
 
     let boundaryGcode: string[] = [];
 
