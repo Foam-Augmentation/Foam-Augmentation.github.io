@@ -73,20 +73,19 @@ export default class Visualizer {
         nozzleRightTemp: number;
         machineDepth: number;
         machineHeight: number;
-        zOffset: number;
-        deltaZ: number;
+        // zOffset: number;
+        // deltaZ: number;
         //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-        foamLayers: number;
-        extrusion_speed_when_foam: number;
-        printHead_speed_when_foam: number;
+        // foamLayers: number;
+        // extrusion_speed_when_foam: number;
         nozzleDiameter: number;
         dieSwelling: number;
-        VStar: number;
-        HStar: number;
-        Edot: number;
-        diameter_filament: number;
-        extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
-        height: number;
+        // VStar: number;
+        // HStar: number;
+        // Edot: number;
+        filamentDiameter: number;
+        // extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
+        // height: number;
         showGcodeVisualization: false,
         currentSelectedModel: EverydayModel | null;
         useTreeSlicer: boolean;
@@ -171,20 +170,19 @@ export default class Visualizer {
             nozzleRightTemp: 230,
             machineDepth: 302,
             machineHeight: 402,
-            zOffset: 3.38,
-            deltaZ: 1.7,
-            height: 20,
+            // zOffset: 3.38,
+            // deltaZ: 1.7,
+            // height: 20,
             // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-            foamLayers: 3,
-            extrusion_speed_when_foam: 758.17,
-            printHead_speed_when_foam: 113.7,
+            // foamLayers: 3,
+            // extrusion_speed_when_foam: 758.17,
             nozzleDiameter: 0.4,
-            dieSwelling: 0.94,
-            VStar: 0.15,
-            HStar: 9,
-            Edot: 35,
-            diameter_filament: 1.75,
-            extrusion_m: 0.92,
+            dieSwelling: 1.0,
+            // VStar: 0.15,
+            // HStar: 9,
+            // Edot: 35,
+            filamentDiameter: 1.75,
+            // extrusion_m: 0.92,
             showGcodeVisualization: false,
             currentSelectedModel: null,
             useTreeSlicer: false

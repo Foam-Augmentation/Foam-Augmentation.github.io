@@ -225,6 +225,8 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
         modelObj.toolpathVisualizationObject = undefined;
     }
 
+    const zOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+
     let visualizationGroup: THREE.Group | undefined;
     if (modelObj.toolpathSamplePoints && modelObj.toolpathSamplePoints.every((item: any) => item.type === 'foam')) {
         if (modelObj.regular_area_segments) {
@@ -232,11 +234,10 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
             let layerCount = 0;
             visualizationGroup = new THREE.Group() as THREE.Group;
             for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
-                const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
+                const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
-                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
-
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
             }
         }
     } else {
@@ -244,26 +245,26 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
             let layerCount = 0;
             visualizationGroup = new THREE.Group() as THREE.Group;
             for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
-                const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
+                const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
-                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
 
             }
             for (let i = 0; i < modelObj.toolpathConfig.middleSenseLayerCount; i++) {
-                const toolpathSense = _visualizeSegments(modelObj.sense_area_segments, 'sensing', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
-                const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
+                const toolpathSense = _visualizeSegments(modelObj.sense_area_segments, 'sensing', zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
+                const toolpathFoam = _visualizeSegments(modelObj.regular_area_segments, 'regular', zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathSense) visualizationGroup.add(toolpathSense);
                 if (toolpathFoam) visualizationGroup.add(toolpathFoam);
                 layerCount++;
-                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
 
             }
             for (let i = 0; i < modelObj.toolpathConfig.finalFoamLayerCount; i++) {
-                const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
+                const toolpathAll = _visualizeSegments(modelObj.all_area_segments, 'regular', zOffset + layerCount * modelObj.toolpathConfig.deltaZ);
                 if (toolpathAll) visualizationGroup.add(toolpathAll);
                 layerCount++;
-                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${modelObj.toolpathConfig.zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
+                console.log(`Layer ${layerCount}: Adding toolpath at zOffset = ${zOffset + layerCount * modelObj.toolpathConfig.deltaZ}`);
 
             }
             // const toolpathAll = visualizeSegments(modelObj.all_area_segments, 0xff00ff, 10);
@@ -355,10 +356,12 @@ function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spa
 export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObj: EverydayModel & { regions?: SliceRegion[] },
-    zOffset: number = visualizer.config.zOffset,
-    deltaZ: number = visualizer.config.deltaZ,
-    layerNum: number = visualizer.config.foamLayers
+    // zOffset: number = visualizer.config.zOffset,
+    // deltaZ: number = visualizer.config.deltaZ,
+    // layerNum: number = visualizer.config.foamLayers
 ): { all: any; foam: any; sense: any } {
+    modelObj.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
+    modelObj.mesh.scale.setScalar(1);
     // Remove previous visualization
     if (modelObj.toolpathVisualizationObject) {
         visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -367,9 +370,13 @@ export function generateFoamToolpath(
             if (child.material) child.material.dispose();
         });
     }
+
+    // Update parameters for printing
+    visualizer.printer.updateParameters(modelObj.toolpathConfig);
+
     // --- 1. Slice mesh into layers and extract regions ---
     // modelObj.mesh.geometry.scale(0.3, 0.3, 0.3);
-    const layers = sliceMeshIntoLayers(modelObj.mesh, deltaZ);
+    const layers = sliceMeshIntoLayers(modelObj.mesh, modelObj.toolpathConfig.deltaZ);
     console.log('Sliced layers:', layers.length, layers);
     let allRegions: SliceRegion[] = [];
     for (const { z, segments } of layers) {
@@ -390,7 +397,7 @@ export function generateFoamToolpath(
     // --- 2. Chunk regions by overlap/support ---
     const regionGroups = splitRegionsByOverlapOrSupport(allRegions);
     // --- 3. Build dependency tree and print order ---
-    const regionTree = buildRegionTree(allRegions, deltaZ);
+    const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
     const chunks = buildChunksWithDependencies(regionGroups, regionTree);
     const orderedChunks = topologicalSortChunks(chunks);
     // --- 4. For each chunk, for each region, generate zigzag toolpath ---
@@ -424,6 +431,7 @@ export function generateFoamToolpath(
             lastLayerEndPoint = path[path.length - 1];
             // const zigzag = generateZigzagInfill(region.contour, region.height, { spacing: modelObj.toolpathConfig.gridSize }, flipY);
             toolpaths.push(path);
+            // toolpaths.push(zigzag);
             // flipY = !flipY;
         }
     }
@@ -539,9 +547,9 @@ export function generateFoamToolpath(
 export function generateAugmentFoamToolpath(
     visualizer: Visualizer,
     modelObj: EverydayModel,
-    zOffset: number = visualizer.config.zOffset,
-    deltaZ: number = visualizer.config.deltaZ,
-    layerNum: number = visualizer.config.foamLayers
+    // zOffset: number = visualizer.config.zOffset,
+    // deltaZ: number = visualizer.config.deltaZ,
+    // layerNum: number = visualizer.config.foamLayers
 ): { all: any; foam: any; sense: any } {
     // --- 1. Remove the previous foam toolpath visualization, if it exists.
     if (modelObj.toolpathVisualizationObject) {
@@ -562,7 +570,9 @@ export function generateAugmentFoamToolpath(
     const toolpathZigzagPath: THREE.Vector3[][] = [];
     let currentLayer = 1;
 
-    while (currentLayer <= layerNum) {
+    const zOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+
+    while (currentLayer <= modelObj.toolpathConfig.initialFoamLayerCount) {
         const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
         let tempPoints: THREE.Vector3[] = [];
         let yDirection = 1;
@@ -582,7 +592,7 @@ export function generateAugmentFoamToolpath(
                         new THREE.Vector3(
                             point.point.x,
                             point.point.y,
-                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                            point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
                         )
                     );
                 } else {
@@ -593,7 +603,7 @@ export function generateAugmentFoamToolpath(
                         new THREE.Vector3(
                             point.point.x,
                             point.point.y,
-                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                            point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
                         )
                     ];
                     yDirection = -yDirection;
@@ -610,7 +620,7 @@ export function generateAugmentFoamToolpath(
                         new THREE.Vector3(
                             point.point.x,
                             point.point.y,
-                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                            point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
                         )
                     );
                 } else {
@@ -621,7 +631,7 @@ export function generateAugmentFoamToolpath(
                         new THREE.Vector3(
                             point.point.x,
                             point.point.y,
-                            point.point.z + zOffset + (currentLayer - 1) * deltaZ
+                            point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
                         )
                     ];
                     xDirection = -xDirection;

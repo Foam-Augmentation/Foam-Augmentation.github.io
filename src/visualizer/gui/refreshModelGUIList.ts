@@ -338,11 +338,18 @@ export function addParamsFolder_EverydayModel(
     paramsFolder.add(modelObj.toolpathConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 1, 100, 0.01).name('Grid Size (deltaL)').onChange(() => {
+    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size (deltaL)').onChange(() => {
         sampleSelectedMesh(visualizer, modelObj);
         generateFoamToolpath(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
+    paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
+    paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 50, 0.01).name('H*');
+    paramsFolder.add(modelObj.toolpathConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
+    // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
+
+    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
+
     paramsFolder.add(modelObj.toolpathConfig, 'initialFoamLayerCount', 0, 10, 1).name('Initial Foam Layers').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
@@ -352,14 +359,11 @@ export function addParamsFolder_EverydayModel(
     paramsFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
-    paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
-    paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempRegularFoam', 0, 300, 1).name('Regular Foam Print Head Temp');
-    paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
-    paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
-    paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
-    paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
-    paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
+    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
+    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
 
     paramsFolder.close();
 }

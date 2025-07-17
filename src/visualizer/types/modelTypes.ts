@@ -53,15 +53,17 @@ export interface FoamModel extends BasicModel {
 /**
  * Toolpath Configurations.
  */
-interface ToolpathConfig {
+export interface ToolpathConfig {
     /** deltaZ (thickness of a single foam layer) */
     deltaZ: number;
-    /** zOffset (distance between the nozzle and the layer under to allow VTP) */
-    zOffset: number;
+    hStar: number;
+    vStar: number;
+    /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
+    // zOffset: number;
     /** grid size */
     gridSize: number;
     /** die swell */
-    dieSwell: number;
+    // dieSwell: number;
     // sandwiched structure
     /** initial Foam layer count */
     initialFoamLayerCount: number;
@@ -69,22 +71,24 @@ interface ToolpathConfig {
     middleSenseLayerCount: number;
     /** final Foam layer count */
     finalFoamLayerCount: number;
+    edot: number;
     /** regular Foam extrusion speed */
-    extrusionSpeedRegularFoam: number;
+    // extrusionSpeedRegularFoam: number;
     /** regular Foam print head speed */
-    printHeadSpeedRegularFoam: number;
+    // printHeadSpeedRegularFoam: number;
     /** regular Foam print head temp */
-    printHeadTempRegularFoam: number;
+    // printHeadTempRegularFoam: number;
     /** regular Foam nozzle size */
-    nozzleSizeRegularFoam: number;
+    // nozzleSizeRegularFoam: number;
+
     /** sensing Foam extrusion speed */
-    extrusionSpeedSensingFoam: number;
-    /** sensing Foam print head speed */
-    printHeadSpeedSensingFoam: number;
-    /** sensing Foam print head temp */
-    printHeadTempSensingFoam: number;
-    /** sensing Foam nozzle size */
-    nozzleSizeSensingFoam: number;
+    // extrusionSpeedSensingFoam: number;
+    // /** sensing Foam print head speed */
+    // printHeadSpeedSensingFoam: number;
+    // /** sensing Foam print head temp */
+    // printHeadTempSensingFoam: number;
+    // /** sensing Foam nozzle size */
+    // nozzleSizeSensingFoam: number;
 }
 
 

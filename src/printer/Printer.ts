@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {generateBoundaryContours} from "../visualizer/utils/TreeSlicer";
+import {ToolpathConfig} from "../visualizer/types/modelTypes";
 
 
 /**
@@ -13,20 +14,8 @@ export default class Printer {
   public nozzleDiameter: number;
   /** Die swelling factor */
   public dieSwelling: number;
-  /** Foam extrusion speed (mm/min) */
-  public extrusion_speed_when_foam: number;
-  /** Foam interlayer extrusion rate (e.g., 0.07 mm extrusion per 1 mm movement) */
-  public extrusion_foam_interlayer_rate: number;
-  /** Normal extrusion rate for standard printing */
-  public extrusion_norm_rate: number;
   /** Print head speed during free movement */
   public printHead_speed_when_free_move: number;
-  /** Print head speed when extruding foam */
-  public printHead_speed_when_foam: number;
-  /** Print head speed for interlayer moves */
-  public printHead_speed_when_interlayer_move: number;
-  /** Print head speed during normal printing */
-  public printHead_speed_when_normal_print: number;
   /** Material bed temperature */
   public material_bed_temperature: number;
   /** Left extruder temperature (for TPU) */
@@ -52,8 +41,6 @@ export default class Printer {
 
   public Edot: number;
 
-  public extrusion_m: number;
-
   public deltaZ: number; // deltaZ (thickness of a single foam layer)
 
   public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
@@ -65,14 +52,8 @@ export default class Printer {
   constructor() {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
-    this.dieSwelling = 0.94; // die swelling factor
-    this.extrusion_speed_when_foam = 758.17; // foam extrusion speed (mm/min)
-    this.extrusion_foam_interlayer_rate = 0.2; // foam interlayer extrusion rate (0.07mm per 1mm move)
-    this.extrusion_norm_rate = 0.07; // normal extrusion rate
+    this.dieSwelling = 1.0; // die swelling factor
     this.printHead_speed_when_free_move = 1000; // free move speed
-    this.printHead_speed_when_foam = 113.7; // print head speed when extruding foam
-    this.printHead_speed_when_interlayer_move = 200; // interlayer move speed for foam
-    this.printHead_speed_when_normal_print = 800; // normal printing extrusion speed
     this.material_bed_temperature = 60; // bed temperature
     this.print_temp_left_extruder = 230; // left extruder temperature (TPU)
     this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
@@ -84,23 +65,35 @@ export default class Printer {
     this.diameter_filament = 1.75;
     this.V_Star = 0.15;
     this.Edot = 35;
-    this.extrusion_m = 0.92,
     this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
    
     this.end_gcode = `
-G1 F10800.000 
-G4 S20; Dwell for 20 Second(s) 
+G4 S5; Dwell for 5 Second(s) 
 M104 S0 ; turn off temperature 
 M140 S0 ; turn off heatbed 
 M107 ; turn off fan 
-G1 Z042.08 F5000 ; Move print head up 
-M73 P91 R0 
-G1 X0 Y190 F3000 ; home 
+G91 ; set relative positioning
+G1 E-1.0 F1800 ; retract filament slightly
+G0 Z10 F5000 ; move print head up 10mm
+G90 ; set absolute positioning
+G28 X Y ; home x and y
 M900 K0 ; reset LA 
 M84 ; disable motors 
-M73 P100 R0 `
+M73 P100 R0 ; progress to 100%`
+  }
+
+
+  public updateParameters(
+    toolpathConfig: ToolpathConfig
+  ): void {
+    this.deltaZ = toolpathConfig.deltaZ;
+    this.V_Star = toolpathConfig.vStar;
+    this.H_star = toolpathConfig.hStar;
+    this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+
+    this.Edot = toolpathConfig.edot;
   }
 
   /**
@@ -181,6 +174,17 @@ M73 P100 R0 `
 
       // matching jupyter notebook
       return `
+; Parameters:
+; V* = ${this.V_Star}
+; H* = ${this.H_star}
+; Edot (mm/min) = ${this.Edot}
+; deltaZ (mm) = ${this.deltaZ}
+
+; Calculated Parameters:
+; ZOffset (mm) = ${this.ZOffset.toFixed(4)}
+; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(4)}
+
+
 M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
 M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
 M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
@@ -191,6 +195,7 @@ M862.1 P${this.nozzleDiameter} ; nozzle diameter check
 
 
 M104 S${this.print_temp_left_extruder} ; set extruder temp 
+M190 S${this.material_bed_temperature} ; set bed temp and wait to reach it
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check 
 
@@ -262,13 +267,9 @@ M204 S1000
   private extrude_single_segment(
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-    extrusion_speed_when_foam: number,
-    printHead_speed_when_foam: number,
-    ZlayerIndex: number,
     isFirstInLayer: boolean = false
   ): string {
     // Extract Vector3 points regardless of input type
-
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
     const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
 
@@ -277,7 +278,6 @@ M204 S1000
 
     const S = gamma / (beta * this.V_Star);
     const F = this.Edot / S;
-
 
     // console.log("📌 Extruding segment: ", { p0Point, p1Point });
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
@@ -324,9 +324,7 @@ M204 S1000
           this.extrude_single_segment(
             point,
             nextPoint,
-            this.extrusion_norm_rate,
-            this.printHead_speed_when_normal_print,
-            0
+            true
           )
         );
       }
@@ -392,9 +390,6 @@ M204 S1000
         this.extrude_single_segment(
           corners[i],
           corners[i + 1],
-          this.extrusion_norm_rate,
-          this.printHead_speed_when_normal_print,
-          0
         )
       );
 
@@ -461,9 +456,6 @@ M204 S1000
           this.extrude_single_segment(
             lastTarget,
             currentPoint,
-            this.extrusion_speed_when_foam,
-            this.printHead_speed_when_foam,
-            layerIndex,
             true
           )
         );
@@ -478,9 +470,6 @@ M204 S1000
           this.extrude_single_segment(
             lastTarget,
             currentPoint,
-            this.extrusion_speed_when_foam,
-            this.printHead_speed_when_foam,
-            i,
             false
           )
         );
