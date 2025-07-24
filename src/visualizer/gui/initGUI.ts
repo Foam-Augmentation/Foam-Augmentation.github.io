@@ -139,10 +139,14 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     .onChange((v: number) => { visualizer.printer.dieSwelling = v; });
   printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.01)
     .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
-  printerFolder.add(visualizer.config, 'filamentDiameter', 0, 2, 0.01)
+  printerFolder.add(visualizer.config, 'filamentDiameter', 0, 5, 0.01)
     .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
+  printerFolder.add(visualizer.config, 'nozzleLength', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.nozzleLength = v; });
 
-
+  const slicerFolder = settingFolder.addFolder('slicer settings');
+  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
+  slicerFolder.close();
   
   printerFolder.close();
   // Update parameter calculation.
@@ -217,14 +221,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
-  saveFolder.add({ saveBoundaryGcode: () => {
-    if (visualizer.current_Obj) {
-      visualizer.printer.generate_boundary_gcode(visualizer.current_Obj.mesh);
-      visualizer.saveGcodeToFile(visualizer.printer.boundaryGcode, "boundary");
-    } else {
-      console.warn("You need to select a model to save the boundary gcode for it.");
-    }
-  } }, 'saveBoundaryGcode').name('Save Boundary G-Code');
+  saveFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   saveFolder.close();
   
 
@@ -241,23 +238,36 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
         console.warn('No model selected. Please select a model first.');
         return;
     }
+
+    visualizer.printer.updateParameters(visualizer.currentSelectedModel.toolpathConfig);
+
     console.log('Selected model:', visualizer.currentSelectedModel);
     console.log('Selected model mesh:', visualizer.currentSelectedModel.mesh);
     console.log('Selected model position:', visualizer.currentSelectedModel.mesh.position);
+
+    if (visualizer.printer.generateBoundary) {
+      visualizer.printer.generate_boundary_gcode(visualizer.currentSelectedModel.mesh, 2);
+    } else {
+      visualizer.printer.boundaryGcode = "";
+    }
     
     // Generate toolpath
     console.log('Generating toolpath...');
-    const toolpaths = generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
-    console.log('Generated toolpaths:', toolpaths);
+    const toolpath = generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+    console.log('Generated toolpath:', toolpath);
     
-    if (!toolpaths || !toolpaths.foam) {
+    if (!toolpath || !toolpath.foam) {
         console.warn('Failed to generate toolpath. Please try again.');
         return;
+    }
+
+    if (visualizer.printer.generateBoundary) {
+
     }
     
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, visualizer.currentSelectedModel.mesh.position);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1, visualizer.currentSelectedModel.mesh.position);
     console.log('Generated G-code:', gcode);
     
     // Save G-code file

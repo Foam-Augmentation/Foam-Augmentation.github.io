@@ -343,7 +343,7 @@ export function addParamsFolder_EverydayModel(
         generateFoamToolpath(visualizer, modelObj);
     });
     paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
-    paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 50, 0.01).name('H*');
+    paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 100, 0.01).name('H*');
     paramsFolder.add(modelObj.toolpathConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
     // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 

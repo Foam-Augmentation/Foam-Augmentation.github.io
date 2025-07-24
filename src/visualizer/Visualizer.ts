@@ -79,6 +79,7 @@ export default class Visualizer {
         // foamLayers: number;
         // extrusion_speed_when_foam: number;
         nozzleDiameter: number;
+        nozzleLength: number;
         dieSwelling: number;
         // VStar: number;
         // HStar: number;
@@ -89,6 +90,8 @@ export default class Visualizer {
         showGcodeVisualization: false,
         currentSelectedModel: EverydayModel | null;
         useTreeSlicer: boolean;
+        useFermatSpirals: boolean;
+        generateBoundary: boolean;
     };
 
     /**
@@ -177,6 +180,7 @@ export default class Visualizer {
             // foamLayers: 3,
             // extrusion_speed_when_foam: 758.17,
             nozzleDiameter: 0.4,
+            nozzleLength: 12,
             dieSwelling: 1.0,
             // VStar: 0.15,
             // HStar: 9,
@@ -185,7 +189,9 @@ export default class Visualizer {
             // extrusion_m: 0.92,
             showGcodeVisualization: false,
             currentSelectedModel: null,
-            useTreeSlicer: false
+            useTreeSlicer: false,
+            useFermatSpirals: true,
+            generateBoundary: true,
         };
 
         // Initialize lasso selection state.

@@ -12,6 +12,7 @@ export default class Printer {
   public extrudedAmount: number;
   /** Nozzle diameter (in mm) */
   public nozzleDiameter: number;
+  public nozzleLength: number;
   /** Die swelling factor */
   public dieSwelling: number;
   /** Print head speed during free movement */
@@ -45,6 +46,8 @@ export default class Printer {
 
   public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
   public H_star: number; // H_star (height of the foam layer)
+  public useFermatSpirals: boolean;
+  public generateBoundary: boolean;
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -52,6 +55,7 @@ export default class Printer {
   constructor() {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
+    this.nozzleLength = 12;
     this.dieSwelling = 1.0; // die swelling factor
     this.printHead_speed_when_free_move = 1000; // free move speed
     this.material_bed_temperature = 60; // bed temperature
@@ -68,6 +72,8 @@ export default class Printer {
     this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
+    this.useFermatSpirals = true;
+    this.generateBoundary = true;
    
     this.end_gcode = `
 G4 S5; Dwell for 5 Second(s) 
@@ -173,16 +179,15 @@ M73 P100 R0 ; progress to 100%`
       //       `;
 
       // matching jupyter notebook
-      return `
-; Parameters:
+      return `; Parameters:
 ; V* = ${this.V_Star}
 ; H* = ${this.H_star}
 ; Edot (mm/min) = ${this.Edot}
 ; deltaZ (mm) = ${this.deltaZ}
 
 ; Calculated Parameters:
-; ZOffset (mm) = ${this.ZOffset.toFixed(4)}
-; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(4)}
+; ZOffset (mm) = ${this.ZOffset.toFixed(6)}
+; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(6)}
 
 
 M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
@@ -197,9 +202,11 @@ M862.1 P${this.nozzleDiameter} ; nozzle diameter check
 M104 S${this.print_temp_left_extruder} ; set extruder temp 
 M190 S${this.material_bed_temperature} ; set bed temp and wait to reach it
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
-M862.3 P "MK3S" ; printer model check 
+M862.3 P "MK3S" ; printer model check
 
-
+G28 ; home axes
+G29 ; enabled bed mesh leveling
+G92 X0 Y0 Z0 ; tell printer all axes are 0
 
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
@@ -208,13 +215,22 @@ M900 K0.05 ; Filament gcode LA 1.5
 M900 K30 ; Filament gcode LA 1.0 
 G92 E0.0 
 
-G1 Z0.200 F10800.000 
+G1 Z0.200 F2400.000 
 
 M204 S1000 
           
       `;
     } else {
-      return `
+      return `; Parameters:
+; V* = ${this.V_Star}
+; H* = ${this.H_star}
+; Edot (mm/min) = ${this.Edot}
+; deltaZ (mm) = ${this.deltaZ}
+
+; Calculated Parameters:
+; ZOffset (mm) = ${this.ZOffset.toFixed(6)}
+; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(6)}
+
 M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
 M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
 M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), mm/sec^2 
@@ -228,14 +244,18 @@ M104 S${this.print_temp_left_extruder} ; set extruder temp
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check 
 
+G28 ; home axes
+G29 ; enabled bed mesh leveling
+G92 X0 Y0 Z0 ; tell printer all axes are 0
+
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
 M83  ; extruder relative mode 
 M900 K0.05 ; Filament gcode LA 1.5 
 M900 K30 ; Filament gcode LA 1.0 
-G92 E0.0 
+G92 E0.0
 
-G1 Z0.200 F10800.000 
+G1 Z0.200 F2400.000 
 
 M204 S1000 
       `;
@@ -286,11 +306,25 @@ M204 S1000
     let gcode = '';
 
     if (isFirstInLayer) {
-      gcode += `G1 X${p0Point.x.toFixed(4)} Y${p0Point.y.toFixed(4)} Z${p0Point.z.toFixed(4)} E0.0050 F0114 ; Move to start of new layer\n`;
+      gcode += `G1 X${p0Point.x.toFixed(6)} Y${p0Point.y.toFixed(6)} Z${p0Point.z.toFixed(6)} E0.0050 F0114 ; Move to start of new layer\n`;
     }
 
-    gcode += `G1 X${p1Point.x.toFixed(4)} Y${p1Point.y.toFixed(4)} Z${p1Point.z.toFixed(4)} E${this.extrudedAmount.toFixed(4)} F0${Math.round(F)}`;
+    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
 
+    return gcode;
+  }
+
+
+  private extrude_regular_segment (
+    p0: THREE.Vector3,
+    p1: THREE.Vector3,
+  ): string {
+    // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
+    const beadArea = this.dieSwelling * Math.pow(this.nozzleDiameter, 2) / 2;
+    const crossSection = Math.PI * Math.pow(this.diameter_filament/2, 2);
+    const filamentPerMM = beadArea / crossSection;
+    const dist = this.norm(p0, p1);
+    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.printHead_speed_when_free_move}`;
     return gcode;
   }
 
@@ -300,13 +334,11 @@ M204 S1000
    * 
    * @param {THREE.Mesh} mesh - The mesh to get the brim of.
    * @param {number} offset - How far away the brim should be from the mesh.
-   * @param {number} extruderId - The ID of the extruder. 1 For left 2 for right.
    * @returns {string} The gcode as a string.
    */
   public generate_boundary_gcode(
     mesh: THREE.Mesh,
     offset: number = 3,
-    extruderId: number = 1
   ): string {
     const expandedContours = generateBoundaryContours(mesh, offset);
 
@@ -315,27 +347,21 @@ M204 S1000
     // create gcode for following the expanded contours
     for (const expandedContour of expandedContours) {
       const firstPoint = expandedContour[0];
-      boundaryGcode.push(`G0 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}
+      boundaryGcode.push(`G0 X${firstPoint.x.toFixed(6)} Y${firstPoint.y.toFixed(6)} Z${firstPoint.z.toFixed(6)}
                           F${this.printHead_speed_when_free_move}`) // move to first point in contour
       for (let i = 0; i < expandedContour.length; i++) {
         const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 -expandedContour.length] : expandedContour[i +  1];
         const point = expandedContour[i];
         boundaryGcode.push(
-          this.extrude_single_segment(
+          this.extrude_regular_segment(
             point,
-            nextPoint,
-            true
+            nextPoint
           )
         );
       }
     }
 
-    this.boundaryGcode =
-      this.build_start_gcode(extruderId) +
-      "\n\n" +
-      boundaryGcode.join("\n") +
-      "\n\n" +
-      this.end_gcode;
+    this.boundaryGcode = boundaryGcode.join("\n") + "\n\nG0 X0 Y0 Z20 ; park for pause\nM0 ; wait for user to press start again\n";
 
     return this.boundaryGcode;
   }
@@ -398,12 +424,7 @@ M204 S1000
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
 
-    this.boundaryGcode =
-      this.build_start_gcode(extruderId) +
-      "\n\n" +
-      body_gcode.join("\n") +
-      "\n\n" +
-      this.end_gcode;
+    this.boundaryGcode = body_gcode.join("\n");
     return this.boundaryGcode;
   }
 
@@ -416,72 +437,90 @@ M204 S1000
    */
   
   public generate_foam_gcode(
-    toolpath: THREE.Vector3[][],
+    toolpath: THREE.Vector3[],
     extruderId: number,
     modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
   ): string {
-    if (toolpath.length === 0 || toolpath[0].length === 0) {
+    if (toolpath.length === 0) {
       console.error("Toolpath is empty.");
       return "";
     }
 
     let body_gcode: string[] = [];
     // Apply model position to first point
-    let firstPoint = toolpath[0][0].clone().add(modelPosition);
+    let firstPoint = toolpath[0].clone().add(modelPosition);
     let lastTarget: THREE.Vector3 = firstPoint;
-    this.extrudedAmount = 0;
 
-    console.log("Total layers:", toolpath.length);
-    console.log("Model position applied:", modelPosition);
+    body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
+    body_gcode.push("M205 X8 Y8; tune down acceleration");
 
-    for (let i = 0; i < toolpath.length; i++) {
-      let layerIndex = i;
-      if (i === 0) {
-        const firstPointPos = {
-          x: firstPoint.x,
-          y: firstPoint.y,
-          z: firstPoint.z
-        };
-
-        body_gcode.push(
-          `G0 F2880 X${firstPointPos.x.toFixed(4)} Y${firstPointPos.y.toFixed(4)} Z${firstPointPos.z.toFixed(4)}; move to start point`
-        );
-
-        body_gcode.push("M205 X8 Y8; tune down acceleration");
-        body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
-      } else {
-        // Apply model position to the first point of each layer
-        const currentPoint = toolpath[i][0].clone().add(modelPosition);
-        body_gcode.push(
-          this.extrude_single_segment(
-            lastTarget,
-            currentPoint,
-            true
-          )
-        );
-        lastTarget = currentPoint;
-      }
-
-      // Process the rest of the points in the layer
-      for (let j = 1; j < toolpath[i].length; j++) {
-        // Apply model position to each point
-        const currentPoint = toolpath[i][j].clone().add(modelPosition);
-        body_gcode.push(
-          this.extrude_single_segment(
-            lastTarget,
-            currentPoint,
-            false
-          )
-        );
-        lastTarget = currentPoint;
-      }
+    for (const point of toolpath) {
+      const currentPoint = point.clone().add(modelPosition);
+      body_gcode.push(
+        this.extrude_single_segment(
+          lastTarget,
+          currentPoint,
+          false
+        )
+      );
+      lastTarget = currentPoint;
     }
+
+    // console.log("Total layers:", toolpath.length);
+    // console.log("Model position applied:", modelPosition);
+
+
+
+    // for (let i = 0; i < toolpath.length; i++) {
+    //   let layerIndex = i;
+    //   if (i === 0) {
+    //     const firstPointPos = {
+    //       x: firstPoint.x,
+    //       y: firstPoint.y,
+    //       z: firstPoint.z
+    //     };
+
+    //     body_gcode.push(
+    //       `G0 F2880 X${firstPointPos.x.toFixed(4)} Y${firstPointPos.y.toFixed(4)} Z${firstPointPos.z.toFixed(4)}; move to start point`
+    //     );
+
+    //     body_gcode.push("M205 X8 Y8; tune down acceleration");
+    //     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
+    //   } else {
+    //     // Apply model position to the first point of each layer
+    //     const currentPoint = toolpath[i][0].clone().add(modelPosition);
+    //     body_gcode.push(
+    //       this.extrude_single_segment(
+    //         lastTarget,
+    //         currentPoint,
+    //         true
+    //       )
+    //     );
+    //     lastTarget = currentPoint;
+    //   }
+
+    //   // Process the rest of the points in the layer
+    //   for (let j = 1; j < toolpath[i].length; j++) {
+    //     // Apply model position to each point
+    //     const currentPoint = toolpath[i][j].clone().add(modelPosition);
+    //     body_gcode.push(
+    //       this.extrude_single_segment(
+    //         lastTarget,
+    //         currentPoint,
+    //         false
+    //       )
+    //     );
+    //     lastTarget = currentPoint;
+    //   }
+    // }
 
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
 
     this.toolpathGcode =
       this.build_start_gcode(extruderId) +
+      "\n\n" +
+      this.boundaryGcode + 
       "\n\n" +
       body_gcode.join("\n") +
       "\n\n" +

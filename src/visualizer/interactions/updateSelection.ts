@@ -281,6 +281,15 @@ export function updateSelection(
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);
     console.log("vis", visualizer);
+    
+    visualizer.printer.updateParameters(modelObj.toolpathConfig);
+
+    if (visualizer.printer.generateBoundary) {
+        visualizer.printer.generate_boundary_gcode(modelObj.mesh, 2);
+    } else {
+        visualizer.printer.boundaryGcode = "";
+    }
+
     const toolpaths = generateAugmentFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
@@ -297,7 +306,7 @@ export function updateSelection(
     console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
 
     //saveGcodeToFile(gcode, "toolpath");
-    generateAugmentFoamToolpath(visualizer, modelObj);
+    // generateAugmentFoamToolpath(visualizer, modelObj);
 
     return {
         all: toolpaths.all,
