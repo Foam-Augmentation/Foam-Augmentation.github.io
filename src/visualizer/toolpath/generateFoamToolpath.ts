@@ -16,7 +16,8 @@ import {
   buildChunkTree,
   ChunkNode,
   ContourNode,
-  extractRegionsFromPointCloud
+  extractRegionsFromPointCloud,
+  pointAlongLine,
 } from '../utils/TreeSlicer';
 
 /**
@@ -371,43 +372,125 @@ function printTree(
 }
 
 
-// function generateRectilinearInfill(
-//     contour: THREE.Vector3[],
-//     deltaL: number,
-//     scanX: boolean,
-//     lastLayerPoint: THREE.Vector3,
-// ): THREE.Vector3[] {
-//     const toolpath: THREE.Vector3[] = [];
-//     const bounds = getBounds(contour, contour[0].z);
-//     const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z), 
-//                      new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
+function fillToolpath(
+    toolpath: THREE.Vector3[],
+    fillDist: number
+): THREE.Vector3[] {
+    const newPath: THREE.Vector3[] = [];
+    for (let i = 0; i < toolpath.length - 1; i++) {
+        const point = toolpath[i];
+        const nextPoint = toolpath[i + 1]
+        newPath.push(point);
+        const dist = point.distanceTo(nextPoint);
 
-//     let atRight = false;
-
-//     let lowestDist = Infinity;
-//     let startPoint = new THREE.Vector3;
-//     for (const corner of corners) {
-//         const dist = corner.distanceTo(lastLayerPoint);
-//         if (dist < lowestDist) {
-//             lowestDist = dist;
-//             startPoint = corner;
-//         }
-//     }
-
-//     if (startPoint.x === bounds.min.x && scanX) {
-//         atRight = false;
-//     } else if (scanX) {
-//         atRight = true;
-//     } else if (startPoint.y === bounds.min.y) {
-//         atRight = false;
-//     } else {
-//         atRight = true;
-//     }
+        if (dist > fillDist) {
+            for (let i = 1; i < Math.floor(dist / fillDist); i++) {
+                newPath.push(pointAlongLine(point, nextPoint, i * fillDist))
+            }
+        }
+    }
+    return newPath;
+}
 
 
+function generateRectilinearInfill(
+    contour: THREE.Vector3[],
+    deltaL: number,
+    scanX: boolean,
+    lastLayerPoint: THREE.Vector3,
+): THREE.Vector3[] {
+    const toolpath: THREE.Vector3[] = [];
+    const bounds = getBounds(contour, contour[0].z);
+    const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z), 
+                     new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
 
-//     return toolpath;
-// }
+    let atRight = false;
+
+    let lowestDist = Infinity;
+    let startPoint = new THREE.Vector3;
+    for (const corner of corners) {
+        const dist = corner.distanceTo(lastLayerPoint);
+        if (dist < lowestDist) {
+            lowestDist = dist;
+            startPoint = corner;
+        }
+    }
+
+    if (startPoint.x === bounds.min.x && scanX) {
+        atRight = false;
+    } else if (scanX) {
+        atRight = true;
+    } else if (startPoint.y === bounds.min.y) {
+        atRight = false;
+    } else {
+        atRight = true;
+    }
+
+    let scanLength = (scanX ? bounds.max.x - bounds.min.x : bounds.max.y - bounds.min.y) / deltaL;
+    const remainder = scanLength - Math.floor(scanLength);
+    scanLength = Math.floor(scanLength);
+
+    if (scanX) {
+        startPoint.setX(startPoint.x + (atRight ? -1 : 1) * remainder / 2);
+    } else {
+        startPoint.setY(startPoint.y + (atRight ? -1 : 1) * remainder / 2)
+    }
+
+    let foundAtTop = false;
+    let atTop = false;
+    for (let i = 0; i < scanLength; i++) {
+        const currentScanPoint = (atRight ? -i * deltaL : i * deltaL) + (scanX ? (startPoint.x) : (startPoint.y));
+        const intersections: THREE.Vector3[] = [];
+        for (let i = 0; i < contour.length; i++) {
+            const a = contour[i];
+            const b = contour[(i + 1) % contour.length];
+            if (scanX) {
+                if ((a.x <= currentScanPoint && b.x > currentScanPoint) || (b.x <= currentScanPoint && a.x > currentScanPoint)) {
+                    // Edge crosses the scanline
+                    const t = (currentScanPoint - a.x) / (b.x - a.x);
+                    const y = a.y + t * (b.y - a.y);
+                    intersections.push(new THREE.Vector3(currentScanPoint, y, contour[0].z));
+                }
+            } else {
+                if ((a.y <= currentScanPoint && b.y > currentScanPoint) || (b.y <= currentScanPoint && a.y > currentScanPoint)) {
+                    // Edge crosses the scanline
+                    const t = (currentScanPoint - a.y) / (b.y - a.y);
+                    const x = a.x + t * (b.x - a.x);
+                    intersections.push(new THREE.Vector3(x, currentScanPoint, contour[0].z));
+                }
+            }
+        }
+
+        if (!foundAtTop) {
+            if (intersections.length <= 1) {
+                toolpath.push(...intersections);
+                continue;
+            } else {
+                const dist1 = intersections[0].distanceTo(lastLayerPoint);
+                const dist2 = intersections[intersections.length - 1].distanceTo(lastLayerPoint);
+                if (dist1 < dist2) {
+                    atTop = false;
+                } else {
+                    atTop = true;
+                }
+                foundAtTop = true;
+            }
+        }
+
+        if (intersections.length <= 1) {
+            toolpath.push(...intersections);
+            continue;
+        }
+
+        intersections.sort((a, b) => scanX ? (atTop ? b.y - a.y : a.y - b.y) : (atTop ? b.x - a.x : a.x - b.x));
+
+        toolpath.push(intersections[0]);
+        toolpath.push(intersections[intersections.length - 1]);
+        atTop = !atTop;
+    }
+
+    return toolpath;
+}
 
 
 function makeChunkPath(
@@ -418,23 +501,24 @@ function makeChunkPath(
 ): THREE.Vector3[] {
     let lastLayerEndPoint = lastLayerPoint;
     const chunkPath: THREE.Vector3[] = [];
-    let flipY = false;
+    let scanX = false;
     for (const region of chunk.regions) {
+        let path: THREE.Vector3[];
         if (useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(region.contour, region.holes, deltaL);
 
             // printTree(insetContoursRoot);
             // console.log("Tree done");
 
-            const path = connectIsocontours(insetContoursRoot, deltaL, lastLayerEndPoint);
-
-            lastLayerEndPoint = path[path.length - 1];
-            chunkPath.push(...path);
+            path = connectIsocontours(insetContoursRoot, deltaL, lastLayerEndPoint);
         } else {
-            const path = generateZigzagInfill(region.contour, region.height, {spacing: deltaL}, flipY);
-            chunkPath.push(...path);
-            flipY = !flipY;
+            path = generateRectilinearInfill(region.contour, deltaL, scanX, lastLayerEndPoint);
+            scanX = !scanX;
         }
+
+        chunkPath.push(...path);
+
+        lastLayerEndPoint = chunkPath[chunkPath.length - 1];
     }
     return chunkPath;
 }
@@ -781,18 +865,20 @@ function squaredXYDist(a: THREE.Vector3, b: THREE.Vector3): number {
 }
 
 
-function findNearestPoint(
+function findNearestPoints(
   matrix: THREE.Vector3[][],
-  target: THREE.Vector3
-): THREE.Vector3 | null {
+  target: THREE.Vector3,
+  k: number
+): THREE.Vector3[] {
   const N = matrix.length;
-  if (N === 0) return null;
+  if (N === 0) return [];
 
   const xi = lowerBoundXs(matrix, target.x);
-  let best: THREE.Vector3 | null = null;
-  let bestDist = Infinity;
 
-  // check the two candidate x slices
+  // collect every candidate we check, with its squared distance
+  const candidates: { point: THREE.Vector3; dist: number }[] = [];
+
+  // check the two candidate x‑slices
   for (const sliceIdx of [xi - 1, xi]) {
     if (sliceIdx < 0 || sliceIdx >= N) continue;
     const column = matrix[sliceIdx];
@@ -801,16 +887,36 @@ function findNearestPoint(
     const yj = lowerBoundYs(column, target.y);
     for (const rowIdx of [yj - 1, yj]) {
       if (rowIdx < 0 || rowIdx >= column.length) continue;
-      const candidate = column[rowIdx];
-      const d = squaredXYDist(candidate, target);
-      if (d < bestDist) {
-        bestDist = d;
-        best = candidate;
-      }
+      const pt = column[rowIdx];
+      const d = squaredXYDist(pt, target);
+      candidates.push({ point: pt, dist: d });
     }
   }
 
-  return best;
+  return candidates
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, k)
+    .map(c => c.point);
+}
+
+
+function getPlaneHeightAtXY(
+    p1: THREE.Vector3, 
+    p2: THREE.Vector3, 
+    p3: THREE.Vector3, 
+    x: number, 
+    y: number,
+): number {
+  const plane = new THREE.Plane().setFromCoplanarPoints(p1, p2, p3).normalize();
+  
+  const { x: nx, y: ny, z: nz } = plane.normal;
+  const d = plane.constant;
+  
+  if (nz === 0) {
+    return NaN;
+  }
+  
+  return -(nx * x + ny * y + d) / nz;
 }
 
 
@@ -859,7 +965,7 @@ export function generateAugmentFoamToolpath(
 
     // --- 3. Generate Zigzag Path
     // const toolpathZigzagPath: THREE.Vector3[][] = [];
-    let currentLayer = 1;
+    // let currentLayer = 1;
 
     const zOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
 
@@ -913,143 +1019,146 @@ export function generateAugmentFoamToolpath(
     //         visualizationGroup.add(line);
     //     }
     // }
+    const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(modelObj.toolpathSamplePoints.map(p => p.point), 5);
 
-    let toolpath: THREE.Vector3[] = [];
+    const sliceRegions: SliceRegion[] = [];
 
-    if (visualizer.printer.useFermatSpirals) {
-        const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(modelObj.toolpathSamplePoints.map(p => p.point), 5);
-
-        const sliceRegions: SliceRegion[] = [];
-
-        for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
-            const z = i * modelObj.toolpathConfig.deltaZ;
-            sliceRegions.push(...cloudSliceRegions.map(region => {
-                return {
-                    id: region.id + ", " + z,
-                    contour: region.contour.map(p => new THREE.Vector3(p.x, p.y, z)),
-                    holes: region.holes.map(hole => hole.map(p => new THREE.Vector3(p.x, p.y, z))),
-                    height: z,
-                    bounds: region.bounds,
-                }
-            }))
-        }
-        const regionTree = buildRegionTree(sliceRegions, modelObj.toolpathConfig.deltaZ);
-        const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
-
-        const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
-        toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
-                                    visualizer.printer.useFermatSpirals, startPoint);
-        
-        const samplePointMatrix: THREE.Vector3[][] = [[]];
-        let lastX = modelObj.toolpathSamplePoints[0].point.x;
-        for (const point of modelObj.toolpathSamplePoints) {
-            if (Math.abs(point.point.x - lastX) <= 0.0001) {
-                samplePointMatrix[samplePointMatrix.length - 1].push(point.point);
-            } else {
-                samplePointMatrix.push([point.point]);
-                lastX = point.point.x;
+    for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
+        const z = i * modelObj.toolpathConfig.deltaZ;
+        sliceRegions.push(...cloudSliceRegions.map(region => {
+            return {
+                id: region.id + ", " + z,
+                contour: region.contour.map(p => new THREE.Vector3(p.x, p.y, z)),
+                holes: region.holes.map(hole => hole.map(p => new THREE.Vector3(p.x, p.y, z))),
+                height: z,
+                bounds: region.bounds,
             }
-        }
-        for (const column of samplePointMatrix) {
-            column.sort((a, b) => a.y - b.y)
-        }
-
-        for (const point of toolpath) {
-            const nearestPoint = findNearestPoint(samplePointMatrix, point);
-
-            if (nearestPoint) {
-                point.setZ(point.z + nearestPoint.z + zOffset);
-            }
-        }
+        }))
     }
+    const regionTree = buildRegionTree(sliceRegions, modelObj.toolpathConfig.deltaZ);
+    const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
 
-    const toolpathZigzagPath: THREE.Vector3[][] = [];
+    const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
+    const toolpath = fillToolpath(makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
+                                visualizer.printer.useFermatSpirals, startPoint), modelObj.toolpathConfig.gridSize);
     
-    if (!visualizer.printer.useFermatSpirals) {
-        while (currentLayer <= modelObj.toolpathConfig.initialFoamLayerCount) {
-            const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
-            let tempPoints: THREE.Vector3[] = [];
-            let yDirection = 1;
-            let xDirection = 1;
-            let currentX: number | undefined, currentY: number | undefined;
+    const samplePointMatrix: THREE.Vector3[][] = [[]];
+    let lastX = modelObj.toolpathSamplePoints[0].point.x;
+    for (const point of modelObj.toolpathSamplePoints) {
+        if (Math.abs(point.point.x - lastX) <= 0.0001) {
+            samplePointMatrix[samplePointMatrix.length - 1].push(point.point);
+        } else {
+            samplePointMatrix.push([point.point]);
+            lastX = point.point.x;
+        }
+    }
+    for (const column of samplePointMatrix) {
+        column.sort((a, b) => a.y - b.y)
+    }
+    
+    for (const point of toolpath) {
+        const nearestPoints = findNearestPoints(samplePointMatrix, point, 3);
 
-            toolpathZigzagPath.push([]); // Add a new layer
-            console.log("In zig zag path code");
-
-            if (scanDirection === 'x') {
-                // X-direction scan
-                modelObj.toolpathSamplePoints.sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y);
-                currentX = modelObj.toolpathSamplePoints[0].point.x;
-
-                modelObj.toolpathSamplePoints.forEach(point => {
-                    if (point.point.x === currentX) {
-                        tempPoints.push(
-                            new THREE.Vector3(
-                                point.point.x,
-                                point.point.y,
-                                point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
-                            )
-                        );
-                    } else {
-                        tempPoints.sort((a, b) => (yDirection > 0 ? a.y - b.y : b.y - a.y));
-                        toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
-                        currentX = point.point.x;
-                        tempPoints = [
-                            new THREE.Vector3(
-                                point.point.x,
-                                point.point.y,
-                                point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
-                            )
-                        ];
-                        yDirection = -yDirection;
-                    }
-                });
-            } else {
-                // Y-direction scan
-                modelObj.toolpathSamplePoints.sort((a, b) => a.point.y - b.point.y || a.point.x - b.point.x);
-                currentY = modelObj.toolpathSamplePoints[0].point.y;
-
-                modelObj.toolpathSamplePoints.forEach(point => {
-                    if (point.point.y === currentY) {
-                        tempPoints.push(
-                            new THREE.Vector3(
-                                point.point.x,
-                                point.point.y,
-                                point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
-                            )
-                        );
-                    } else {
-                        tempPoints.sort((a, b) => (xDirection > 0 ? a.x - b.x : b.x - a.x));
-                        toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
-                        currentY = point.point.y;
-                        tempPoints = [
-                            new THREE.Vector3(
-                                point.point.x,
-                                point.point.y,
-                                point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
-                            )
-                        ];
-                        xDirection = -xDirection;
-                    }
-                });
+        if (nearestPoints.length >= 3) {
+            let addZ = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], point.x, point.y);
+            if (!addZ) {
+                addZ = nearestPoints[0].z;
             }
-            // Add remaining points to the path
-            if (tempPoints.length > 0) {
-                tempPoints.sort((a, b) =>
-                    scanDirection === 'x' ? (yDirection > 0 ? a.y - b.y : b.y - a.y) : (xDirection > 0 ? a.x - b.x : b.x - a.x)
-                );
-                toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
-            }
-
-            currentLayer++;
+            point.setZ(point.z + addZ + zOffset);
+        } else if (nearestPoints.length >= 1) {
+            point.setZ(point.z + nearestPoints[0].z + zOffset);
+        } else {
+            console.warn("Not able to find any points");
         }
     }
 
-    console.log("Generated Zigzag Toolpath:", toolpathZigzagPath);
+    // const toolpathZigzagPath: THREE.Vector3[][] = [];
+    
+    // if (!visualizer.printer.useFermatSpirals) {
+    //     while (currentLayer <= modelObj.toolpathConfig.initialFoamLayerCount) {
+    //         const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
+    //         let tempPoints: THREE.Vector3[] = [];
+    //         let yDirection = 1;
+    //         let xDirection = 1;
+    //         let currentX: number | undefined, currentY: number | undefined;
 
-    if (!visualizer.printer.useFermatSpirals) {
-        toolpathZigzagPath.forEach(layer => toolpath.push(... layer));
-    }
+    //         toolpathZigzagPath.push([]); // Add a new layer
+    //         console.log("In zig zag path code");
+
+    //         if (scanDirection === 'x') {
+    //             // X-direction scan
+    //             modelObj.toolpathSamplePoints.sort((a, b) => a.point.x - b.point.x || a.point.y - b.point.y);
+    //             currentX = modelObj.toolpathSamplePoints[0].point.x;
+
+    //             modelObj.toolpathSamplePoints.forEach(point => {
+    //                 if (point.point.x === currentX) {
+    //                     tempPoints.push(
+    //                         new THREE.Vector3(
+    //                             point.point.x,
+    //                             point.point.y,
+    //                             point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
+    //                         )
+    //                     );
+    //                 } else {
+    //                     tempPoints.sort((a, b) => (yDirection > 0 ? a.y - b.y : b.y - a.y));
+    //                     toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+    //                     currentX = point.point.x;
+    //                     tempPoints = [
+    //                         new THREE.Vector3(
+    //                             point.point.x,
+    //                             point.point.y,
+    //                             point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
+    //                         )
+    //                     ];
+    //                     yDirection = -yDirection;
+    //                 }
+    //             });
+    //         } else {
+    //             // Y-direction scan
+    //             modelObj.toolpathSamplePoints.sort((a, b) => a.point.y - b.point.y || a.point.x - b.point.x);
+    //             currentY = modelObj.toolpathSamplePoints[0].point.y;
+
+    //             modelObj.toolpathSamplePoints.forEach(point => {
+    //                 if (point.point.y === currentY) {
+    //                     tempPoints.push(
+    //                         new THREE.Vector3(
+    //                             point.point.x,
+    //                             point.point.y,
+    //                             point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
+    //                         )
+    //                     );
+    //                 } else {
+    //                     tempPoints.sort((a, b) => (xDirection > 0 ? a.x - b.x : b.x - a.x));
+    //                     toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+    //                     currentY = point.point.y;
+    //                     tempPoints = [
+    //                         new THREE.Vector3(
+    //                             point.point.x,
+    //                             point.point.y,
+    //                             point.point.z + zOffset + (currentLayer - 1) * modelObj.toolpathConfig.deltaZ
+    //                         )
+    //                     ];
+    //                     xDirection = -xDirection;
+    //                 }
+    //             });
+    //         }
+    //         // Add remaining points to the path
+    //         if (tempPoints.length > 0) {
+    //             tempPoints.sort((a, b) =>
+    //                 scanDirection === 'x' ? (yDirection > 0 ? a.y - b.y : b.y - a.y) : (xDirection > 0 ? a.x - b.x : b.x - a.x)
+    //             );
+    //             toolpathZigzagPath[toolpathZigzagPath.length - 1].push(...tempPoints);
+    //         }
+
+    //         currentLayer++;
+    //     }
+    // }
+
+    // console.log("Generated Zigzag Toolpath:", toolpathZigzagPath);
+
+    // if (!visualizer.printer.useFermatSpirals) {
+    //     toolpathZigzagPath.forEach(layer => toolpath.push(... layer));
+    // }
 
     // --- 4. Decide what to visualize based on the boolean
     let pathToVisualize: THREE.Vector3[] = [];

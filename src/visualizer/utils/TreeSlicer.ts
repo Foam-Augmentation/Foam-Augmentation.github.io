@@ -706,7 +706,7 @@ function preparePaths(
 }
 
 
-function pointAlongLine(
+export function pointAlongLine(
   a: THREE.Vector3,
   b: THREE.Vector3,
   distance: number
