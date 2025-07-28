@@ -3,22 +3,23 @@ import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import {
-  sliceMeshIntoLayers,
-  extractRegionsFromLayer,
-  buildRegionTree,
-  SliceRegion,
-  generateBoundaryContours,
-  generateInsetContourTree,
-  getWindingOrder,
-  getBounds,
-  connectIsocontours,
-  RegionNode,
-  buildChunkTree,
-  ChunkNode,
-  ContourNode,
-  extractRegionsFromPointCloud,
-  pointAlongLine,
+    sliceMeshIntoLayers,
+    extractRegionsFromLayer,
+    buildRegionTree,
+    SliceRegion,
+    generateBoundaryContours,
+    generateInsetContourTree,
+    getWindingOrder,
+    getBounds,
+    connectIsocontours,
+    RegionNode,
+    buildChunkTree,
+    ChunkNode,
+    ContourNode,
+    extractRegionsFromPointCloud,
+    pointAlongLine,
 } from '../utils/TreeSlicer';
+import { createCombinedPointCloudMesh, quickExportSTL } from './meshCombination';
 
 /**
      * Private helper function that constructs continuous paths from a filtered set of sample points.
@@ -401,8 +402,8 @@ function generateRectilinearInfill(
 ): THREE.Vector3[] {
     const toolpath: THREE.Vector3[] = [];
     const bounds = getBounds(contour, contour[0].z);
-    const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z), 
-                     new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
+    const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
 
     let atRight = false;
 
@@ -581,9 +582,9 @@ function makeChunkTreePath(
 
     // avoid collissions by only moving to the x and y first, then the z.
     const toolpath: THREE.Vector3[] = chunkPath.length === 0 ? [] : [new THREE.Vector3(chunkPath[0].x, chunkPath[0].y, lastLayerPoint.z)];
-    
+
     roots.splice(printIndex, 1, ...roots[printIndex].children);
-    
+
     let restOfPath: THREE.Vector3[] = [];
     if (roots.length) {
         restOfPath = makeChunkTreePath(roots, deltaL, nozzleHeight, useFermatSpirals, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1]);
@@ -671,7 +672,7 @@ export function generateFoamToolpath(
         allRegions.push(...regions);
     }
     console.log('Extracted regions:', allRegions.length, allRegions.slice(0, 5));
-    
+
     // Debug: Log contours for each region
     allRegions.forEach((region, idx) => {
         console.log(`Region ${idx} at Z=${region.height}:`, region.contour.length, 'points');
@@ -691,7 +692,7 @@ export function generateFoamToolpath(
 
     // const colors: number[] = [0xff0000, 0x00ff00, 0x0000ff, 0x00aaaa];
     // visualizeChunks(chunkTree, colors, 0, visualizationGroup);
-    
+
     // const chunks = buildChunksWithDependencies(regionGroups, regionTree);
     // const orderedChunks = topologicalSortChunks(chunks);
     // --- 4. For each chunk, for each region, generate zigzag toolpath ---
@@ -702,8 +703,8 @@ export function generateFoamToolpath(
     // }
 
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
-    const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
-                                       visualizer.printer.useFermatSpirals, startPoint);
+    const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
+        visualizer.printer.useFermatSpirals, startPoint);
     console.log("Created toolpath");
 
     // for (const chunk of orderedChunks) {
@@ -839,84 +840,84 @@ export function generateFoamToolpath(
 
 
 function lowerBoundXs(matrix: THREE.Vector3[][], tx: number): number {
-  let lo = 0, hi = matrix.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (matrix[mid][0].x < tx) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
+    let lo = 0, hi = matrix.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (matrix[mid][0].x < tx) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
 }
 
 function lowerBoundYs(row: THREE.Vector3[], ty: number): number {
-  let lo = 0, hi = row.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (row[mid].y < ty) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
+    let lo = 0, hi = row.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (row[mid].y < ty) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
 }
 
 function squaredXYDist(a: THREE.Vector3, b: THREE.Vector3): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return dx*dx + dy*dy;
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
 }
 
 
 function findNearestPoints(
-  matrix: THREE.Vector3[][],
-  target: THREE.Vector3,
-  k: number
+    matrix: THREE.Vector3[][],
+    target: THREE.Vector3,
+    k: number
 ): THREE.Vector3[] {
-  const N = matrix.length;
-  if (N === 0) return [];
+    const N = matrix.length;
+    if (N === 0) return [];
 
-  const xi = lowerBoundXs(matrix, target.x);
+    const xi = lowerBoundXs(matrix, target.x);
 
-  // collect every candidate we check, with its squared distance
-  const candidates: { point: THREE.Vector3; dist: number }[] = [];
+    // collect every candidate we check, with its squared distance
+    const candidates: { point: THREE.Vector3; dist: number }[] = [];
 
-  // check the two candidate x‑slices
-  for (const sliceIdx of [xi - 1, xi]) {
-    if (sliceIdx < 0 || sliceIdx >= N) continue;
-    const column = matrix[sliceIdx];
+    // check the two candidate x‑slices
+    for (const sliceIdx of [xi - 1, xi]) {
+        if (sliceIdx < 0 || sliceIdx >= N) continue;
+        const column = matrix[sliceIdx];
 
-    // within that column find the y bracket
-    const yj = lowerBoundYs(column, target.y);
-    for (const rowIdx of [yj - 1, yj]) {
-      if (rowIdx < 0 || rowIdx >= column.length) continue;
-      const pt = column[rowIdx];
-      const d = squaredXYDist(pt, target);
-      candidates.push({ point: pt, dist: d });
+        // within that column find the y bracket
+        const yj = lowerBoundYs(column, target.y);
+        for (const rowIdx of [yj - 1, yj]) {
+            if (rowIdx < 0 || rowIdx >= column.length) continue;
+            const pt = column[rowIdx];
+            const d = squaredXYDist(pt, target);
+            candidates.push({ point: pt, dist: d });
+        }
     }
-  }
 
-  return candidates
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, k)
-    .map(c => c.point);
+    return candidates
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, k)
+        .map(c => c.point);
 }
 
 
 function getPlaneHeightAtXY(
-    p1: THREE.Vector3, 
-    p2: THREE.Vector3, 
-    p3: THREE.Vector3, 
-    x: number, 
+    p1: THREE.Vector3,
+    p2: THREE.Vector3,
+    p3: THREE.Vector3,
+    x: number,
     y: number,
 ): number {
-  const plane = new THREE.Plane().setFromCoplanarPoints(p1, p2, p3).normalize();
-  
-  const { x: nx, y: ny, z: nz } = plane.normal;
-  const d = plane.constant;
-  
-  if (nz === 0) {
-    return NaN;
-  }
-  
-  return -(nx * x + ny * y + d) / nz;
+    const plane = new THREE.Plane().setFromCoplanarPoints(p1, p2, p3).normalize();
+
+    const { x: nx, y: ny, z: nz } = plane.normal;
+    const d = plane.constant;
+
+    if (nz === 0) {
+        return NaN;
+    }
+
+    return -(nx * x + ny * y + d) / nz;
 }
 
 
@@ -993,12 +994,12 @@ export function generateAugmentFoamToolpath(
 
     // const geometry = new THREE.BufferGeometry();
     // geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    
+
     // const material = new THREE.LineBasicMaterial({ 
     //     color: 0x0000ff,
     //     linewidth: 2
     // });
-    
+
     // const line = new THREE.Line(geometry, material);
     // visualizationGroup.add(line);
 
@@ -1039,9 +1040,9 @@ export function generateAugmentFoamToolpath(
     const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
 
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
-    const toolpath = fillToolpath(makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
-                                visualizer.printer.useFermatSpirals, startPoint), modelObj.toolpathConfig.gridSize);
-    
+    const toolpath = fillToolpath(makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
+        visualizer.printer.useFermatSpirals, startPoint), modelObj.toolpathConfig.gridSize);
+
     const samplePointMatrix: THREE.Vector3[][] = [[]];
     let lastX = modelObj.toolpathSamplePoints[0].point.x;
     for (const point of modelObj.toolpathSamplePoints) {
@@ -1055,7 +1056,7 @@ export function generateAugmentFoamToolpath(
     for (const column of samplePointMatrix) {
         column.sort((a, b) => a.y - b.y)
     }
-    
+
     for (const point of toolpath) {
         const nearestPoints = findNearestPoints(samplePointMatrix, point, 3);
 
@@ -1073,7 +1074,7 @@ export function generateAugmentFoamToolpath(
     }
 
     // const toolpathZigzagPath: THREE.Vector3[][] = [];
-    
+
     // if (!visualizer.printer.useFermatSpirals) {
     //     while (currentLayer <= modelObj.toolpathConfig.initialFoamLayerCount) {
     //         const scanDirection = currentLayer % 2 === 1 ? 'x' : 'y'; // Odd layers scan in x, even layers in y
@@ -1175,7 +1176,7 @@ export function generateAugmentFoamToolpath(
 
     // --- 5. Visualize the chosen path
     // const visualizationGroup = new THREE.Group();
-    
+
     if (pathToVisualize.length === 0) {
         console.warn("No path to visualize");
         return {
@@ -1184,7 +1185,7 @@ export function generateAugmentFoamToolpath(
             sense: []
         };
     }
-    
+
     if (visualizer.config.showGcodeVisualization) {
         // For G-code: Create one continuous line connecting all points across all layers
         const allVertices: number[] = [];
@@ -1193,12 +1194,12 @@ export function generateAugmentFoamToolpath(
         if (allVertices.length > 0) {
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
-            
-            const material = new THREE.LineBasicMaterial({ 
+
+            const material = new THREE.LineBasicMaterial({
                 color: 0x00ff00,
                 linewidth: 2
             });
-            
+
             const line = new THREE.Line(geometry, material);
             visualizationGroup.add(line);
             console.log(`Added G-code visualization with ${allVertices.length / 3} total points`);
@@ -1210,12 +1211,12 @@ export function generateAugmentFoamToolpath(
         if (allVertices.length > 0) {
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
-            
-            const material = new THREE.LineBasicMaterial({ 
+
+            const material = new THREE.LineBasicMaterial({
                 color: 0x00ff00,
                 linewidth: 2
             });
-            
+
             const line = new THREE.Line(geometry, material);
             visualizationGroup.add(line);
             console.log(`Added G-code visualization with ${allVertices.length / 3} total points`);
@@ -1223,7 +1224,7 @@ export function generateAugmentFoamToolpath(
         // For intended toolpath: Create separate lines for each layer (original behavior)
         // pathToVisualize.forEach((layer, layerIndex) => {
         //     if (layer.length === 0) return;
-            
+
         //     const vertices: number[] = [];
         //     layer.forEach(point => {
         //         vertices.push(point.x, point.y, point.z);
@@ -1233,12 +1234,12 @@ export function generateAugmentFoamToolpath(
 
         //     const geometry = new THREE.BufferGeometry();
         //     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-            
+
         //     const material = new THREE.LineBasicMaterial({ 
         //         color: 0x0075ff,
         //         linewidth: 2
         //     });
-            
+
         //     const line = new THREE.Line(geometry, material);
         //     visualizationGroup.add(line);
         //     console.log(`Added intended toolpath layer ${layerIndex} with ${layer.length} points`);
@@ -1256,9 +1257,87 @@ export function generateAugmentFoamToolpath(
         // Intended toolpath needs model position applied
         visualizationGroup.position.copy(modelObj.mesh.position);
     }
-    
+
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;
+
+    // part 7 trying to get the top of the toolpath and the dots turned into a mesh
+
+
+    // const topLayerPoints: THREE.Vector3[] = [];
+    // const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount;
+    // const topLayerZ = (totalLayers - 1) * modelObj.toolpathConfig.deltaZ;
+    // const layerThickness = modelObj.toolpathConfig.deltaZ;
+
+    // // Get all points that are in the top layer (within layer thickness of the top)
+    // for (const point of toolpath) {
+    //     if (point.z >= topLayerZ - layerThickness * 0.1) { // Small tolerance
+    //         topLayerPoints.push(point);
+    //     }
+    // }
+
+    // // If we didn't get enough points, take the last portion of the toolpath
+    // if (topLayerPoints.length < toolpath.length * 0.1) { // Less than 10% of total points
+    //     const pointsPerLayer = Math.floor(toolpath.length / totalLayers);
+    //     const startIndex = Math.max(0, toolpath.length - pointsPerLayer);
+    //     topLayerPoints.length = 0; // Clear the array
+    //     topLayerPoints.push(...toolpath.slice(startIndex));
+    // }
+
+    // console.log(`Top layer Z: ${topLayerZ}, points count: ${topLayerPoints.length}, total toolpath: ${toolpath.length}`);
+    // if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
+        const topLayerPoints: THREE.Vector3[] = [];
+        const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount;
+        const layersToTake = Math.min(3, Math.max(2, Math.floor(totalLayers * 0.3))); // Take 2-3 layers or 30% of total layers
+        const pointsPerLayer = Math.floor(toolpath.length / totalLayers);
+        const pointsToTake = pointsPerLayer * layersToTake;
+        const startIndex = Math.max(0, toolpath.length - pointsToTake);
+        
+        topLayerPoints.push(...toolpath.slice(startIndex));
+        
+        console.log(`Taking top ${layersToTake} layers (${pointsToTake} points) from total ${toolpath.length} points`);
+        if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
+        console.log("Creating combined mesh using improved point cloud approach...");
+
+
+        // Create the final combined mesh with improved parameters
+        const finalCombinedMesh = createCombinedPointCloudMesh(
+            topLayerPoints,           // Only the top layer
+            modelObj.dotVisualizationObject,
+            modelObj.mesh.position,
+            10,    // toolpath density (points per unit length)
+            4.0,  // dot radius - adjust based on dot size
+            0.5,   // dot Z offset above toolpath
+            2.0  // how close to the toolpath dots should be considered
+        );
+        // Position the combined mesh relative to the model
+        finalCombinedMesh.position.copy(modelObj.mesh.position);
+        // Remove old combined mesh if it exists
+        if (modelObj.combinedMesh) {
+            visualizer.scene.remove(modelObj.combinedMesh);
+            modelObj.combinedMesh.geometry?.dispose();
+            // Dispose material if it's not shared
+            if (Array.isArray(modelObj.combinedMesh.material)) {
+                modelObj.combinedMesh.material.forEach(mat => mat.dispose());
+            } else if (modelObj.combinedMesh.material) {
+                modelObj.combinedMesh.material.dispose();
+            }
+            modelObj.combinedMesh = undefined;
+        }
+        // Add the new combined mesh to the scene
+        visualizer.scene.add(finalCombinedMesh);
+        modelObj.combinedMesh = finalCombinedMesh;
+        console.log("Improved point cloud combined mesh created and added to scene");
+        console.log(`Final mesh preserves individual dot shapes on top of toolpath`);
+
+        // Export the mesh
+        quickExportSTL(finalCombinedMesh, 'foam_toolpath_with_dots');
+    } else {
+        console.warn("Cannot create combined mesh: missing top layer points or dot visualization");
+        console.log(`Debug: topLayerPoints.length=${topLayerPoints.length}, dotVisualizationObject exists=${!!modelObj.dotVisualizationObject}`);
+    }
+
+
 
     return {
         all: toolpath,
@@ -1268,6 +1347,11 @@ export function generateAugmentFoamToolpath(
 }
 
 
+
+
+
+
+
 // NEW FUNCTION: Parse G-code to extract path points
 function parseGcodeToPath(gcode: string): THREE.Vector3[][] {
     const lines = gcode.split('\n');
@@ -1275,24 +1359,24 @@ function parseGcodeToPath(gcode: string): THREE.Vector3[][] {
     let currentLayer: THREE.Vector3[] = [];
     let currentPosition = new THREE.Vector3(0, 0, 0);
     let lastZ = -999999; // Track Z changes for layer detection
-    
+
     console.log("Parsing G-code, total lines:", lines.length);
-    
+
     for (let i = 0; i < lines.length; i++) {
         const trimmedLine = lines[i].trim();
-        
+
         // Skip comments and empty lines
         if (!trimmedLine || trimmedLine.startsWith(';')) continue;
-        
+
         // Check for movement commands (G0, G1) - be more flexible with spacing
         if (trimmedLine.match(/^G[01]\s/)) {
             const newPosition = parseGcodePosition(trimmedLine, currentPosition);
-            
+
             // Debug first few positions
             if (i < 20) {
                 console.log(`Line ${i}: ${trimmedLine} -> Position:`, newPosition);
             }
-            
+
             // If Z changed significantly (more than 0.05mm), start a new layer
             if (Math.abs(newPosition.z - lastZ) > 0.05) {
                 if (currentLayer.length > 0) {
@@ -1302,20 +1386,20 @@ function parseGcodeToPath(gcode: string): THREE.Vector3[][] {
                 }
                 lastZ = newPosition.z;
             }
-            
+
             currentLayer.push(newPosition.clone());
             currentPosition = newPosition;
         }
     }
-    
+
     // Add the last layer if it has points
     if (currentLayer.length > 0) {
         console.log(`Final layer has ${currentLayer.length} points`);
         path.push(currentLayer);
     }
-    
+
     console.log(`Parsed G-code into ${path.length} layers with total points:`, path.map(layer => layer.length));
-    
+
     // If no layers were created, create one layer with all points
     if (path.length === 0 && currentLayer.length === 0) {
         console.warn("No valid G-code movements found, creating single layer");
@@ -1334,19 +1418,19 @@ function parseGcodeToPath(gcode: string): THREE.Vector3[][] {
             path.push(allPoints);
         }
     }
-    
+
     return path;
 }
 
 // HELPER FUNCTION: Parse position from G-code line
 function parseGcodePosition(line: string, currentPos: THREE.Vector3): THREE.Vector3 {
     const newPos = currentPos.clone();
-    
+
     // Extract X, Y, Z coordinates - handle different formats and spacing
     const xMatch = line.match(/X\s*([-+]?\d*\.?\d+)/i);
     const yMatch = line.match(/Y\s*([-+]?\d*\.?\d+)/i);
     const zMatch = line.match(/Z\s*([-+]?\d*\.?\d+)/i);
-    
+
     if (xMatch) {
         newPos.x = parseFloat(xMatch[1]);
     }
@@ -1356,6 +1440,6 @@ function parseGcodePosition(line: string, currentPos: THREE.Vector3): THREE.Vect
     if (zMatch) {
         newPos.z = parseFloat(zMatch[1]);
     }
-    
+
     return newPos;
 }

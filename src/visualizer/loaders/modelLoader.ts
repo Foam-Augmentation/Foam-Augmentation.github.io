@@ -4,6 +4,8 @@ import Visualizer from '../Visualizer';
 import { refreshModelGUIList } from '../gui/refreshModelGUIList';
 import { FoamModel, EverydayModel, GUIItem } from '../types/modelTypes';
 import { MeshBVH } from 'three-mesh-bvh';
+import { loadDotPointCloud } from '../utils/loadDotSTL';
+import { projectDotCloudOntoSurface } from '../utils/projectDotCloud';
 
 /**
  * Imports an STL model file and integrates it with the Visualizer.
@@ -65,6 +67,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 visualizer.printer.machine_depth_y / 2,
                 zOffset
             );
+            let modelObj: FoamModel | EverydayModel;
 
             // Save the model in the appropriate list and update the uuid mapping.
             if (type === 'foam') {
@@ -109,10 +112,26 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 visualizer.everydayModelList.push(everydayModelObj);
                 visualizer.uuid_to_modelObj_Map.set(mesh.uuid, everydayModelObj);
                 everydayModelObj.mesh.geometry.boundsTree = new MeshBVH(everydayModelObj.geometry); // Add bounds tree for raycasting.
+                modelObj = everydayModelObj;
             }
 
             // Add the mesh to the scene.
             visualizer.scene.add(mesh);
+
+            // this part automatically adds the dots in, but should be removed when we add to the GUI
+
+            if (type === 'everyday') {
+                // Generate grid points across the entire object surface using dot spacing
+                visualizer.generateGridFromDotSpacing(mesh).then(gridPoints => {
+                    console.log('Generated grid points:', gridPoints.length);
+                    
+                    const projectedPoints = projectDotCloudOntoSurface(gridPoints, mesh);
+                    console.log('Projected points:', projectedPoints.length);
+            
+                    // Create actual dot meshes across the entire surface
+                    visualizer.visualizeDotPattern(projectedPoints, modelObj as EverydayModel);
+                });
+            }
 
             // Update the GUI model list. 
             if (type === 'foam') {

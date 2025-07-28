@@ -17,6 +17,7 @@ import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer from '../printer/Printer';
 import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
+import { loadDotPointCloud } from './utils/loadDotSTL';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
@@ -294,4 +295,107 @@ export default class Visualizer {
             saveGcodeToFile(gcode, name); 
         }
     }
+    
+
+    // working july 13th
+    visualizePointCloud(points: THREE.Vector3[]) {
+        const sphereGeometry = new THREE.SphereGeometry(0.1, 8, 8);  // small spheres for points
+        const sphereMaterial = new THREE.MeshBasicMaterial({ color: 'red' }); // red color
+        points.forEach(point => {
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            sphere.position.copy(point);
+            this.scene.add(sphere);
+        });
+    }
+    // gets the dot pattern
+
+    // Second working July 14th (had the actual dot.stl i think)
+    public visualizeDotPattern(projectedPoints: THREE.Vector3[], model: EverydayModel): void {
+        // Remove existing dots
+        if (model.dotVisualizationObject) {
+            this.scene.remove(model.dotVisualizationObject);
+        }
+    
+        const dotGroup = new THREE.Group();
+    
+        // Load the STL geometry for the dot
+        const loader = new STLLoader();
+        loader.load('/public/assets/dot.stl', (dotGeometry) => {
+            dotGeometry.computeBoundingBox();
+            const bbox = dotGeometry.boundingBox!;
+            
+            // Calculate the current size of the dot
+            const dotSize = Math.max(
+                bbox.max.x - bbox.min.x,
+                bbox.max.y - bbox.min.y,
+                bbox.max.z - bbox.min.z
+            );
+            
+            // Define desired dot size (should be able to be changed)
+            const desiredDotSize = 8;
+            const scaleFactor = desiredDotSize / dotSize;
+            
+            // Center the geometry at origin
+            const center = new THREE.Vector3();
+            bbox.getCenter(center);
+            dotGeometry.translate(-center.x, -center.y, -center.z);
+            
+            const dotMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xff0000,
+                metalness: 0.1,
+                roughness: 0.7
+            });
+    
+            projectedPoints.forEach(point => {
+                const dotMesh = new THREE.Mesh(dotGeometry.clone(), dotMaterial);
+                
+                // Apply scaling
+                dotMesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                
+                // Position the dot at the projected point
+                dotMesh.position.copy(point);
+                
+            
+                
+                dotGroup.add(dotMesh);
+            });
+    
+            this.scene.add(dotGroup);
+            model.dotVisualizationObject = dotGroup;
+    
+            console.log(`Created ${projectedPoints.length} dot meshes with scale factor ${scaleFactor}`);
+        }, undefined, (error) => {
+            console.error('Error loading dot STL:', error);
+        });
+    }
+    // TODO
+    // 
+
+  public async generateGridFromDotSpacing(mesh: THREE.Mesh): Promise<THREE.Vector3[]> {
+    // First, load the do
+    const dotPoints = await loadDotPointCloud(1.0);
+    
+    // Calculate appropriate spacing based on dot geometry
+    const spacing = 15.0; 
+    
+    // Ensure bounding box is computed
+    mesh.geometry.computeBoundingBox();
+    const bbox = mesh.geometry.boundingBox!;
+    
+    const points: THREE.Vector3[] = [];
+    
+    // Create a grid of points 
+    for (let x = bbox.min.x; x <= bbox.max.x; x += spacing) {
+        for (let y = bbox.min.y; y <= bbox.max.y; y += spacing) {
+            points.push(new THREE.Vector3(x, y, 0)); 
+        }
+    }
+    
+    console.log(`Generated ${points.length} grid points with spacing ${spacing}mm`);
+    console.log(`Bounding box: min(${bbox.min.x}, ${bbox.min.y}, ${bbox.min.z}) max(${bbox.max.x}, ${bbox.max.y}, ${bbox.max.z})`);
+    console.log(`Mesh position: (${mesh.position.x}, ${mesh.position.y}, ${mesh.position.z})`);
+    
+    return points;
+}
+
 }
