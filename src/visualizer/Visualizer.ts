@@ -92,6 +92,11 @@ export default class Visualizer {
         useTreeSlicer: boolean;
         useFermatSpirals: boolean;
         generateBoundary: boolean;
+        purgeLine: boolean;
+        printHeadMinX: number;
+        printHeadMinY: number;
+        printHeadMaxX: number;
+        printHeadMaxY: number;
     };
 
     /**
@@ -180,7 +185,7 @@ export default class Visualizer {
             // foamLayers: 3,
             // extrusion_speed_when_foam: 758.17,
             nozzleDiameter: 0.4,
-            nozzleLength: 12,
+            nozzleLength: 4.5,
             dieSwelling: 1.0,
             // VStar: 0.15,
             // HStar: 9,
@@ -192,6 +197,11 @@ export default class Visualizer {
             useTreeSlicer: false,
             useFermatSpirals: true,
             generateBoundary: true,
+            purgeLine: true,
+            printHeadMinX: -40,
+            printHeadMinY: -15,
+            printHeadMaxX: 35,
+            printHeadMaxY: 70,
         };
 
         // Initialize lasso selection state.

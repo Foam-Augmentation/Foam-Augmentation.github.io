@@ -143,9 +143,19 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
   printerFolder.add(visualizer.config, 'nozzleLength', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.nozzleLength = v; });
+  printerFolder.add(visualizer.config, 'printHeadMinX', -100, 0, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setX(v); });
+  printerFolder.add(visualizer.config, 'printHeadMinY', -100, 0, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setY(v); });
+  printerFolder.add(visualizer.config, 'printHeadMaxX', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
+  printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
 
   const slicerFolder = settingFolder.addFolder('slicer settings');
   slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
+  slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
+  slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
   slicerFolder.close();
   
   printerFolder.close();
@@ -221,7 +231,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
-  saveFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   saveFolder.close();
   
 
@@ -246,7 +255,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     console.log('Selected model position:', visualizer.currentSelectedModel.mesh.position);
 
     if (visualizer.printer.generateBoundary) {
-      visualizer.printer.generate_boundary_gcode(visualizer.currentSelectedModel.mesh, 2);
+      visualizer.printer.generate_boundary_gcode(visualizer.currentSelectedModel.mesh, 1);
     } else {
       visualizer.printer.boundaryGcode = "";
     }

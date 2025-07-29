@@ -52,8 +52,9 @@ export function sliceMeshIntoLayers(mesh: THREE.Mesh, deltaZ: number): { z: numb
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox!;
     
-    const minZ = bbox.min.z;
-    const maxZ = bbox.max.z;
+    const minZ = bbox.min.z + 0.00001;
+    console.log("Minz: " + minZ);
+    const maxZ = bbox.max.z + 0.000011;
     const layers: { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] = [];
     
     // go from bottom to top, slice every deltaZ
@@ -313,6 +314,7 @@ export function getBounds(contour: THREE.Vector3[], z: number): { min: THREE.Vec
         max: new THREE.Vector3(maxX, maxY, z)
     };
 }
+
 
 /**
  * Determines if two regions overlap when only considering x and y dimensions.
@@ -718,7 +720,6 @@ export function pointAlongLine(
 }
 
 
-
 /**
  * Helper function for connectIsocontours
  * Spirals a list of contours towards the center, only connecting contours in the indicesToSpiral
@@ -971,7 +972,7 @@ export function connectIsocontours(
       for (const child of currentNode.children) {
         lowestDist = Infinity;
         let closestIndexOuter = 0;
-        for (let i = 0; i < isocontours[isocontours.length - 1].length; i++) {
+        for (let i = 0; i < Math.min(isocontours[isocontours.length - 1].length, path.length); i++) {
           const point = inwardSpiralPath[inwardSpiralPath.length - 1 - i];
           for (let j = 0; j < child.contour.length; j++) {
             const otherPoint = child.contour[j];

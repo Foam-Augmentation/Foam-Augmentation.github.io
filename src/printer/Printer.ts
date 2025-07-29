@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {generateBoundaryContours} from "../visualizer/utils/TreeSlicer";
 import {ToolpathConfig} from "../visualizer/types/modelTypes";
+import {PathPoint} from "../visualizer/toolpath/generateFoamToolpath";
 
 
 /**
@@ -48,6 +49,9 @@ export default class Printer {
   public H_star: number; // H_star (height of the foam layer)
   public useFermatSpirals: boolean;
   public generateBoundary: boolean;
+  public purgeLine: boolean;
+
+  public printHeadDims: {min: THREE.Vector2, max: THREE.Vector2};
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -55,7 +59,7 @@ export default class Printer {
   constructor() {
     this.extrudedAmount = 0;
     this.nozzleDiameter = 0.4; // nozzle diameter
-    this.nozzleLength = 12;
+    this.nozzleLength = 4.5;
     this.dieSwelling = 1.0; // die swelling factor
     this.printHead_speed_when_free_move = 1000; // free move speed
     this.material_bed_temperature = 60; // bed temperature
@@ -74,6 +78,8 @@ export default class Printer {
     this.H_star = 6.0
     this.useFermatSpirals = true;
     this.generateBoundary = true;
+    this.purgeLine = true;
+    this.printHeadDims = {min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70)}
    
     this.end_gcode = `
 G4 S5; Dwell for 5 Second(s) 
@@ -205,8 +211,7 @@ M109 S${this.print_temp_left_extruder} ; wait for extruder temp
 M862.3 P "MK3S" ; printer model check
 
 G28 ; home axes
-G29 ; enabled bed mesh leveling
-G92 X0 Y0 Z0 ; tell printer all axes are 0
+G92 X0 Y0 ; tell printer all axes are 0
 
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
@@ -219,7 +224,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
           
-      `;
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" +  this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.2), new THREE.Vector3(105, 5, 0.2)) : "");
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -245,8 +250,7 @@ M109 S${this.print_temp_left_extruder} ; wait for extruder temp
 M862.3 P "MK3S" ; printer model check 
 
 G28 ; home axes
-G29 ; enabled bed mesh leveling
-G92 X0 Y0 Z0 ; tell printer all axes are 0
+G92 X0 Y0 ; tell printer all axes are 0
 
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
@@ -258,7 +262,8 @@ G92 E0.0
 G1 Z0.200 F2400.000 
 
 M204 S1000 
-      `;
+
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(0, 0, 0.2), new THREE.Vector3(50, 0, 0.2)) : "");
     }
   }
 
@@ -268,8 +273,8 @@ M204 S1000
    * @param {[number, number, number]} target - The target [x, y, z] coordinates.
    * @returns {string} The G-code command for moving to the target position.
    */
-  public move_to_position(target: [number, number, number]): string {
-    return `G0 X${target[0].toFixed(3)} Y${target[1].toFixed(3)} Z${target[2].toFixed(3)} F${this.printHead_speed_when_free_move}`;
+  public move_to_position(target: THREE.Vector3): string {
+    return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.printHead_speed_when_free_move}`;
   }
 
   /**
@@ -287,7 +292,8 @@ M204 S1000
   private extrude_single_segment(
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-    isFirstInLayer: boolean = false
+    isFirstInLayer: boolean = false,
+    extrude: boolean = true,
   ): string {
     // Extract Vector3 points regardless of input type
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
@@ -309,7 +315,7 @@ M204 S1000
       gcode += `G1 X${p0Point.x.toFixed(6)} Y${p0Point.y.toFixed(6)} Z${p0Point.z.toFixed(6)} E0.0050 F0114 ; Move to start of new layer\n`;
     }
 
-    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
+    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${extrude ? this.extrudedAmount.toFixed(6) : 0} F0${Math.round(F)}`;
 
     return gcode;
   }
@@ -321,8 +327,8 @@ M204 S1000
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
     const beadArea = this.dieSwelling * Math.pow(this.nozzleDiameter, 2) / 2;
-    const crossSection = Math.PI * Math.pow(this.diameter_filament/2, 2);
-    const filamentPerMM = beadArea / crossSection;
+    const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
+    const filamentPerMM = (beadArea / crossSection) * 2;
     const dist = this.norm(p0, p1);
     const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.printHead_speed_when_free_move}`;
     return gcode;
@@ -338,9 +344,11 @@ M204 S1000
    */
   public generate_boundary_gcode(
     mesh: THREE.Mesh,
-    offset: number = 3,
+    offset: number = 1,
   ): string {
     const expandedContours = generateBoundaryContours(mesh, offset);
+
+    expandedContours.forEach(contour => contour.forEach(point => point.setZ(point.z + 0.17)));
 
     let boundaryGcode: string[] = [];
 
@@ -437,7 +445,7 @@ M204 S1000
    */
   
   public generate_foam_gcode(
-    toolpath: THREE.Vector3[],
+    toolpath: PathPoint[],
     extruderId: number,
     modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
   ): string {
@@ -448,21 +456,33 @@ M204 S1000
 
     let body_gcode: string[] = [];
     // Apply model position to first point
-    let firstPoint = toolpath[0].clone().add(modelPosition);
+    let firstPoint = toolpath[0].point.clone().add(modelPosition);
     let lastTarget: THREE.Vector3 = firstPoint;
 
     body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
     body_gcode.push("M205 X8 Y8; tune down acceleration");
 
-    for (const point of toolpath) {
-      const currentPoint = point.clone().add(modelPosition);
-      body_gcode.push(
-        this.extrude_single_segment(
-          lastTarget,
-          currentPoint,
-          false
-        )
-      );
+    for (let i = 0; i < toolpath.length; i++) {
+      const point = toolpath[i];
+      const nextPoint = toolpath[(i + 1) % toolpath.length];
+      const currentPoint = point.point.clone().add(modelPosition);
+      if (point.travel) {
+        if (!nextPoint.travel) {
+          this.move_to_position(new THREE.Vector3(currentPoint.x, currentPoint.y, currentPoint.z - this.ZOffset));
+        }
+        body_gcode.push(
+          this.move_to_position(currentPoint)
+        );
+      } else {
+
+        body_gcode.push(
+          this.extrude_single_segment(
+            lastTarget,
+            currentPoint,
+            false
+          )
+        );
+      }
       lastTarget = currentPoint;
     }
 
