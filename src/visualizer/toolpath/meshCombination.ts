@@ -8,220 +8,237 @@ import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
-/**
- * Creates a mesh from the top layer of toolpath points using a tube geometry
- * @param topLayerPoints Array of Vector3 points from the top toolpath layer
- * @param tubeRadius Radius of the tube (default: 0.1)
- * @returns THREE.Mesh representing the toolpath as a solid mesh
- */
-export function createToolpathMesh(topLayerPoints: THREE.Vector3[], tubeRadius: number = 0.1): THREE.Mesh {
-    if (topLayerPoints.length < 2) {
-        console.warn("Not enough points to create toolpath mesh");
-        return new THREE.Mesh();
-    }
-    // Create a curve from the points
-    const curve = new THREE.CatmullRomCurve3(topLayerPoints);
-    
-    // Create tube geometry along the curve
-    const tubeGeometry = new THREE.TubeGeometry(curve, Math.max(topLayerPoints.length * 2, 64), tubeRadius, 8, false);
-    
-    // Ensure proper normals
-    tubeGeometry.computeVertexNormals();
-    
-    const material = new THREE.MeshStandardMaterial({ 
-        color: 0x00ff00,
-        metalness: 0.1,
-        roughness: 0.7,
-        side: THREE.DoubleSide // Ensure visibility from both sides
-    });
-    
-    return new THREE.Mesh(tubeGeometry, material);
-}
-/**
- * Combines all dot meshes into a single merged mesh
- * @param dotGroup THREE.Group containing all the dot meshes
- * @param modelPosition Position of the model to offset the dots relative to
- * @returns THREE.Mesh with all dots merged into one geometry
- */
-export function createCombinedDotMesh(dotGroup: THREE.Group, modelPosition: THREE.Vector3 = new THREE.Vector3()): THREE.Mesh {
-    const geometries: THREE.BufferGeometry[] = [];
-    
-    dotGroup.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.geometry) {
-            // Clone the geometry
-            const clonedGeometry = child.geometry.clone();
-            
-            // Apply the child's world matrix
-            child.updateMatrixWorld(true);
-            clonedGeometry.applyMatrix4(child.matrixWorld);
-            
-            // Adjust position relative to model position
-            const offsetMatrix = new THREE.Matrix4();
-            offsetMatrix.makeTranslation(-modelPosition.x, -modelPosition.y, -modelPosition.z);
-            clonedGeometry.applyMatrix4(offsetMatrix);
-            
-            // Normalize the geometry
-            const normalizedGeometry = normalizeGeometry(clonedGeometry);
-            if (normalizedGeometry) {
-                geometries.push(normalizedGeometry);
-            }
-        }
-    });
-    
-    if (geometries.length === 0) {
-        console.warn("No dot geometries found to combine");
-        return new THREE.Mesh();
-    }
-    
-    console.log(`Combining ${geometries.length} dot geometries`);
-    
-    try {
-        // Merge all geometries into one
-        const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
-        
-        if (!mergedGeometry) {
-            throw new Error("Failed to merge geometries");
-        }
-        
-        // Ensure proper normals for the merged geometry
-        mergedGeometry.computeVertexNormals();
-        
-        const material = new THREE.MeshStandardMaterial({ 
-            color: 0xff0000,
-            metalness: 0.1,
-            roughness: 0.7,
-            side: THREE.DoubleSide
-        });
-        
-        console.log(`Combined dot mesh created with ${mergedGeometry.attributes.position.count} vertices`);
-        
-        return new THREE.Mesh(mergedGeometry, material);
-    } catch (error) {
-        console.error("Error merging dot geometries:", error);
-        // Return a simple sphere as fallback
-        const fallbackGeometry = new THREE.SphereGeometry(0.1, 8, 8);
-        const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-        return new THREE.Mesh(fallbackGeometry, material);
-    }
-}
-/**
- * Combines toolpath mesh and dot mesh into a single mesh
- * @param toolpathMesh The mesh created from toolpath points
- * @param dotMesh The combined mesh of all dots
- * @returns THREE.Mesh combining both meshes
- */
-export function combineToolpathAndDots(toolpathMesh: THREE.Mesh, dotMesh: THREE.Mesh): THREE.Mesh {
-    const geometries: THREE.BufferGeometry[] = [];
-    
-    // Process toolpath mesh
-    if (toolpathMesh.geometry && toolpathMesh.geometry.attributes.position.count > 0) {
-        const toolpathGeometry = toolpathMesh.geometry.clone();
-        toolpathMesh.updateMatrixWorld(true);
-        toolpathGeometry.applyMatrix4(toolpathMesh.matrixWorld);
-        const normalizedToolpath = normalizeGeometry(toolpathGeometry);
-        if (normalizedToolpath) {
-            geometries.push(normalizedToolpath);
-            console.log(`Toolpath geometry: ${normalizedToolpath.attributes.position.count} vertices`);
-        }
-    }
-    
-    // Process dot mesh
-    if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
-        const dotGeometry = dotMesh.geometry.clone();
-        dotMesh.updateMatrixWorld(true);
-        dotGeometry.applyMatrix4(dotMesh.matrixWorld);
-        const normalizedDot = normalizeGeometry(dotGeometry);
-        if (normalizedDot) {
-            geometries.push(normalizedDot);
-            console.log(`Dot geometry: ${normalizedDot.attributes.position.count} vertices`);
-        }
-    }
-    
-    if (geometries.length === 0) {
-        console.warn("No geometries to combine");
-        return new THREE.Mesh();
-    }
-    
-    try {
-        const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
-        
-        if (!mergedGeometry) {
-            throw new Error("Failed to merge geometries");
-        }
-        
-        // Compute normals for the final merged geometry
-        mergedGeometry.computeVertexNormals();
-        
-        const material = new THREE.MeshStandardMaterial({ 
-            color: 0x00ffff, // Cyan for the combined mesh
-            metalness: 0.1,
-            roughness: 0.7,
-            wireframe: false,
-            side: THREE.DoubleSide
-        });
-        
-        const combinedMesh = new THREE.Mesh(mergedGeometry, material);
-        
-        console.log(`Final combined mesh: ${mergedGeometry.attributes.position.count} vertices`);
-        console.log(`Triangle count: ${mergedGeometry.attributes.position.count / 3}`);
-        
-        return combinedMesh;
-    } catch (error) {
-        console.error("Error merging geometries:", error);
-        // Return just the toolpath mesh as fallback
-        return toolpathMesh;
-    }
-}
-/**
- * Normalizes geometry attributes to ensure compatibility for merging
- * @param geometry The geometry to normalize
- * @returns Normalized geometry or null if invalid
- */
-function normalizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry | null {
-    try {
-        // Check if geometry has valid position attribute
-        if (!geometry.attributes.position || geometry.attributes.position.count === 0) {
-            console.warn("Geometry has no position data");
-            return null;
-        }
-        
-        // Convert to non-indexed if needed
-        let processedGeometry = geometry;
-        if (geometry.index) {
-            processedGeometry = geometry.toNonIndexed();
-        }
-        
-        // Ensure normals exist and are computed
-        if (!processedGeometry.attributes.normal) {
-            processedGeometry.computeVertexNormals();
-        }
-        //
-        if (!processedGeometry.attributes.uv) {
-            const positionCount = processedGeometry.attributes.position.count;
-            const uvs = new Float32Array(positionCount * 2);
-            // Initialize with valid UV coordinates (0-1 range)
-            for (let i = 0; i < positionCount * 2; i += 2) {
-                uvs[i] = 0.5;     // U coordinate
-                uvs[i + 1] = 0.5; // V coordinate
-            }
-            processedGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-        }
-        // Clear morph attributes that can cause issues
-        processedGeometry.morphAttributes = {};
-        
-        // Remove any groups that might cause issues
-        processedGeometry.clearGroups();
-        
-        return processedGeometry;
-    } catch (error) {
-        console.error("Error normalizing geometry:", error);
-        return null;
-    }
-}
+import { CSG } from 'three-csg-ts';
+import { ADDITION, Brush, Evaluator, INTERSECTION, SUBTRACTION } from 'three-bvh-csg';
+import Module from 'manifold-3d';
+import { Manifold } from 'manifold-3d';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 
 
+
+// // not needed anymore
+// /**
+//  * Creates a mesh from the top layer of toolpath points using a tube geometry
+//  * @param topLayerPoints Array of Vector3 points from the top toolpath layer
+//  * @param tubeRadius Radius of the tube (default: 0.1)
+//  * @returns THREE.Mesh representing the toolpath as a solid mesh
+//  */
+// export function createToolpathMesh(topLayerPoints: THREE.Vector3[], tubeRadius: number = 0.1): THREE.Mesh {
+//     if (topLayerPoints.length < 2) {
+//         console.warn("Not enough points to create toolpath mesh");
+//         return new THREE.Mesh();
+//     }
+//     // Create a curve from the points
+//     const curve = new THREE.CatmullRomCurve3(topLayerPoints);
+    
+//     // Create tube geometry along the curve
+//     const tubeGeometry = new THREE.TubeGeometry(curve, Math.max(topLayerPoints.length * 2, 64), tubeRadius, 8, false);
+    
+//     // Ensure proper normals
+//     tubeGeometry.computeVertexNormals();
+    
+//     const material = new THREE.MeshStandardMaterial({ 
+//         color: 0x00ff00,
+//         metalness: 0.1,
+//         roughness: 0.7,
+//         side: THREE.DoubleSide // Ensure visibility from both sides
+//     });
+    
+//     return new THREE.Mesh(tubeGeometry, material);
+// }
+
+// /// this is like not used anymore
+// /**
+//  * Combines all dot meshes into a single merged mesh
+//  * @param dotGroup THREE.Group containing all the dot meshes
+//  * @param modelPosition Position of the model to offset the dots relative to
+//  * @returns THREE.Mesh with all dots merged into one geometry
+//  */
+// export function createCombinedDotMesh(dotGroup: THREE.Group, modelPosition: THREE.Vector3 = new THREE.Vector3()): THREE.Mesh {
+//     const geometries: THREE.BufferGeometry[] = [];
+    
+//     dotGroup.traverse((child) => {
+//         if (child instanceof THREE.Mesh && child.geometry) {
+//             // Clone the geometry
+//             const clonedGeometry = child.geometry.clone();
+            
+//             // Apply the child's world matrix
+//             child.updateMatrixWorld(true);
+//             clonedGeometry.applyMatrix4(child.matrixWorld);
+            
+//             // Adjust position relative to model position
+//             const offsetMatrix = new THREE.Matrix4();
+//             offsetMatrix.makeTranslation(-modelPosition.x, -modelPosition.y, -modelPosition.z);
+//             clonedGeometry.applyMatrix4(offsetMatrix);
+            
+//             // Normalize the geometry
+//             const normalizedGeometry = normalizeGeometry(clonedGeometry);
+//             if (normalizedGeometry) {
+//                 geometries.push(normalizedGeometry);
+//             }
+//         }
+//     });
+    
+//     if (geometries.length === 0) {
+//         console.warn("No dot geometries found to combine");
+//         return new THREE.Mesh();
+//     }
+    
+//     console.log(`Combining ${geometries.length} dot geometries`);
+    
+//     try {
+//         // Merge all geometries into one
+//         const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+        
+//         if (!mergedGeometry) {
+//             throw new Error("Failed to merge geometries");
+//         }
+        
+//         // Ensure proper normals for the merged geometry
+//         mergedGeometry.computeVertexNormals();
+        
+//         const material = new THREE.MeshStandardMaterial({ 
+//             color: 0xff0000,
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             side: THREE.DoubleSide
+//         });
+        
+//         console.log(`Combined dot mesh created with ${mergedGeometry.attributes.position.count} vertices`);
+        
+//         return new THREE.Mesh(mergedGeometry, material);
+//     } catch (error) {
+//         console.error("Error merging dot geometries:", error);
+//         // Return a simple sphere as fallback
+//         const fallbackGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+//         const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+//         return new THREE.Mesh(fallbackGeometry, material);
+//     }
+// }
+
+// // OLD not used anymore
+// /**
+//  * Combines toolpath mesh and dot mesh into a single mesh
+//  * @param toolpathMesh The mesh created from toolpath points
+//  * @param dotMesh The combined mesh of all dots
+//  * @returns THREE.Mesh combining both meshes
+//  */
+// export function combineToolpathAndDots(toolpathMesh: THREE.Mesh, dotMesh: THREE.Mesh): THREE.Mesh {
+//     const geometries: THREE.BufferGeometry[] = [];
+    
+//     // Process toolpath mesh
+//     if (toolpathMesh.geometry && toolpathMesh.geometry.attributes.position.count > 0) {
+//         const toolpathGeometry = toolpathMesh.geometry.clone();
+//         toolpathMesh.updateMatrixWorld(true);
+//         toolpathGeometry.applyMatrix4(toolpathMesh.matrixWorld);
+//         const normalizedToolpath = normalizeGeometry(toolpathGeometry);
+//         if (normalizedToolpath) {
+//             geometries.push(normalizedToolpath);
+//             console.log(`Toolpath geometry: ${normalizedToolpath.attributes.position.count} vertices`);
+//         }
+//     }
+    
+//     // Process dot mesh
+//     if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
+//         const dotGeometry = dotMesh.geometry.clone();
+//         dotMesh.updateMatrixWorld(true);
+//         dotGeometry.applyMatrix4(dotMesh.matrixWorld);
+//         const normalizedDot = normalizeGeometry(dotGeometry);
+//         if (normalizedDot) {
+//             geometries.push(normalizedDot);
+//             console.log(`Dot geometry: ${normalizedDot.attributes.position.count} vertices`);
+//         }
+//     }
+    
+//     if (geometries.length === 0) {
+//         console.warn("No geometries to combine");
+//         return new THREE.Mesh();
+//     }
+    
+//     try {
+//         const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+        
+//         if (!mergedGeometry) {
+//             throw new Error("Failed to merge geometries");
+//         }
+        
+//         // Compute normals for the final merged geometry
+//         mergedGeometry.computeVertexNormals();
+        
+//         const material = new THREE.MeshStandardMaterial({ 
+//             color: 0x00ffff, // Cyan for the combined mesh
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             wireframe: false,
+//             side: THREE.DoubleSide
+//         });
+        
+//         const combinedMesh = new THREE.Mesh(mergedGeometry, material);
+        
+//         console.log(`Final combined mesh: ${mergedGeometry.attributes.position.count} vertices`);
+//         console.log(`Triangle count: ${mergedGeometry.attributes.position.count / 3}`);
+        
+//         return combinedMesh;
+//     } catch (error) {
+//         console.error("Error merging geometries:", error);
+//         // Return just the toolpath mesh as fallback
+//         return toolpathMesh;
+//     }
+// }
+
+// // not used anymore
+// /**
+//  * Normalizes geometry attributes to ensure compatibility for merging
+//  * @param geometry The geometry to normalize
+//  * @returns Normalized geometry or null if invalid
+//  */
+// function normalizeGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry | null {
+//     try {
+//         // Check if geometry has valid position attribute
+//         if (!geometry.attributes.position || geometry.attributes.position.count === 0) {
+//             console.warn("Geometry has no position data");
+//             return null;
+//         }
+        
+//         // Convert to non-indexed if needed
+//         let processedGeometry = geometry;
+//         if (geometry.index) {
+//             processedGeometry = geometry.toNonIndexed();
+//         }
+        
+//         // Ensure normals exist and are computed
+//         if (!processedGeometry.attributes.normal) {
+//             processedGeometry.computeVertexNormals();
+//         }
+//         //
+//         if (!processedGeometry.attributes.uv) {
+//             const positionCount = processedGeometry.attributes.position.count;
+//             const uvs = new Float32Array(positionCount * 2);
+//             // Initialize with valid UV coordinates (0-1 range)
+//             for (let i = 0; i < positionCount * 2; i += 2) {
+//                 uvs[i] = 0.5;     // U coordinate
+//                 uvs[i + 1] = 0.5; // V coordinate
+//             }
+//             processedGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+//         }
+//         // Clear morph attributes that can cause issues
+//         processedGeometry.morphAttributes = {};
+        
+//         // Remove any groups that might cause issues
+//         processedGeometry.clearGroups();
+        
+//         return processedGeometry;
+//     } catch (error) {
+//         console.error("Error normalizing geometry:", error);
+//         return null;
+//     }
+// }
+
+
+// FROM HERE ON OUT IS STUFF 
 // Quick export stl, this is used as a testing thing for you to just see the mesh
 // this mesh will need to be sent to travel slicer, which currently has an error going through it
+// this is like a hybrid approach of the p[oint ] cloud to mesh version and the creating two meshes and merging
 /**
  * Immediately exports and downloads a mesh as STL using Three.js built-in exporter
  * @param mesh The mesh to export
@@ -261,10 +278,7 @@ export function quickExportSTL(mesh: THREE.Mesh, filename?: string): void {
 }
 
 
-// Here we convert toolpath points along with the dots into a mesh
-// thisshould be transfered to the travel slicer
-
-
+//
 // 
 /**
  * Converts toolpath points to a point cloud with specified density
@@ -297,24 +311,25 @@ export function toolpathToPointCloud(toolpathPoints: THREE.Vector3[], density: n
 }
 
 
-// ensures that the dots are near the toolpath, wiht customizable parameters (need to add into gui)
-/**
- * Extracts point cloud from dot visualization group and translates dots to sit above toolpath
- * PRESERVES the original curvature of the dots while lifting them above toolpath
- * NOW FILTERS to only include dots that are near the toolpath
- * @param dotGroup THREE.Group containing dot meshes
- * @param toolpathTopLayer Array of Vector3 points representing the top layer of toolpath
- * @param modelPosition Position of the model to offset the dots relative to
- * @param dotOffsetZ Additional Z offset to place dots slightly above toolpath (default: 0.5)
- * @param proximityThreshold Maximum distance from toolpath to include a dot (default: 10.0)
- * @returns Array of Vector3 points representing dot positions with preserved curvature, filtered by proximity to toolpath
- */
+// // ensures that the dots are near the toolpath, wiht customizable parameters (need to add into gui)
+// this stuff is alright 
+// /**
+//  * Extracts point cloud from dot visualization group and translates dots to sit above toolpath
+//  * PRESERVES the original curvature of the dots while lifting them above toolpath
+//  * NOW FILTERS to only include dots that are near the toolpath
+//  * @param dotGroup THREE.Group containing dot meshes
+//  * @param toolpathTopLayer Array of Vector3 points representing the top layer of toolpath
+//  * @param modelPosition Position of the model to offset the dots relative to
+//  * @param dotOffsetZ Additional Z offset to place dots slightly above toolpath (default: 0.5)
+//  * @param proximityThreshold Maximum distance from toolpath to include a dot (default: 10.0)
+//  * @returns Array of Vector3 points representing dot positions with preserved curvature, filtered by proximity to toolpath
+//  */
 export function extractAndTranslateDotPointCloud(
     dotGroup: THREE.Group, 
     toolpathTopLayer: THREE.Vector3[],
     modelPosition: THREE.Vector3 = new THREE.Vector3(),
     dotOffsetZ: number = 0.5,
-    proximityThreshold: number = 10.0  // NEW PARAMETER
+    proximityThreshold: number = 10.0 
 ): THREE.Vector3[] {
     const pointCloud: THREE.Vector3[] = [];
     
@@ -324,7 +339,7 @@ export function extractAndTranslateDotPointCloud(
         return pointCloud;
     }
     
-    // Calculate the average Z height of the top layer
+    // get the height
     const zHeights = toolpathTopLayer.map(point => point.z);
     const toolpathTopZ = zHeights.reduce((sum, z) => sum + z, 0) / zHeights.length;
     const minToolpathZ = Math.min(...zHeights);
@@ -332,7 +347,7 @@ export function extractAndTranslateDotPointCloud(
     
     console.log(`Toolpath top layer Z: avg=${toolpathTopZ.toFixed(3)}, min=${minToolpathZ.toFixed(3)}, max=${maxToolpathZ.toFixed(3)}`);
     
-    // First, collect all original dot positions to understand their Z range
+    // First, collect all original dot positions
     const originalDotPositions: THREE.Vector3[] = [];
     dotGroup.traverse((child) => {
         if (child instanceof THREE.Mesh) {
@@ -348,7 +363,7 @@ export function extractAndTranslateDotPointCloud(
         return pointCloud;
     }
     
-    // Calculate the Z range of the original dots to understand their curvature
+    // getting curvature
     const originalDotZs = originalDotPositions.map(p => p.z);
     const minDotZ = Math.min(...originalDotZs);
     const maxDotZ = Math.max(...originalDotZs);
@@ -433,8 +448,9 @@ export function extractAndTranslateDotPointCloud(
     
     return pointCloud;
 }
+
 /**
- * ORIGINAL: Extracts point cloud from dot visualization group (unchanged for compatibility)
+ * OG Extracts point cloud from dot visualization group 
  */
 export function extractDotPointCloud(dotGroup: THREE.Group, modelPosition: THREE.Vector3 = new THREE.Vector3()): THREE.Vector3[] {
     const pointCloud: THREE.Vector3[] = [];
@@ -471,79 +487,129 @@ export function combinePointClouds(...pointClouds: THREE.Vector3[][]): THREE.Vec
     return combined;
 }
 
+// more recent og
+// used to create the meshes for dots using hemisphere.stl
 /**
- * Creates a mesh from a point cloud using individual spheres for each point
- * This preserves the individual dot appearance unlike ConvexGeometry
+ * Creates a mesh from a point cloud using BVH-CSG to union all dots together first
+ * This eliminates non-manifold edges by properly combining overlapping hemispheres
  * @param pointCloud Array of Vector3 points
- * @param dotRadius Radius of each dot sphere (default: 1.0)
- * @param dotResolution Resolution of each sphere (default: 8)
- * @returns THREE.Mesh created from individual spheres merged together
+ * @param dotRadius Scale factor for dot size (default: 1.0)
+ * @param dotResolution Not used anymore, kept for compatibility
+ * @returns Promise<THREE.Mesh> created from properly unioned dot geometries
  */
-export function pointCloudToMesh(
+export async function pointCloudToMesh(
     pointCloud: THREE.Vector3[], 
     dotRadius: number = 1.0,
-    dotResolution: number = 8
-): THREE.Mesh {
+    dotResolution: number = 8  // Kept for compatibility but not used
+): Promise<THREE.Mesh> {
     if (pointCloud.length === 0) {
         console.warn("Empty point cloud provided");
-        return new THREE.Mesh();
+        return Promise.resolve(new THREE.Mesh());
     }
-    console.log(`Creating mesh from ${pointCloud.length} points using sphere method`);
-    try {
-        // Create a base sphere geometry that we'll reuse for each point
-        const baseSphereGeometry = new THREE.SphereGeometry(dotRadius, dotResolution, dotResolution);
-        const geometries: THREE.BufferGeometry[] = [];
-        // Create a sphere for each point in the cloud
-        pointCloud.forEach((point, index) => {
-            // Clone the base sphere geometry
-            const sphereGeometry = baseSphereGeometry.clone();
-            
-            // Position the sphere at the point location
-            sphereGeometry.translate(point.x, point.y, point.z);
-            
-            // Ensure proper normals
-            sphereGeometry.computeVertexNormals();
-            
-            geometries.push(sphereGeometry);
-            
-            // Log progress for large point clouds
-            if (index > 0 && index % 1000 === 0) {
-                console.log(`Processed ${index}/${pointCloud.length} points`);
+    
+    console.log(`Creating mesh from ${pointCloud.length} points using BVH-CSG union`);
+    
+    return new Promise((resolve, reject) => {
+        const loader = new STLLoader();
+        loader.load('/public/assets/hemisphere.stl', async (dotGeometry) => {
+            try {
+                // Step 1: Prepare the base dot geometry (same as before)
+                dotGeometry.computeBoundingBox();
+                const bbox = dotGeometry.boundingBox!;
+                const center = bbox.getCenter(new THREE.Vector3());
+                const size = bbox.getSize(new THREE.Vector3());
+                
+                // Center at origin
+                dotGeometry.translate(-center.x, -center.y, -center.z);
+                
+                // Scale to target radius
+                const maxDimension = Math.max(size.x, size.y, size.z);
+                const scaleFactor = (dotRadius * 2) / maxDimension;
+                dotGeometry.scale(scaleFactor, scaleFactor, scaleFactor);
+                
+                
+
+               const slicedGeometry = dotGeometry;
+                // when make into a hemosphere
+                
+                // Position hemisphere so bottom sits at Z=0
+                // this is optional too
+                slicedGeometry.computeBoundingBox();
+                const newBbox = slicedGeometry.boundingBox!;
+                const minZ = newBbox.min.z;
+                slicedGeometry.translate(0, 0, -minZ);
+                slicedGeometry.computeVertexNormals();
+                
+                console.log("Base hemisphere prepared, starting BVH-CSG unions...");
+                
+                // Step 3: Create first dot mesh as base
+                const firstDotGeometry = slicedGeometry.clone();
+                const firstPoint = pointCloud[0];
+                firstDotGeometry.translate(firstPoint.x, firstPoint.y, firstPoint.z);
+                
+                let resultBrush = new Brush(firstDotGeometry);
+                const evaluator = new Evaluator();
+                evaluator.attributes = ['position', 'normal'];
+
+                // Step 4: Union each subsequent dot one by one
+                // this could be removed? maybe this is an issue maybe dont need to merge the dots then merge them with
+                // the foam toolpath....
+                for (let i = 1; i < pointCloud.length; i++) {
+                    const point = pointCloud[i];
+                    
+                    // Clone and position the hemisphere
+                    const dotGeo = slicedGeometry.clone();
+                    dotGeo.translate(point.x, point.y, point.z);
+                    
+                    // Create brush and union with result
+                    const dotBrush = new Brush(dotGeo);
+                    resultBrush = evaluator.evaluate(resultBrush, dotBrush, ADDITION);
+                    
+                    // Clean up temporary geometry
+                    // dotGeo.dispose();
+                    
+                    // Log progress
+                    if (i % 50 === 0) {
+                        console.log(`Unioned ${i}/${pointCloud.length} dots`);
+                    }
+                }
+                
+                console.log(`All ${pointCloud.length} dots unioned successfully`);
+                
+                // Step 5: Extract final geometry and create mesh
+                const finalGeometry = resultBrush.geometry;
+                BufferGeometryUtils.mergeVertices(finalGeometry, 1e-4);
+                finalGeometry.computeVertexNormals();
+                
+                const material = new THREE.MeshStandardMaterial({ 
+                    color: 0x00ffff,
+                    metalness: 0.1,
+                    roughness: 0.7,
+                    side: THREE.DoubleSide
+                });
+                
+                console.log(`Final unioned mesh created with ${finalGeometry.attributes.position.count} vertices`);
+                
+                // Clean up
+                slicedGeometry.dispose();
+                firstDotGeometry.dispose();
+                
+                resolve(new THREE.Mesh(finalGeometry, material));
+                
+            } catch (error) {
+                console.error("Error creating BVH-CSG unioned dot mesh:", error);
+                reject(error);
             }
+        }, undefined, (error) => {
+            console.error("Error loading dot.stl:", error);
+            reject(error);
         });
-        console.log(`Created ${geometries.length} sphere geometries, merging...`);
-        // Merge all sphere geometries into one
-        const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
-        
-        if (!mergedGeometry) {
-            throw new Error("Failed to merge sphere geometries");
-        }
-        // Ensure proper normals for the merged geometry
-        mergedGeometry.computeVertexNormals();
-        
-        const material = new THREE.MeshStandardMaterial({ 
-            color: 0x00ffff,
-            metalness: 0.1,
-            roughness: 0.7,
-            side: THREE.DoubleSide
-        });
-        
-        console.log(`Merged sphere mesh created with ${mergedGeometry.attributes.position.count} vertices`);
-        console.log(`Triangle count: ${mergedGeometry.attributes.position.count / 3}`);
-        
-        // Clean up the base geometry
-        baseSphereGeometry.dispose();
-        
-        return new THREE.Mesh(mergedGeometry, material);
-        
-    } catch (error) {
-        console.error("Error creating sphere mesh:", error);
-        // Fallback: single large sphere
-        const fallbackGeometry = new THREE.SphereGeometry(dotRadius * 2, 16, 16);
-        const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-        return new THREE.Mesh(fallbackGeometry, material);
-    }
+    });
 }
+
+
+
+
 
 /**
  * Creates a  mesh from toolpath points using ConvexGeometry or alternative
@@ -639,117 +705,679 @@ function createFallbackToolpathMesh(toolpathPoints: THREE.Vector3[]): THREE.Mesh
     return new THREE.Mesh(geometry, material);
 }
 
+
+
+
+
+
+
+// Need to change the approach to instead of merging to one stl, to use csg bvh repo or another library to merge it
+// and then it can use the dot.stl directly rather than recreating it (dot.stl is in public/assets/dot.stl)
+// review visualizer the way it does that too
+
+
+
+
+// https://github.com/gkjohnson/three-bvh-csg
+
+
+
+
+// bvh csg async (OLD)
+// export async function createCombinedPointCloudMesh(
+//     topLayerPoints: THREE.Vector3[], 
+//     dotGroup: THREE.Group, 
+//     modelPosition: THREE.Vector3 = new THREE.Vector3(),
+//     toolpathDensity: number = 5,
+//     dotRadius: number = 1.0,
+//     dotOffsetZ: number = 0.5,
+//     proximityThreshold: number = 15.0
+// ): Promise<THREE.Mesh> {
+//     console.log("=== Creating combined mesh with three-bvh-csg and real dot.stl ===");
+    
+//     // Step 1: Create clean individual meshes
+//     const solidToolpathMesh = createSolidToolpathMesh(topLayerPoints);
+//     const dotPointCloud = extractAndTranslateDotPointCloud(
+//         dotGroup, topLayerPoints, modelPosition, dotOffsetZ, proximityThreshold
+//     );
+    
+//     if (dotPointCloud.length === 0) {
+//         console.log("No dots to merge, returning toolpath only");
+//         return solidToolpathMesh;
+//     }
+    
+//     // Step 2: Create dot mesh using real dot.stl (now async)
+//     const dotMesh = await pointCloudToMesh(dotPointCloud, dotRadius, 8);
+
+
+//     // trying to clean geometry
+//     dotMesh.geometry = BufferGeometryUtils.mergeVertices(dotMesh.geometry);
+//     solidToolpathMesh.geometry = BufferGeometryUtils.mergeVertices(solidToolpathMesh.geometry);
+
+//     quickExportSTL(dotMesh, 'dotmesh');
+//     quickExportSTL(solidToolpathMesh, 'toolpathmesh');
+
+    
+//     try {
+//         // Step 3: Create BVH-CSG brushes
+//         console.log("Creating CSG brushes...");
+        
+//         // Ensure geometries are properly prepared
+//         solidToolpathMesh.geometry.computeVertexNormals();
+//         dotMesh.geometry.computeVertexNormals();
+        
+//         // Create brushes from meshes
+//         const toolpathBrush = new Brush(solidToolpathMesh.geometry);
+//         const dotBrush = new Brush(dotMesh.geometry);
+        
+//         // Step 4: Create evaluator and perform union
+//         const evaluator = new Evaluator();
+//         evaluator.attributes = ['position', 'normal'];
+        
+//         console.log("Performing BVH-CSG union...");
+//         const resultBrush = evaluator.evaluate(toolpathBrush, dotBrush, ADDITION);
+        
+//         // Step 5: Create final mesh from result
+//         const finalGeometry = resultBrush.geometry;
+//         finalGeometry.computeVertexNormals();
+        
+//         const finalMaterial = new THREE.MeshStandardMaterial({ 
+//             color: 0x00ffff,
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             side: THREE.DoubleSide
+//         });
+        
+//         const combinedMesh = new THREE.Mesh(finalGeometry, finalMaterial);
+        
+//         console.log("=== BVH-CSG Union successful with real dot.stl ===");
+//         console.log(`Final mesh vertices: ${finalGeometry.attributes.position.count}`);
+        
+//         // Clean up original meshes
+//         solidToolpathMesh.geometry?.dispose();
+//         dotMesh.geometry?.dispose();
+        
+//         return combinedMesh;
+        
+//     } catch (error) {
+//         console.error("BVH-CSG union failed:", error);
+//         console.log("Falling back to simple merge...");
+        
+//         // Fallback to simple geometry merge
+//         try {
+//             const geometries: THREE.BufferGeometry[] = [];
+            
+//             if (solidToolpathMesh.geometry && solidToolpathMesh.geometry.attributes.position.count > 0) {
+//                 geometries.push(solidToolpathMesh.geometry.clone());
+//             }
+            
+//             if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
+//                 geometries.push(dotMesh.geometry.clone());
+//             }
+            
+//             if (geometries.length === 0) {
+//                 throw new Error("No valid geometries to merge");
+//             }
+            
+//             const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+            
+//             if (!mergedGeometry) {
+//                 throw new Error("Failed to merge geometries");
+//             }
+            
+//             mergedGeometry.computeVertexNormals();
+            
+//             const material = new THREE.MeshStandardMaterial({ 
+//                 color: 0x00ffff,
+//                 metalness: 0.1,
+//                 roughness: 0.7,
+//                 side: THREE.DoubleSide
+//             });
+            
+//             console.log("Fallback merge completed with real dot.stl");
+//             dotMesh.geometry?.dispose();
+//             return new THREE.Mesh(mergedGeometry, material);
+            
+//         } catch (fallbackError) {
+//             console.error("Fallback merge also failed:", fallbackError);
+//             dotMesh.geometry?.dispose();
+//             return solidToolpathMesh;
+//         }
+//     }
+// }
+
+// most recent bvh async
+// has to be very careful with where the dots are the dots have to be right on top, and then no manifold edges error when
+// importing into a slicer but im not sure if it unions right
+
 /**
- * Updated main function to create combined mesh with  toolpath and dot spheres
- * proximity filtering for dots
+ *
  */
-export function createCombinedPointCloudMesh(
+export async function createCombinedPointCloudMesh(
     topLayerPoints: THREE.Vector3[], 
     dotGroup: THREE.Group, 
     modelPosition: THREE.Vector3 = new THREE.Vector3(),
     toolpathDensity: number = 5,
     dotRadius: number = 1.0,
     dotOffsetZ: number = 0.5,
-    proximityThreshold: number = 15.0  // NEW PARAMETER
-): THREE.Mesh {
-    console.log("=== Creating combined mesh with SOLID toolpath and filtered dot spheres ===");
-    console.log(`Input: ${topLayerPoints.length} top layer points, ${dotGroup.children.length} dots in group`);
-    console.log(`Proximity threshold: ${proximityThreshold} units`);
+    proximityThreshold: number = 15.0
+): Promise<THREE.Mesh> {
+    console.log("=== Creating combined mesh with pre-unioned dots ===");
     
-    // Create toolpath mesh (not point cloud spheres)
+    // Step 1: Create toolpath mesh
     const solidToolpathMesh = createSolidToolpathMesh(topLayerPoints);
-    console.log(`Step 1: Solid toolpath mesh created`);
     
-    // Step 2: Extract dot positions and translate them to sit on top of toolpath
-    // has filtering for proximity so only dots with the toolpath can be included
+    // Step 2: Extract dot positions
     const dotPointCloud = extractAndTranslateDotPointCloud(
-        dotGroup, 
-        topLayerPoints, 
-        modelPosition, 
-        dotOffsetZ,
-        proximityThreshold  // Pass the proximity threshold
+        dotGroup, topLayerPoints, modelPosition, dotOffsetZ, proximityThreshold
     );
-    console.log(`Step 2: Filtered dot point cloud generated: ${dotPointCloud.length} points`);
     
-    // Step 3: Create dot mesh using spheres 
-    const dotMesh = pointCloudToMesh(
-        dotPointCloud, 
-        dotRadius,
-        8
-    );
-    dotMesh.material = new THREE.MeshStandardMaterial({ 
-        color: 0xff0000, // Red for dots
-        metalness: 0.1,
-        roughness: 0.7 
-    });
-    console.log(`Step 3: Dot spheres mesh created from ${dotPointCloud.length} filtered dots`);
+    if (dotPointCloud.length === 0) {
+        console.log("No dots to merge, returning toolpath only");
+        return solidToolpathMesh;
+    }
     
-    // Step 4: Merge the solid toolpath with dot spheres
+    // Step 3: Create pre-unioned dot mesh (this now handles all CSG internally)
+    const unionedDotMesh = await pointCloudToMesh(dotPointCloud, dotRadius, 8);
+
+
+    // testing
+        quickExportSTL(unionedDotMesh, 'dotmesh');
+    quickExportSTL(solidToolpathMesh, 'toolpathmesh');
+    
+    // Step 4: Final union between toolpath and pre-unioned dots
     try {
-        const geometries: THREE.BufferGeometry[] = [];
+        console.log("Performing final union between toolpath and pre-unioned dots...");
+        unionedDotMesh.geometry = BufferGeometryUtils.mergeVertices(unionedDotMesh.geometry, 1e-4);
+solidToolpathMesh.geometry = BufferGeometryUtils.mergeVertices(solidToolpathMesh.geometry, 1e-4);
+
+        solidToolpathMesh.geometry.computeVertexNormals();
+        unionedDotMesh.geometry.computeVertexNormals();
         
-        // Add solid toolpath geometry
-        if (solidToolpathMesh.geometry && solidToolpathMesh.geometry.attributes.position.count > 0) {
-            const toolpathGeometry = solidToolpathMesh.geometry.clone();
-            const normalizedToolpath = normalizeGeometry(toolpathGeometry);
-            if (normalizedToolpath) {
-                geometries.push(normalizedToolpath);
-                console.log(`Added solid toolpath geometry: ${normalizedToolpath.attributes.position.count} vertices`);
-            }
-        }
+        const toolpathBrush = new Brush(solidToolpathMesh.geometry);
+        const dotBrush = new Brush(unionedDotMesh.geometry);
         
-        // Add dot spheres geometry
-        if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
-            const dotGeometry = dotMesh.geometry.clone();
-            const normalizedDot = normalizeGeometry(dotGeometry);
-            if (normalizedDot) {
-                geometries.push(normalizedDot);
-                console.log(`Added dot geometry: ${normalizedDot.attributes.position.count} vertices`);
-            }
-        }
+        const evaluator = new Evaluator();
+        evaluator.attributes = ['position', 'normal'];
         
-        if (geometries.length === 0) {
-            console.warn("No geometries to merge, returning solid toolpath only");
-            return solidToolpathMesh;
-        }
+        const finalBrush = evaluator.evaluate(toolpathBrush, dotBrush, ADDITION);
+        const finalGeometry = finalBrush.geometry;
+        finalGeometry.computeVertexNormals();
+
         
-        const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
         
-        if (!mergedGeometry) {
-            throw new Error("Failed to merge geometries");
-        }
-        
-        mergedGeometry.computeVertexNormals();
-        
-        // Final material
         const finalMaterial = new THREE.MeshStandardMaterial({ 
-            color: 0x00ffff, // Cyan for combined mesh
+            color: 0x00ffff,
             metalness: 0.1,
             roughness: 0.7,
             side: THREE.DoubleSide
         });
         
-        const combinedMesh = new THREE.Mesh(mergedGeometry, finalMaterial);
+        const combinedMesh = new THREE.Mesh(finalGeometry, finalMaterial);
         
-        console.log(`=== Final combined mesh created ===`);
-        console.log(`- Total vertices: ${mergedGeometry.attributes.position.count}`);
-        console.log(`- Solid toolpath base with ${dotPointCloud.length} filtered dot spheres on top`);
+        console.log("=== Final combined mesh created successfully ===");
+        console.log(`Final mesh vertices: ${finalGeometry.attributes.position.count}`);
         
-        // Clean up temporary meshes
+        // Clean up
         solidToolpathMesh.geometry?.dispose();
-        dotMesh.geometry?.dispose();
+        unionedDotMesh.geometry?.dispose();
         
         return combinedMesh;
         
     } catch (error) {
-        console.error("Error creating combined mesh:", error);
-        console.log("Returning solid toolpath mesh as fallback");
-        return solidToolpathMesh;
+        console.error("Final union failed:", error);
+        // Return the pre-unioned dots if toolpath union fails
+        solidToolpathMesh.geometry?.dispose();
+        return unionedDotMesh;
     }
 }
-// TO FIX:
-// need to ensure that if dots are scaled, so are the dots for the mesh (right now have to physically scale, this isd an easy fix)
-// after merging this into new branch, for some reason the dots don't always follow the exact curvature in the mesh
-// version, so need to debug
-// need to ensure the mesh can be sliced by travel slicer (PRIORITY)
 
+
+
+
+
+
+
+//buffer geom version
+// export async function createCombinedPointCloudMesh(
+//     topLayerPoints: THREE.Vector3[], 
+//     dotGroup: THREE.Group, 
+//     modelPosition: THREE.Vector3 = new THREE.Vector3(),
+//     toolpathDensity: number = 5,
+//     dotRadius: number = 1.0,
+//     dotOffsetZ: number = 0.5,
+//     proximityThreshold: number = 15.0  // NEW PARAMETER
+// ): Promise<THREE.Mesh> {
+//     console.log("=== Creating combined mesh with SOLID toolpath and filtered dot spheres ===");
+//     console.log(`Input: ${topLayerPoints.length} top layer points, ${dotGroup.children.length} dots in group`);
+//     console.log(`Proximity threshold: ${proximityThreshold} units`);
+    
+//     // Create toolpath mesh (not point cloud spheres)
+//     const solidToolpathMesh = createSolidToolpathMesh(topLayerPoints);
+//     console.log(`Step 1: Solid toolpath mesh created`);
+    
+//     // Step 2: Extract dot positions and translate them to sit on top of toolpath
+//     // has filtering for proximity so only dots with the toolpath can be included
+//     const dotPointCloud = extractAndTranslateDotPointCloud(
+//         dotGroup, 
+//         topLayerPoints, 
+//         modelPosition, 
+//         dotOffsetZ,
+//         proximityThreshold  // Pass the proximity threshold
+//     );
+//     console.log(`Step 2: Filtered dot point cloud generated: ${dotPointCloud.length} points`);
+    
+//     // Step 3: Create dot mesh using spheres 
+//     const dotMesh = await pointCloudToMesh(
+//         dotPointCloud, 
+//         dotRadius,
+//         8
+//     );
+//     dotMesh.material = new THREE.MeshStandardMaterial({ 
+//         color: 0xff0000, // Red for dots
+//         metalness: 0.1,
+//         roughness: 0.7 
+//     });
+//     console.log(`Step 3: Dot spheres mesh created from ${dotPointCloud.length} filtered dots`);
+    
+//     // Step 4: Merge the solid toolpath with dot spheres
+//     try {
+//         const geometries: THREE.BufferGeometry[] = [];
+        
+//         // Add solid toolpath geometry
+//         if (solidToolpathMesh.geometry && solidToolpathMesh.geometry.attributes.position.count > 0) {
+//             const toolpathGeometry = solidToolpathMesh.geometry.clone();
+//             const normalizedToolpath = normalizeGeometry(toolpathGeometry);
+//             if (normalizedToolpath) {
+//                 geometries.push(normalizedToolpath);
+//                 console.log(`Added solid toolpath geometry: ${normalizedToolpath.attributes.position.count} vertices`);
+//             }
+//         }
+        
+//         // Add dot spheres geometry
+//         if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
+//             const dotGeometry = dotMesh.geometry.clone();
+//             const normalizedDot = normalizeGeometry(dotGeometry);
+//             if (normalizedDot) {
+//                 geometries.push(normalizedDot);
+//                 console.log(`Added dot geometry: ${normalizedDot.attributes.position.count} vertices`);
+//             }
+//         }
+        
+//         if (geometries.length === 0) {
+//             console.warn("No geometries to merge, returning solid toolpath only");
+//             return solidToolpathMesh;
+//         }
+        
+//         const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+        
+//         if (!mergedGeometry) {
+//             throw new Error("Failed to merge geometries");
+//         }
+        
+//         mergedGeometry.computeVertexNormals();
+        
+//         // Final material
+//         const finalMaterial = new THREE.MeshStandardMaterial({ 
+//             color: 0x00ffff, // Cyan for combined mesh
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             side: THREE.DoubleSide
+//         });
+        
+//         const combinedMesh = new THREE.Mesh(mergedGeometry, finalMaterial);
+        
+//         console.log(`=== Final combined mesh created ===`);
+//         console.log(`- Total vertices: ${mergedGeometry.attributes.position.count}`);
+//         console.log(`- Solid toolpath base with ${dotPointCloud.length} filtered dot spheres on top`);
+        
+//         // Clean up temporary meshes
+//         solidToolpathMesh.geometry?.dispose();
+//         dotMesh.geometry?.dispose();
+        
+//         return combinedMesh;
+        
+//     } catch (error) {
+//         console.error("Error creating combined mesh:", error);
+//         console.log("Returning solid toolpath mesh as fallback");
+//         return solidToolpathMesh;
+//     }
+// }
+
+
+// -------------------------------------------------
+
+/// ignore
+
+
+
+
+
+// originally trying with csg operations but there were issues merging because of non manifold edges
+// /**
+//  * Updated main function using CSG operations to properly union meshes
+//  */
+// export function createCombinedPointCloudMesh(
+//     topLayerPoints: THREE.Vector3[], 
+//     dotGroup: THREE.Group, 
+//     modelPosition: THREE.Vector3 = new THREE.Vector3(),
+//     toolpathDensity: number = 5,
+//     dotRadius: number = 1.0,
+//     dotOffsetZ: number = 0.5,
+//     proximityThreshold: number = 15.0
+// ): THREE.Mesh {
+//     console.log("=== Creating combined mesh with CSG union operations ===");
+//     console.log(`Input: ${topLayerPoints.length} top layer points, ${dotGroup.children.length} dots in group`);
+//     console.log(`Proximity threshold: ${proximityThreshold} units`);
+    
+//     // Step 1: Create solid toolpath mesh
+//     const solidToolpathMesh = createSolidToolpathMesh(topLayerPoints);
+//     console.log(`Step 1: Solid toolpath mesh created`);
+    
+//     // Step 2: Extract and translate dot positions
+//     const dotPointCloud = extractAndTranslateDotPointCloud(
+//         dotGroup, 
+//         topLayerPoints, 
+//         modelPosition, 
+//         dotOffsetZ,
+//         proximityThreshold
+//     );
+//     console.log(`Step 2: Filtered dot point cloud generated: ${dotPointCloud.length} points`);
+    
+//     if (dotPointCloud.length === 0) {
+//         console.log("No dots to merge, returning toolpath only");
+//         return solidToolpathMesh;
+//     }
+    
+//     // Step 3: Create hemisphere mesh instead of full spheres
+//     const hemispheresMesh = pointCloudToMesh(
+//         dotPointCloud, 
+//         dotRadius,
+//         8
+//     );
+//     hemispheresMesh.material = new THREE.MeshStandardMaterial({ 
+//         color: 0xff0000, // Red for dots
+//         metalness: 0.1,
+//         roughness: 0.7 
+//     });
+//     console.log(`Step 3: Hemisphere mesh created from ${dotPointCloud.length} filtered dots`);
+    
+//     // Step 4: Use CSG to union the meshes
+//     try {
+//         // Convert meshes to CSG format
+//         const toolpathCSG = CSG.fromMesh(solidToolpathMesh);
+//         const hemispheresCSG = CSG.fromMesh(hemispheresMesh);
+        
+//         console.log("Step 4: Converting meshes to CSG format...");
+        
+//         // Perform union operation
+//         const unionCSG = toolpathCSG.union(hemispheresCSG);
+        
+//         console.log("Step 5: Performing CSG union...");
+        
+//         // Convert back to Three.js mesh
+//         const unionMesh = CSG.toMesh(unionCSG, solidToolpathMesh.matrix);
+        
+//         // Apply material
+//         unionMesh.material = new THREE.MeshStandardMaterial({ 
+//             color: 0x00ffff, // Cyan for combined mesh
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             side: THREE.DoubleSide
+//         });
+        
+//         // Ensure proper normals
+//         unionMesh.geometry.computeVertexNormals();
+        
+//         console.log(`=== CSG Union completed successfully ===`);
+//         console.log(`- Final mesh vertices: ${unionMesh.geometry.attributes.position.count}`);
+        
+//         // Clean up temporary meshes
+//         solidToolpathMesh.geometry?.dispose();
+//         hemispheresMesh.geometry?.dispose();
+        
+//         return unionMesh;
+        
+//     } catch (error) {
+//         console.error("CSG union failed:", error);
+//         console.log("Falling back to buffer geometry merge...");
+        
+//         // Fallback to buffer geometry merge approach if CSG fails
+//         try {
+//             const geometries: THREE.BufferGeometry[] = [];
+            
+//             // Add solid toolpath geometry
+//             if (solidToolpathMesh.geometry && solidToolpathMesh.geometry.attributes.position.count > 0) {
+//                 const toolpathGeometry = solidToolpathMesh.geometry.clone();
+//                 const normalizedToolpath = normalizeGeometry(toolpathGeometry);
+//                 if (normalizedToolpath) {
+//                     geometries.push(normalizedToolpath);
+//                     console.log(`Added solid toolpath geometry: ${normalizedToolpath.attributes.position.count} vertices`);
+//                 }
+//             }
+            
+//             // Add hemisphere geometry
+//             if (hemispheresMesh.geometry && hemispheresMesh.geometry.attributes.position.count > 0) {
+//                 const hemisphereGeometry = hemispheresMesh.geometry.clone();
+//                 const normalizedHemisphere = normalizeGeometry(hemisphereGeometry);
+//                 if (normalizedHemisphere) {
+//                     geometries.push(normalizedHemisphere);
+//                     console.log(`Added hemisphere geometry: ${normalizedHemisphere.attributes.position.count} vertices`);
+//                 }
+//             }
+            
+//             if (geometries.length === 0) {
+//                 console.warn("No geometries to merge, returning solid toolpath only");
+//                 return solidToolpathMesh;
+//             }
+            
+//             const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+            
+//             if (!mergedGeometry) {
+//                 throw new Error("Failed to merge geometries");
+//             }
+            
+//             mergedGeometry.computeVertexNormals();
+            
+//             const finalMaterial = new THREE.MeshStandardMaterial({ 
+//                 color: 0x00ffff, // Cyan for combined mesh
+//                 metalness: 0.1,
+//                 roughness: 0.7,
+//                 side: THREE.DoubleSide
+//             });
+            
+//             const combinedMesh = new THREE.Mesh(mergedGeometry, finalMaterial);
+            
+//             console.log(`=== Fallback buffer merge completed ===`);
+//             console.log(`- Total vertices: ${mergedGeometry.attributes.position.count}`);
+            
+//             // Clean up temporary meshes
+//             solidToolpathMesh.geometry?.dispose();
+//             hemispheresMesh.geometry?.dispose();
+            
+//             return combinedMesh;
+            
+//         } catch (fallbackError) {
+//             console.error("Fallback merge also failed:", fallbackError);
+//             return solidToolpathMesh;
+//         }
+//     }
+// }
+
+// csg
+
+// export function createCombinedPointCloudMesh(
+//     topLayerPoints: THREE.Vector3[], 
+//     dotGroup: THREE.Group, 
+//     modelPosition: THREE.Vector3 = new THREE.Vector3(),
+//     toolpathDensity: number = 5,
+//     dotRadius: number = 1.0,
+//     dotOffsetZ: number = 0.5,
+//     proximityThreshold: number = 15.0
+// ): THREE.Mesh {
+//     console.log("=== Creating combined mesh with proper CSG union ===");
+    
+//     // Step 1: Create clean individual meshes
+//     const solidToolpathMesh = createSolidToolpathMesh(topLayerPoints);
+//     const dotPointCloud = extractAndTranslateDotPointCloud(
+//         dotGroup, topLayerPoints, modelPosition, dotOffsetZ, proximityThreshold
+//     );
+    
+//     if (dotPointCloud.length === 0) {
+//         console.log("No dots to merge, returning toolpath only");
+//         return solidToolpathMesh;
+//     }
+    
+//     const dotMesh = pointCloudToMesh(dotPointCloud, dotRadius, 8);
+    
+//     // Step 2: Prepare geometries for CSG operations
+//     try {
+//         // Clean and prepare toolpath geometry
+//         const cleanToolpathGeometry = cleanGeometryForCSG(solidToolpathMesh.geometry);
+//         const cleanDotGeometry = cleanGeometryForCSG(dotMesh.geometry);
+        
+//         // Create new meshes with cleaned geometries
+//         const cleanToolpathMesh = new THREE.Mesh(cleanToolpathGeometry, solidToolpathMesh.material);
+//         const cleanDotMesh = new THREE.Mesh(cleanDotGeometry, dotMesh.material);
+        
+//         // Ensure meshes have proper transforms
+//         cleanToolpathMesh.updateMatrixWorld();
+//         cleanDotMesh.updateMatrixWorld();
+        
+//         console.log("Performing CSG union...");
+        
+//         // Convert to CSG and perform union
+//         const toolpathCSG = CSG.fromMesh(cleanToolpathMesh);
+//         const dotCSG = CSG.fromMesh(cleanDotMesh);
+        
+//         const unionCSG = toolpathCSG.union(dotCSG);
+        
+//         // Convert back to mesh
+//         const combinedMesh = CSG.toMesh(unionCSG, cleanToolpathMesh.matrix);
+        
+//         // Apply final material and properties
+//         combinedMesh.material = new THREE.MeshStandardMaterial({ 
+//             color: 0x00ffff,
+//             metalness: 0.1,
+//             roughness: 0.7,
+//             side: THREE.DoubleSide
+//         });
+        
+//         // Final cleanup and validation
+//         if (combinedMesh.geometry) {
+//             combinedMesh.geometry.computeVertexNormals();
+//             combinedMesh.geometry.computeBoundingBox();
+//             combinedMesh.geometry.computeBoundingSphere();
+//         }
+        
+//         console.log("=== CSG Union successful ===");
+//         console.log(`Final mesh vertices: ${combinedMesh.geometry.attributes.position.count}`);
+        
+//         // Clean up temporary meshes
+//         solidToolpathMesh.geometry?.dispose();
+//         dotMesh.geometry?.dispose();
+//         cleanToolpathGeometry.dispose();
+//         cleanDotGeometry.dispose();
+        
+//         return combinedMesh;
+        
+//     } catch (error) {
+//         console.error("CSG union failed:", error);
+//         console.log("Attempting fallback merge...");
+        
+//         // Fallback: try simple geometry merge
+//         try {
+//             const fallbackMesh = createFallbackMergedMesh(solidToolpathMesh, dotMesh);
+//             dotMesh.geometry?.dispose();
+//             return fallbackMesh;
+//         } catch (fallbackError) {
+//             console.error("Fallback merge also failed:", fallbackError);
+//             dotMesh.geometry?.dispose();
+//             return solidToolpathMesh;
+//         }
+//     }
+// }
+
+
+// function cleanGeometryForCSG(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+//     // Clone the geometry to avoid modifying original
+//     let cleanGeometry = geometry.clone();    
+//     // Ensure geometry is indexed
+//     if (!cleanGeometry.index) {
+//         cleanGeometry = BufferGeometryUtils.mergeVertices(cleanGeometry);
+//     }
+    
+//     // Remove degenerate triangles and duplicate vertices
+//     const cleanedGeometry = BufferGeometryUtils.mergeVertices(cleanGeometry, 0.0001);
+    
+//     // Ensure proper normals
+//     cleanedGeometry.computeVertexNormals();
+    
+//     // Validate geometry has minimum required attributes
+//     if (!cleanedGeometry.attributes.position) {
+//         throw new Error("Geometry missing position attribute");
+//     }
+    
+//     // Ensure geometry is not empty
+//     if (cleanedGeometry.attributes.position.count === 0) {
+//         throw new Error("Geometry has no vertices");
+//     }
+    
+//     // Check for valid triangles
+//     const positionCount = cleanedGeometry.attributes.position.count;
+//     if (positionCount < 3 || positionCount % 3 !== 0) {
+//         // Try to triangulate if not properly triangulated
+//         if (cleanedGeometry.index) {
+//             const indexCount = cleanedGeometry.index.count;
+//             if (indexCount < 3 || indexCount % 3 !== 0) {
+//                 throw new Error("Invalid triangle indices");
+//             }
+//         }
+//     }
+    
+//     console.log(`Cleaned geometry: ${cleanedGeometry.attributes.position.count} vertices`);
+//     return cleanedGeometry;
+// }
+
+
+// function createFallbackMergedMesh(toolpathMesh: THREE.Mesh, dotMesh: THREE.Mesh): THREE.Mesh {
+//     console.log("Using fallback merge method...");
+    
+//     const geometries: THREE.BufferGeometry[] = [];
+    
+//     // Add toolpath geometry
+//     if (toolpathMesh.geometry && toolpathMesh.geometry.attributes.position.count > 0) {
+//         const toolpathGeo = toolpathMesh.geometry.clone();
+//         toolpathGeo.computeVertexNormals();
+//         geometries.push(toolpathGeo);
+//     }
+    
+//     // Add dot geometry
+//     if (dotMesh.geometry && dotMesh.geometry.attributes.position.count > 0) {
+//         const dotGeo = dotMesh.geometry.clone();
+//         dotGeo.computeVertexNormals();
+//         geometries.push(dotGeo);
+//     }
+    
+//     if (geometries.length === 0) {
+//         throw new Error("No valid geometries to merge");
+//     }
+    
+//     const mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+    
+//     if (!mergedGeometry) {
+//         throw new Error("Failed to merge geometries in fallback");
+//     }
+    
+//     mergedGeometry.computeVertexNormals();
+    
+//     const material = new THREE.MeshStandardMaterial({ 
+//         color: 0x00ffff,
+//         metalness: 0.1,
+//         roughness: 0.7,
+//         side: THREE.DoubleSide
+//     });
+    
+//     console.log("Fallback merge completed");
+//     return new THREE.Mesh(mergedGeometry, material);
+// }

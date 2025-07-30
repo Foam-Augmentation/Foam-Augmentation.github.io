@@ -1277,15 +1277,14 @@ export function generateAugmentFoamToolpath(
     // }
 
     // // If we didn't get enough points, take the last portion of the toolpath
-    // if (topLayerPoints.length < toolpath.length * 0.1) { // Less than 10% of total points
+    // if (topLayerPoints.length < toolpath.length * 0.1) { // Less than 10% 
     //     const pointsPerLayer = Math.floor(toolpath.length / totalLayers);
     //     const startIndex = Math.max(0, toolpath.length - pointsPerLayer);
     //     topLayerPoints.length = 0; // Clear the array
     //     topLayerPoints.push(...toolpath.slice(startIndex));
     // }
 
-    // console.log(`Top layer Z: ${topLayerZ}, points count: ${topLayerPoints.length}, total toolpath: ${toolpath.length}`);
-    // if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
+
         const topLayerPoints: THREE.Vector3[] = [];
         const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount;
         const layersToTake = Math.min(3, Math.max(2, Math.floor(totalLayers * 0.3))); // Take 2-3 layers or 30% of total layers
@@ -1296,47 +1295,96 @@ export function generateAugmentFoamToolpath(
         topLayerPoints.push(...toolpath.slice(startIndex));
         
         console.log(`Taking top ${layersToTake} layers (${pointsToTake} points) from total ${toolpath.length} points`);
-        if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
+
+        // og
+    //     if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
+    //     console.log("Creating combined mesh using improved point cloud approach...");
+
+
+    //     // Create the final combined mesh with improved parameters
+    //     const finalCombinedMesh = createCombinedPointCloudMesh(
+    //         topLayerPoints,           // Only the top layer
+    //         modelObj.dotVisualizationObject,
+    //         modelObj.mesh.position,
+    //         10,    // toolpath density 
+    //         4.0,  // dot radius
+    //         0.5,   // dot Z offset above toolpath
+    //         2.0  // how close to the toolpath dots
+    //     );
+    //     // Position the combined mesh relative to the model
+    //     finalCombinedMesh.position.copy(modelObj.mesh.position);
+    //     // Remove old combined mesh if it exists
+    //     if (modelObj.combinedMesh) {
+    //         visualizer.scene.remove(modelObj.combinedMesh);
+    //         modelObj.combinedMesh.geometry?.dispose();
+    //         // Dispose material if it's not shared
+    //         if (Array.isArray(modelObj.combinedMesh.material)) {
+    //             modelObj.combinedMesh.material.forEach(mat => mat.dispose());
+    //         } else if (modelObj.combinedMesh.material) {
+    //             modelObj.combinedMesh.material.dispose();
+    //         }
+    //         modelObj.combinedMesh = undefined;
+    //     }
+    //     // Add the new combined mesh to the scene
+    //     visualizer.scene.add(finalCombinedMesh);
+    //     modelObj.combinedMesh = finalCombinedMesh;
+    //     console.log("Improved point cloud combined mesh created and added to scene");
+    //     console.log(`Final mesh preserves individual dot shapes on top of toolpath`);
+
+    //     // Export the mesh
+    //     quickExportSTL(finalCombinedMesh, 'foam_toolpath_with_dots');
+    // } else {
+    //     console.warn("Cannot create combined mesh: missing top layer points or dot visualization");
+    //     console.log(`Debug: topLayerPoints.length=${topLayerPoints.length}, dotVisualizationObject exists=${!!modelObj.dotVisualizationObject}`);
+    // }
+
+
+    if (topLayerPoints.length > 0 && modelObj.dotVisualizationObject) {
         console.log("Creating combined mesh using improved point cloud approach...");
-
-
-        // Create the final combined mesh with improved parameters
-        const finalCombinedMesh = createCombinedPointCloudMesh(
+    
+        // Create the final combined mesh with improved parameters this is async versio 
+        createCombinedPointCloudMesh(
             topLayerPoints,           // Only the top layer
             modelObj.dotVisualizationObject,
             modelObj.mesh.position,
-            10,    // toolpath density (points per unit length)
-            4.0,  // dot radius - adjust based on dot size
-            0.5,   // dot Z offset above toolpath
+            10,    // toolpath density
+            4.0,  // dot radius - adjust
+            1.1605,   // dot Z offset above toolpath //og 1.17
             2.0  // how close to the toolpath dots should be considered
-        );
-        // Position the combined mesh relative to the model
-        finalCombinedMesh.position.copy(modelObj.mesh.position);
-        // Remove old combined mesh if it exists
-        if (modelObj.combinedMesh) {
-            visualizer.scene.remove(modelObj.combinedMesh);
-            modelObj.combinedMesh.geometry?.dispose();
-            // Dispose material if it's not shared
-            if (Array.isArray(modelObj.combinedMesh.material)) {
-                modelObj.combinedMesh.material.forEach(mat => mat.dispose());
-            } else if (modelObj.combinedMesh.material) {
-                modelObj.combinedMesh.material.dispose();
+        ).then((finalCombinedMesh) => {
+            // Position the combined mesh relative to the model
+            finalCombinedMesh.position.copy(modelObj.mesh.position);
+            
+            // Remove old combined mesh if it exists
+            if (modelObj.combinedMesh) {
+                visualizer.scene.remove(modelObj.combinedMesh);
+                modelObj.combinedMesh.geometry?.dispose();
+                // Dispose material if it's not shared
+                if (Array.isArray(modelObj.combinedMesh.material)) {
+                    modelObj.combinedMesh.material.forEach(mat => mat.dispose());
+                } else if (modelObj.combinedMesh.material) {
+                    modelObj.combinedMesh.material.dispose();
+                }
+                modelObj.combinedMesh = undefined;
             }
-            modelObj.combinedMesh = undefined;
-        }
-        // Add the new combined mesh to the scene
-        visualizer.scene.add(finalCombinedMesh);
-        modelObj.combinedMesh = finalCombinedMesh;
-        console.log("Improved point cloud combined mesh created and added to scene");
-        console.log(`Final mesh preserves individual dot shapes on top of toolpath`);
-
-        // Export the mesh
-        quickExportSTL(finalCombinedMesh, 'foam_toolpath_with_dots');
+            
+            // Add the new combined mesh to the scene
+            visualizer.scene.add(finalCombinedMesh);
+            modelObj.combinedMesh = finalCombinedMesh;
+            
+            console.log("Improved point cloud combined mesh created and added to scene");
+            console.log(`Final mesh preserves individual dot shapes on top of toolpath`);
+    
+            // Export the mesh
+            quickExportSTL(finalCombinedMesh, 'foam_toolpath_with_dots');
+            
+        }).catch((error) => {
+            console.error("Failed to create combined mesh:", error);
+        });
     } else {
         console.warn("Cannot create combined mesh: missing top layer points or dot visualization");
         console.log(`Debug: topLayerPoints.length=${topLayerPoints.length}, dotVisualizationObject exists=${!!modelObj.dotVisualizationObject}`);
     }
-
 
 
     return {

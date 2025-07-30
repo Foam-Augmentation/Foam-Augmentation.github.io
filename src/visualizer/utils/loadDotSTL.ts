@@ -10,9 +10,9 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
  */
 export async function loadDotPointCloud(spacing: number): Promise<THREE.Vector3[]> {
     const loader = new STLLoader();
-  
+    // changed from dot.stl to hemisphere
     const geometry = await new Promise<THREE.BufferGeometry>((resolve, reject) => {
-      loader.load('/public/assets/dot.stl', resolve, undefined, reject);
+      loader.load('/public/assets/hemisphere.stl', resolve, undefined, reject);
     });
   
     geometry.computeBoundingBox();
