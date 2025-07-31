@@ -518,7 +518,7 @@ function makeChunkPath(
     fillDist: number = 0.5,
 ): PathPoint[] {
     let lastLayerEndPoint = lastLayerPoint;
-    const chunkPath: PathPoint[] = [];
+    let chunkPath: PathPoint[] = [];
     let scanX = false;
     for (const region of chunk.regions) {
         let path: THREE.Vector3[];
@@ -568,7 +568,8 @@ function makeChunkPath(
         }
     })
 
-    fillToolpath(chunkPath, fillDist);
+    chunkPath = fillToolpath(chunkPath, fillDist);
+
     chunkPath.forEach(point => {
         const percent = foamGradient(point.point, bounds);
         point.hStar = startHStar + percent * (endHStar - startHStar);

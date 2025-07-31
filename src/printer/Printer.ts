@@ -568,8 +568,6 @@ M204 S1000
   }
 
 
-
-
     public generate_foam_gcode(
     toolpath: PathPoint[],
     extruderId: number,
