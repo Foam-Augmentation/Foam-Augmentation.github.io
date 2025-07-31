@@ -3,6 +3,7 @@ import { updateEscDiv } from './bottomTooltip';
 import { visualize_All_Layers, generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
+import { importBumpMesh } from '../loaders/modelLoader';
 
 // Extend Object3D to include highlightFoamMesh and highlightSenseMesh properties
 declare module 'three' {
@@ -186,7 +187,7 @@ function addTransformFolder(
 function addSelectedMeshFolder(
     modelGUIitem: GUI,
     modelObj: EverydayModel,
-    visualizer: Visualizer
+    visualizer: Visualizer,
 ): void {
     const selectedMeshFolder = modelGUIitem.addFolder('mesh selection');
     selectedMeshFolder.domElement.classList.add('mesh-selection-folder');
@@ -294,7 +295,10 @@ function addSelectedMeshFolder(
         selectFoamMesh: () => selectFoamMesh(modelObj),
         selectSenseMesh: () => selectSenseMesh(modelObj),
         selectSenseMeshByIntersection: () => selectSenseMeshByIntersection(modelObj),
+        selectBumpSTL: () => importBumpMesh(modelObj),
     };
+
+    selectedMeshFolder.add(selectMeshBtn, 'selectBumpSTL').name("Select Bump Model");
 
     /** select regular foam mesh folder */
     const selectRegularFoamMeshFolder = selectedMeshFolder.addFolder('select regular foam mesh');
@@ -343,7 +347,9 @@ export function addParamsFolder_EverydayModel(
         generateFoamToolpath(visualizer, modelObj);
     });
     paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
+    paramsFolder.add(modelObj.toolpathConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
     paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 100, 0.01).name('H*');
+    paramsFolder.add(modelObj.toolpathConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
     paramsFolder.add(modelObj.toolpathConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
     // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 
@@ -359,6 +365,9 @@ export function addParamsFolder_EverydayModel(
     paramsFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
+
+    paramsFolder.add(modelObj.toolpathConfig, 'bumpSpacing', 0, 100, 0.01).name("Bump Spacing");
+    paramsFolder.add(modelObj.toolpathConfig, 'bumpScale', 0, 100, 0.01).name("Bump Scale");
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');

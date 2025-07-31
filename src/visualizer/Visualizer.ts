@@ -93,10 +93,18 @@ export default class Visualizer {
         useFermatSpirals: boolean;
         generateBoundary: boolean;
         purgeLine: boolean;
+        checkCollisions: boolean;
         printHeadMinX: number;
         printHeadMinY: number;
         printHeadMaxX: number;
         printHeadMaxY: number;
+
+        startHStar: number;
+        endHStar: number;
+        startVStar: number;
+        endVStar: number;
+        deltaL: number;
+        size: number;
     };
 
     /**
@@ -123,7 +131,6 @@ export default class Visualizer {
     public everydayModelListFolder: GUI;
 
     public saveFolder: GUI;
-
 
 
     /**
@@ -195,13 +202,20 @@ export default class Visualizer {
             showGcodeVisualization: false,
             currentSelectedModel: null,
             useTreeSlicer: false,
-            useFermatSpirals: true,
+            useFermatSpirals: false,
             generateBoundary: true,
             purgeLine: true,
+            checkCollisions: false,
             printHeadMinX: -40,
             printHeadMinY: -15,
             printHeadMaxX: 35,
             printHeadMaxY: 70,
+            startHStar: 5,
+            endHStar: 10,
+            startVStar: 0.15,
+            endVStar: 0.3,
+            deltaL: 3,
+            size: 15,
         };
 
         // Initialize lasso selection state.

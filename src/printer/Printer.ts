@@ -40,6 +40,7 @@ export default class Printer {
   public diameter_filament: number;
 
   public V_Star: number;
+  public vStarEnd: number;
 
   public Edot: number;
 
@@ -47,9 +48,11 @@ export default class Printer {
 
   public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
   public H_star: number; // H_star (height of the foam layer)
+  public hStarEnd: number;
   public useFermatSpirals: boolean;
   public generateBoundary: boolean;
   public purgeLine: boolean;
+  public checkCollisions: boolean;
 
   public printHeadDims: {min: THREE.Vector2, max: THREE.Vector2};
 
@@ -72,13 +75,17 @@ export default class Printer {
     this.toolpathGcode = ""; // initialize toolpath G-code
     this.diameter_filament = 1.75;
     this.V_Star = 0.15;
+    this.vStarEnd = 0.15;
+
     this.Edot = 35;
     this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
-    this.useFermatSpirals = true;
+    this.hStarEnd = 6.0;
+    this.useFermatSpirals = false;
     this.generateBoundary = true;
     this.purgeLine = true;
+    this.checkCollisions = false;
     this.printHeadDims = {min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70)}
    
     this.end_gcode = `
@@ -444,7 +451,126 @@ M204 S1000
    * @returns {string} The generated foam toolpath G-code.
    */
   
-  public generate_foam_gcode(
+  public generate_varying_foam_gcode(
+    toolpath: PathPoint[],
+    extruderId: number,
+    modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0),
+    startHStar: number,
+    endHStar: number,
+    startVStar: number,
+    endVStar: number,
+  ): string {
+    if (toolpath.length === 0) {
+      console.error("Toolpath is empty.");
+      return "";
+    }
+
+    let body_gcode: string[] = [];
+    // Apply model position to first point
+    this.H_star = startHStar;
+    this.V_Star = startVStar;
+    this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+    let firstPoint = toolpath[0].point.clone().add(modelPosition).add(new THREE.Vector3(0, 0, this.ZOffset));
+    let lastTarget: THREE.Vector3 = firstPoint;
+
+    body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
+    body_gcode.push("M205 X8 Y8; tune down acceleration");
+
+    for (let i = 0; i < toolpath.length; i++) {
+      const point = toolpath[i];
+      // const nextPoint = toolpath[(i + 1) % toolpath.length];
+
+      this.H_star = point.hStar!;
+      this.V_Star = point.vStar!;
+      this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+
+      const currentPoint = point.point.clone().add(modelPosition).add(new THREE.Vector3(0, 0, point.purge ? 0.2 : this.ZOffset));
+      if (point.travel) {
+        body_gcode.push("G1 E-0.25 F1000 ; retract filament slightly")
+        body_gcode.push(
+          this.move_to_position(
+            currentPoint,
+          )
+        );
+      } else {
+        body_gcode.push(
+          this.extrude_single_segment(
+            lastTarget,
+            currentPoint,
+            false,
+          ) + " ; hStar: " + this.H_star + ", vStar: " + this.V_Star
+        );
+      }
+      lastTarget = currentPoint;
+    }
+
+    // console.log("Total layers:", toolpath.length);
+    // console.log("Model position applied:", modelPosition);
+
+
+
+    // for (let i = 0; i < toolpath.length; i++) {
+    //   let layerIndex = i;
+    //   if (i === 0) {
+    //     const firstPointPos = {
+    //       x: firstPoint.x,
+    //       y: firstPoint.y,
+    //       z: firstPoint.z
+    //     };
+
+    //     body_gcode.push(
+    //       `G0 F2880 X${firstPointPos.x.toFixed(4)} Y${firstPointPos.y.toFixed(4)} Z${firstPointPos.z.toFixed(4)}; move to start point`
+    //     );
+
+    //     body_gcode.push("M205 X8 Y8; tune down acceleration");
+    //     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
+    //   } else {
+    //     // Apply model position to the first point of each layer
+    //     const currentPoint = toolpath[i][0].clone().add(modelPosition);
+    //     body_gcode.push(
+    //       this.extrude_single_segment(
+    //         lastTarget,
+    //         currentPoint,
+    //         true
+    //       )
+    //     );
+    //     lastTarget = currentPoint;
+    //   }
+
+    //   // Process the rest of the points in the layer
+    //   for (let j = 1; j < toolpath[i].length; j++) {
+    //     // Apply model position to each point
+    //     const currentPoint = toolpath[i][j].clone().add(modelPosition);
+    //     body_gcode.push(
+    //       this.extrude_single_segment(
+    //         lastTarget,
+    //         currentPoint,
+    //         false
+    //       )
+    //     );
+    //     lastTarget = currentPoint;
+    //   }
+    // }
+
+    body_gcode.push("G92 E0");
+    this.extrudedAmount = 0;
+
+    this.toolpathGcode =
+      this.build_start_gcode(extruderId) +
+      "\n\n" +
+      this.boundaryGcode + 
+      "\n\n" +
+      body_gcode.join("\n") +
+      "\n\n" +
+      this.end_gcode;
+
+    return this.toolpathGcode;
+  }
+
+
+
+
+    public generate_foam_gcode(
     toolpath: PathPoint[],
     extruderId: number,
     modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
@@ -466,6 +592,11 @@ M204 S1000
       const point = toolpath[i];
       const nextPoint = toolpath[(i + 1) % toolpath.length];
       const currentPoint = point.point.clone().add(modelPosition);
+
+      this.V_Star = point.vStar!;
+      this.H_star = point.hStar!;
+      this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+
       if (point.travel) {
         if (!nextPoint.travel) {
           this.move_to_position(new THREE.Vector3(currentPoint.x, currentPoint.y, currentPoint.z - this.ZOffset));
@@ -474,7 +605,6 @@ M204 S1000
           this.move_to_position(currentPoint)
         );
       } else {
-
         body_gcode.push(
           this.extrude_single_segment(
             lastTarget,

@@ -57,7 +57,9 @@ export interface ToolpathConfig {
     /** deltaZ (thickness of a single foam layer) */
     deltaZ: number;
     hStar: number;
+    hStarEnd: number;
     vStar: number;
+    vStarEnd: number;
     /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
     // zOffset: number;
     /** grid size */
@@ -72,6 +74,8 @@ export interface ToolpathConfig {
     /** final Foam layer count */
     finalFoamLayerCount: number;
     edot: number;
+    bumpSpacing: number;
+    bumpScale: number;
     /** regular Foam extrusion speed */
     // extrusionSpeedRegularFoam: number;
     /** regular Foam print head speed */
@@ -116,6 +120,8 @@ export interface EverydayModel extends BasicModel {
     selectedSenseFoamMesh?: THREE.Mesh;
     /** List of models for intersect detection (for sensing areas) */
     sensingIntersectModelList?: THREE.Mesh[];
+
+    bumpMesh?: THREE.Mesh;
 
     /** Toolpath configurations */
     toolpathConfig: ToolpathConfig;

@@ -5,7 +5,7 @@ import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
-import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
+import { generateFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 
 /**
@@ -152,13 +152,23 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
 
+  printerFolder.close();
+
   const slicerFolder = settingFolder.addFolder('slicer settings');
   slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
   slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
+  slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
   slicerFolder.close();
-  
-  printerFolder.close();
+
+  const testParamsFolder = settingFolder.addFolder('test params');
+  testParamsFolder.add(visualizer.config, 'startHStar', 0, 200, 0.01);
+  testParamsFolder.add(visualizer.config, 'endHStar', 0, 200, 0.01);
+  testParamsFolder.add(visualizer.config, 'startVStar', 0, 10, 0.01);
+  testParamsFolder.add(visualizer.config, 'endVStar', 0, 10, 0.01);
+  testParamsFolder.add(visualizer.config, 'deltaL', 0, 40, 0.01);
+  testParamsFolder.add(visualizer.config, 'size', 0, 100, 0.01);
+  testParamsFolder.close();
   // Update parameter calculation.
   // const updateParamCalculation = () => {
   //   visualizer.config.VStar = (visualizer.config.printHead_speed_when_foam / visualizer.config.extrusion_speed_when_foam).toFixed(2);
@@ -231,6 +241,11 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
+  saveFolder.add({ generateTestGcode: () => {
+      visualizer.printer.generate_varying_foam_gcode(generateTrialToolpath(visualizer.config.deltaL, new THREE.Vector3(100, 100, 0), visualizer.config.size, 6, 10, 
+        visualizer.config.startHStar, visualizer.config.endHStar, visualizer.config.startVStar, visualizer.config.endVStar), 
+        1, new THREE.Vector3(0, 0, 0), visualizer.config.startHStar, visualizer.config.endHStar, visualizer.config.startVStar, visualizer.config.endVStar);
+    }}, 'generateTestGcode').name("Make Test Gcode");
   saveFolder.close();
   
 

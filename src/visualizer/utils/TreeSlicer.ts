@@ -68,7 +68,7 @@ export function sliceMeshIntoLayers(mesh: THREE.Mesh, deltaZ: number): { z: numb
 }
 
 
-function pointInPolygon(point: THREE.Vector3, polygon: THREE.Vector3[]): boolean {
+export function pointInPolygon(point: THREE.Vector3, polygon: THREE.Vector3[]): boolean {
   let inside = false;
   const x = point.x, y = point.y;
   const n = polygon.length;
@@ -411,7 +411,7 @@ export function buildRegionTree(
             region,
             children: [],
             parent: null,
-            layer: Math.floor(region.height / layerHeight),
+            layer: Math.floor((region.height + 0.0001) / layerHeight),
             visited: false
         };
         nodes.set(region.id, node);

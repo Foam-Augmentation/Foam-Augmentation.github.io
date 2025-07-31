@@ -96,11 +96,15 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         deltaZ: 1.16,
                         gridSize: 1.7,
                         vStar: 0.15,
+                        vStarEnd: 0.15,
                         hStar: 9,
+                        hStarEnd: 9,
                         edot: 35,
                         initialFoamLayerCount: 3,
                         middleSenseLayerCount: 3,
                         finalFoamLayerCount: 1,
+                        bumpSpacing: 15,
+                        bumpScale: 1,
                     },
                     // guiItem: {
                     //     domElement: document.createElement('div') // or any other appropriate initialization
@@ -120,6 +124,59 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
             } else {
                 refreshModelGUIList(visualizer, 'everyday');
             }
+        };
+
+        reader.readAsArrayBuffer(file);
+    });
+
+    // Programmatically trigger the file input.
+    input.click();
+}
+
+
+export function importBumpMesh(
+    modelObj: EverydayModel
+): void {
+    const input: HTMLInputElement = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.stl';
+
+    // Listen for the file selection.
+    input.addEventListener('change', (event: Event) => {
+        const target = event.target as HTMLInputElement;
+        if (!target.files || target.files.length === 0) return;
+        const file = target.files[0];
+
+        const reader = new FileReader();
+
+        reader.onload = (e: ProgressEvent<FileReader>) => {
+            if (!e.target || !e.target.result) return;
+
+            // Parse the STL file into a BufferGeometry.
+            const loader = new STLLoader();
+            const geometry = loader.parse(e.target.result as ArrayBuffer);
+
+            // Compute the bounding box to determine the center.
+            geometry.computeBoundingBox();
+            const bbox = geometry.boundingBox;
+            const center = new THREE.Vector3();
+            bbox?.getCenter(center);
+
+            // Translate geometry so its center is at the origin.
+            geometry.translate(-center.x, -center.y, -center.z);
+
+            // Create a mesh using the geometry and material.
+            const material = new THREE.MeshStandardMaterial({ color: 0x90ee90 });
+            const mesh = new THREE.Mesh(geometry, material);
+
+            // Position the mesh at the center of the printer's bed.
+            mesh.position.set(
+                0,
+                0,
+                0,
+            );
+
+            modelObj.bumpMesh = mesh;
         };
 
         reader.readAsArrayBuffer(file);
