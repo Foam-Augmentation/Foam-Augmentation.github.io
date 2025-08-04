@@ -76,6 +76,7 @@ export interface ToolpathConfig {
     edot: number;
     bumpSpacing: number;
     bumpScale: number;
+    generateBumps: boolean;
     /** regular Foam extrusion speed */
     // extrusionSpeedRegularFoam: number;
     /** regular Foam print head speed */

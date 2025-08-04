@@ -196,7 +196,28 @@ function applyModelParameter<K extends keyof ToolpathConfig>(
   key: K,
   value: string,
 ): void {
-  toolpathConfig[key] = Number(value);
+  const current = toolpathConfig[key];
+  let newVal: number | boolean;
+
+  if (typeof current === 'number') {
+    const n = Number(value);
+    newVal = n;
+  } else if (typeof current === 'boolean') {
+    const l = value.trim().toLowerCase();
+    if (l === 'true') {
+      newVal = true;
+    } else if (l === 'false') {
+      newVal = false;
+    } else {
+      console.warn("Invalid boolean");
+      newVal = false;
+    }
+  } else {
+    console.warn("Unable to find correct type");
+    newVal = 0;
+  }
+
+  toolpathConfig[key] = newVal as ToolpathConfig[K];
 }
 //   switch (key) {
 //     case 'bedTemp':

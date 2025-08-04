@@ -295,10 +295,7 @@ function addSelectedMeshFolder(
         selectFoamMesh: () => selectFoamMesh(modelObj),
         selectSenseMesh: () => selectSenseMesh(modelObj),
         selectSenseMeshByIntersection: () => selectSenseMeshByIntersection(modelObj),
-        selectBumpSTL: () => importBumpMesh(modelObj),
     };
-
-    selectedMeshFolder.add(selectMeshBtn, 'selectBumpSTL').name("Select Bump Model");
 
     /** select regular foam mesh folder */
     const selectRegularFoamMeshFolder = selectedMeshFolder.addFolder('select regular foam mesh');
@@ -366,8 +363,6 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
 
-    paramsFolder.add(modelObj.toolpathConfig, 'bumpSpacing', 0, 100, 0.01).name("Bump Spacing");
-    paramsFolder.add(modelObj.toolpathConfig, 'bumpScale', 0, 100, 0.01).name("Bump Scale");
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
@@ -375,6 +370,41 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
 
     paramsFolder.close();
+}
+
+
+/**
+ * Adds a parameters folder to an everyday model's GUI item for toolpath configuration.
+ * This folder includes controllers for various toolpath parameters such as deltaZ, zOffset, gridSize,
+ * dieSwell, foam layer counts, extrusion speeds, print head speeds, temperatures, and nozzle sizes.
+ *
+ * @param modelGUIitem - The GUI folder for the model.
+ * @param modelObj - The everyday model object.
+ * @param visualizer - The Visualizer instance.
+ */
+export function addBumpsFolder(
+    modelGUIitem: GUI,
+    modelObj: EverydayModel,
+): void {
+    const bumpFolder = modelGUIitem.addFolder('bump settings');
+    bumpFolder.domElement.classList.add('bump-folder');
+
+    const selectBump = {
+        selectBumpSTL: () => importBumpMesh(modelObj),
+    };
+
+    bumpFolder.add(selectBump, 'selectBumpSTL').name("Select Bump Model");
+
+    bumpFolder.add(modelObj.toolpathConfig, 'generateBumps');
+    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacing', 0, 100, 0.01).name("Bump Spacing");
+    bumpFolder.add(modelObj.toolpathConfig, 'bumpScale', 0, 100, 0.01).name("Bump Scale");
+    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
+    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
+    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
+
+    bumpFolder.close();
 }
 
 
@@ -429,6 +459,7 @@ export function refreshModelGUIList(visualizer: Visualizer, listType: 'foam' | '
         if (listType === 'everyday') {
             addSelectedMeshFolder(modelGUIitem, modelObj as EverydayModel, visualizer);
             addParamsFolder_EverydayModel(modelGUIitem, modelObj as EverydayModel, visualizer);
+            addBumpsFolder(modelGUIitem, modelObj as EverydayModel);
         }
     });
 }

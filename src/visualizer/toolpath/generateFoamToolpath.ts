@@ -1437,7 +1437,6 @@ export function generateAugmentFoamToolpath(
         gradientMatrix[col].splice(row, 1);
         samplePointMatrix[col].splice(row, 1);
     }
-
     console.log("Finished Gradient");
 
     const samplePoints: THREE.Vector3[] = [];
@@ -1464,72 +1463,75 @@ export function generateAugmentFoamToolpath(
     // ]
     // ]
 
-    modelObj.bumpMesh!.geometry.scale(modelObj.toolpathConfig.bumpScale, modelObj.toolpathConfig.bumpScale, modelObj.toolpathConfig.bumpScale);
-
-    const bumpLayers = sliceMeshIntoLayers(modelObj.bumpMesh!, modelObj.toolpathConfig.deltaZ);
-    let bumpContours: THREE.Vector3[][] = [];
-    for (const { z, segments } of bumpLayers) {
-        const regions = extractRegionsFromLayer(z, segments);
-        bumpContours.push(...regions.map(region => region.contour));
-    }
-
-    bumpContours.sort((a, b) => a[0].z - b[0].z);
-    // Normalize heights so the bottom is at z = 0
-    const firstLayerHeight = bumpContours[0][0].z;
-    bumpContours.forEach(contour => contour.forEach(pt => pt.setZ(pt.z - firstLayerHeight)));
-    console.log("Num bump contours: " + bumpContours.length);
-
+    const bumpRegions: SliceRegion[] = []
     const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(samplePoints, 5);
 
-    const bumpBounds = cloudSliceRegions.map(sliceRegion => getBounds(sliceRegion.contour, sliceRegion.contour[0].z));
+    if (modelObj.toolpathConfig.generateBumps) {
+        modelObj.bumpMesh!.geometry.scale(modelObj.toolpathConfig.bumpScale, modelObj.toolpathConfig.bumpScale, modelObj.toolpathConfig.bumpScale);
+        modelObj.toolpathConfig.bumpScale = 1;
 
-    let max = new THREE.Vector3(-Infinity, -Infinity, 0);
-    let min = new THREE.Vector3(Infinity, Infinity, 0);
-
-    bumpBounds.forEach(bound => {
-        max = new THREE.Vector3(Math.max(max.x, bound.max.x), Math.max(max.y, bound.max.y), 0);
-        min = new THREE.Vector3(Math.min(min.x, bound.min.x), Math.min(min.y, bound.min.y), 0);
-    });
-
-    const bumpPoints: THREE.Vector3[] = [];
-
-    const remainderY = (max.y - min.y) % modelObj.toolpathConfig.bumpSpacing;
-    const remainderX = (max.x - min.x) % modelObj.toolpathConfig.bumpSpacing;
-    let y = min.y + remainderY / 2;
-    while (y < max.y) {
-        let x = min.x + remainderX / 2;
-        while (x < max.x) {
-            const point = new THREE.Vector3(x, y, 0)
-            if (cloudSliceRegions.some(region => pointInPolygon(point, region.contour))) {
-                bumpPoints.push(point);
-            }
-            x += modelObj.toolpathConfig.bumpSpacing;
+        const bumpLayers = sliceMeshIntoLayers(modelObj.bumpMesh!, modelObj.toolpathConfig.deltaZ);
+        let bumpContours: THREE.Vector3[][] = [];
+        for (const { z, segments } of bumpLayers) {
+            const regions = extractRegionsFromLayer(z, segments);
+            bumpContours.push(...regions.map(region => region.contour));
         }
-        y += modelObj.toolpathConfig.bumpSpacing;
-    }
 
-    const bumpRegions: SliceRegion[] = []
-    const bumpHeight = modelObj.toolpathConfig.initialFoamLayerCount * modelObj.toolpathConfig.deltaZ;
-    bumpPoints.forEach(p => {
-        // Use .some so we can break by returning true
-        bumpContours.some(contour => {
-            const bumpContour = contour.map(contourPt => contourPt.clone().add(new THREE.Vector3(p.x, p.y, bumpHeight))).filter(
-                p => cloudSliceRegions.some(region => pointInPolygon(p, region.contour)));
-            if (bumpContour.length > 2) {
-                bumpRegions.push({
-                    id: p.x + ", " + p.y + ", " + bumpContour[0].x + ", " + bumpContour[0].y + ", " + bumpContour[0].z,
-                    contour: bumpContour,
-                    holes: [],
-                    height: bumpContour[0].z,
-                    bounds: getBounds(bumpContour, bumpContour[0].z),
-                });
-                return false;
-            } else {
-                return true;
+        bumpContours.sort((a, b) => a[0].z - b[0].z);
+
+        // Normalize heights so the bottom is at z = 0
+        const firstLayerHeight = bumpContours[0][0].z;
+        bumpContours.forEach(contour => contour.forEach(pt => pt.setZ(pt.z - firstLayerHeight)));
+        console.log("Num bump contours: " + bumpContours.length);
+
+        const bumpBounds = cloudSliceRegions.map(sliceRegion => getBounds(sliceRegion.contour, sliceRegion.contour[0].z));
+
+        let max = new THREE.Vector3(-Infinity, -Infinity, 0);
+        let min = new THREE.Vector3(Infinity, Infinity, 0);
+
+        bumpBounds.forEach(bound => {
+            max = new THREE.Vector3(Math.max(max.x, bound.max.x), Math.max(max.y, bound.max.y), 0);
+            min = new THREE.Vector3(Math.min(min.x, bound.min.x), Math.min(min.y, bound.min.y), 0);
+        });
+
+        const bumpPoints: THREE.Vector3[] = [];
+
+        const remainderY = (max.y - min.y) % modelObj.toolpathConfig.bumpSpacing;
+        const remainderX = (max.x - min.x) % modelObj.toolpathConfig.bumpSpacing;
+        let y = min.y + remainderY / 2;
+        while (y < max.y) {
+            let x = min.x + remainderX / 2;
+            while (x < max.x) {
+                const point = new THREE.Vector3(x, y, 0)
+                if (cloudSliceRegions.some(region => pointInPolygon(point, region.contour))) {
+                    bumpPoints.push(point);
+                }
+                x += modelObj.toolpathConfig.bumpSpacing;
             }
-        })
-    })
+            y += modelObj.toolpathConfig.bumpSpacing;
+        }
 
+        const bumpHeight = modelObj.toolpathConfig.initialFoamLayerCount * modelObj.toolpathConfig.deltaZ;
+        bumpPoints.forEach(p => {
+            // Use .some so we can break by returning true
+            bumpContours.some(contour => {
+                const bumpContour = contour.map(contourPt => contourPt.clone().add(new THREE.Vector3(p.x, p.y, bumpHeight))).filter(
+                    p => cloudSliceRegions.some(region => pointInPolygon(p, region.contour)));
+                if (bumpContour.length > 2) {
+                    bumpRegions.push({
+                        id: p.x + ", " + p.y + ", " + bumpContour[0].x + ", " + bumpContour[0].y + ", " + bumpContour[0].z,
+                        contour: bumpContour,
+                        holes: [],
+                        height: bumpContour[0].z,
+                        bounds: getBounds(bumpContour, bumpContour[0].z),
+                    });
+                    return false;
+                } else {
+                    return true;
+                }
+            })
+        })
+    }
 
     const sliceRegions: SliceRegion[] = bumpRegions;
 
@@ -1600,10 +1602,6 @@ export function generateAugmentFoamToolpath(
         }
     }
     
-
-
-
-    //
 
     for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
         const z = i * modelObj.toolpathConfig.deltaZ;

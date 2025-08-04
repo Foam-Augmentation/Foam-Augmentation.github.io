@@ -116,26 +116,26 @@ M73 P100 R0 ; progress to 100%`
     this.Edot = toolpathConfig.edot;
   }
 
-  public updateVisualizerParameters(
-    config: Visualizer["config"]
-  ): void {
-    this.nozzleDiameter = config.nozzleDiameter;
-    this.nozzleLength = config.nozzleLength;
-    this.dieSwelling = config.dieSwelling;
-    this.material_bed_temperature = config.bedTemp;
-    this.print_temp_left_extruder = config.nozzleLeftTemp;
-    this.print_temp_right_extruder = config.nozzleRightTemp;
-    this.machine_depth = config.machineDepth;
-    this.machine_depth_y = config.machineDepthY;
-    this.machine_height = config.machineHeight;
-    this.checkCollisions = config.checkCollisions;
-    this.useFermatSpirals = config.useFermatSpirals;
-    this.diameter_filament = config.filamentDiameter;
-    this.printHeadDims = {min: new THREE.Vector2(config.printHeadMinX, config.printHeadMinY), 
-                          max: new THREE.Vector2(config.printHeadMaxX, config.printHeadMaxY)},
-    this.purgeLine = config.purgeLine;
-    this.generateBoundary = config.generateBoundary;
-  }
+  // public updateVisualizerParameters(
+  //   config: Visualizer["config"]
+  // ): void {
+  //   this.nozzleDiameter = config.nozzleDiameter;
+  //   this.nozzleLength = config.nozzleLength;
+  //   this.dieSwelling = config.dieSwelling;
+  //   this.material_bed_temperature = config.bedTemp;
+  //   this.print_temp_left_extruder = config.nozzleLeftTemp;
+  //   this.print_temp_right_extruder = config.nozzleRightTemp;
+  //   this.machine_depth = config.machineDepth;
+  //   this.machine_depth_y = config.machineDepthY;
+  //   this.machine_height = config.machineHeight;
+  //   this.checkCollisions = config.checkCollisions;
+  //   this.useFermatSpirals = config.useFermatSpirals;
+  //   this.diameter_filament = config.filamentDiameter;
+  //   this.printHeadDims = {min: new THREE.Vector2(config.printHeadMinX, config.printHeadMinY), 
+  //                         max: new THREE.Vector2(config.printHeadMaxX, config.printHeadMaxY)},
+  //   this.purgeLine = config.purgeLine;
+  //   this.generateBoundary = config.generateBoundary;
+  // }
 
   /**
    * Builds the starting G-code to initialize printer settings.

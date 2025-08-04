@@ -105,6 +105,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         finalFoamLayerCount: 1,
                         bumpSpacing: 15,
                         bumpScale: 1,
+                        generateBumps: false,
                     },
                     // guiItem: {
                     //     domElement: document.createElement('div') // or any other appropriate initialization
