@@ -318,4 +318,25 @@ export default class Visualizer {
             saveGcodeToFile(gcode, name); 
         }
     }
+
+
+    public syncConfigToPrinter(): void {
+        this.printer.material_bed_temperature = this.config.bedTemp;
+        this.printer.print_temp_left_extruder = this.config.nozzleLeftTemp;
+        this.printer.print_temp_right_extruder = this.config.nozzleRightTemp;
+        this.printer.machine_depth = this.config.machineDepth;
+        this.printer.machine_height = this.config.machineHeight;
+        this.printer.dieSwelling = this.config.dieSwelling;
+        this.printer.nozzleDiameter = this.config.nozzleDiameter;
+        this.printer.diameter_filament = this.config.filamentDiameter;
+        this.printer.nozzleLength = this.config.nozzleLength;
+        this.printer.printHeadDims.min.setX(this.config.printHeadMinX);
+        this.printer.printHeadDims.min.setY(this.config.printHeadMinY);
+        this.printer.printHeadDims.max.setX(this.config.printHeadMaxX);
+        this.printer.printHeadDims.max.setY(this.config.printHeadMaxY);
+        this.printer.useFermatSpirals = this.config.useFermatSpirals;
+        this.printer.generateBoundary = this.config.generateBoundary;
+        this.printer.purgeLine = this.config.purgeLine;
+        this.printer.checkCollisions = this.config.checkCollisions;
+      }
 }

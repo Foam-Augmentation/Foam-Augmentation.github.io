@@ -112,6 +112,9 @@ function parseAndApplyPreset(visualizer: Visualizer, content: string): void {
     
     applyParameter(visualizer, key, value);
   }
+
+  visualizer.syncConfigToPrinter();
+
   
   initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
 }
