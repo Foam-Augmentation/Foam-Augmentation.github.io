@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
 import { generateFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
+import { exportPresetToFile, importPresetFromFile } from './presetManager';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -17,6 +18,7 @@ export interface InitGUIResult {
   everydayModelListFolder: GUI;    // Folder for everyday models list.
   saveFolder: GUI;
   treeSlicerFolder: GUI;          // New folder for TreeSlicer operations
+  presetFolder: GUI;    
 }
 
 /**
@@ -104,6 +106,24 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   //     }
   //   });
   // displayFolder.close();
+
+  const presetFolder = gui.addFolder('Presets');
+  presetFolder.add({ exportPreset: () => exportPresetToFile(visualizer) }, 'exportPreset').name('Export Preset');
+
+
+  presetFolder.add({ 
+    importPreset: async () => {
+      const filename = await importPresetFromFile(visualizer);
+      gui.controllersRecursive().forEach(controller => {
+        controller.updateDisplay();
+      });
+      
+      const titleElement = presetFolder.domElement.querySelector('.title');
+      if (titleElement && filename) {
+        titleElement.textContent = `Presets (applied: ${filename})`;
+      }
+    }
+  }, 'importPreset').name('Import Preset');
 
   // -----  Settings Folder -----
   const settingFolder = gui.addFolder('Settings');
@@ -309,6 +329,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     foamModelListFolder,
     everydayModelListFolder,
     saveFolder,
-    treeSlicerFolder
+    treeSlicerFolder,
+    presetFolder
   };
 }
