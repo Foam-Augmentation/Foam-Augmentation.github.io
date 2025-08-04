@@ -137,7 +137,8 @@ function parseAndApplyPreset(visualizer: Visualizer, content: string): void {
     }
   }
 
-  visualizer.printer.updateVisualizerParameters(visualizer.config);
+  visualizer.syncConfigToPrinter();
+
   
   initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
 }
