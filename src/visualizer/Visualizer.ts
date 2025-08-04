@@ -72,6 +72,7 @@ export default class Visualizer {
         nozzleLeftTemp: number;
         nozzleRightTemp: number;
         machineDepth: number;
+        machineDepthY: number;
         machineHeight: number;
         // zOffset: number;
         // deltaZ: number;
@@ -99,12 +100,12 @@ export default class Visualizer {
         printHeadMaxX: number;
         printHeadMaxY: number;
 
-        startHStar: number;
-        endHStar: number;
-        startVStar: number;
-        endVStar: number;
-        deltaL: number;
-        size: number;
+        startHStarTest: number;
+        endHStarTest: number;
+        startVStarTest: number;
+        endVStarTest: number;
+        testDeltaL: number;
+        testSize: number;
     };
 
     /**
@@ -183,8 +184,9 @@ export default class Visualizer {
             bedTemp: 60,
             nozzleLeftTemp: 230,
             nozzleRightTemp: 230,
-            machineDepth: 302,
-            machineHeight: 402,
+            machineDepth: 250,
+            machineDepthY: 210,
+            machineHeight: 220,
             // zOffset: 3.38,
             // deltaZ: 1.7,
             // height: 20,
@@ -210,12 +212,13 @@ export default class Visualizer {
             printHeadMinY: -15,
             printHeadMaxX: 35,
             printHeadMaxY: 70,
-            startHStar: 5,
-            endHStar: 10,
-            startVStar: 0.15,
-            endVStar: 0.3,
-            deltaL: 3,
-            size: 15,
+
+            startHStarTest: 5,
+            endHStarTest: 10,
+            startVStarTest: 0.15,
+            endVStarTest: 0.3,
+            testDeltaL: 3,
+            testSize: 15,
         };
 
         // Initialize lasso selection state.

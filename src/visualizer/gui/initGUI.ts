@@ -108,11 +108,23 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   // displayFolder.close();
 
   const presetFolder = gui.addFolder('Presets');
-  presetFolder.add({ exportPreset: () => exportPresetToFile(visualizer) }, 'exportPreset').name('Export Preset');
+  presetFolder.add({ exportPreset: () => {
+    if (!visualizer.currentSelectedModel) {
+      visualizer.currentSelectedModel = visualizer.everydayModelList[0];
+      console.log("Set selected model to first model in list");
+    }
+
+    exportPresetToFile(visualizer)
+  } }, 'exportPreset').name('Export Preset');
 
 
   presetFolder.add({ 
     importPreset: async () => {
+      if (!visualizer.currentSelectedModel) {
+        visualizer.currentSelectedModel = visualizer.everydayModelList[0];
+        console.log("Set selected model to first model in list");
+      }
+
       const filename = await importPresetFromFile(visualizer);
       gui.controllersRecursive().forEach(controller => {
         controller.updateDisplay();
@@ -150,6 +162,12 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       // Note: call to initScene here might need proper parameters.
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
+  printerFolder.add(visualizer.config, 'machineDepthY', 0, 1000, 1)
+    .onChange((v: number) => {
+      visualizer.printer.machine_depth_y = v;
+      // Note: call to initScene here might need proper parameters.
+      initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
+    });
   printerFolder.add(visualizer.config, 'machineHeight', 0, 2000, 1)
     .onChange((v: number) => {
       visualizer.printer.machine_height = v;
@@ -182,12 +200,12 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   slicerFolder.close();
 
   const testParamsFolder = settingFolder.addFolder('test params');
-  testParamsFolder.add(visualizer.config, 'startHStar', 0, 200, 0.01);
-  testParamsFolder.add(visualizer.config, 'endHStar', 0, 200, 0.01);
-  testParamsFolder.add(visualizer.config, 'startVStar', 0, 10, 0.01);
-  testParamsFolder.add(visualizer.config, 'endVStar', 0, 10, 0.01);
-  testParamsFolder.add(visualizer.config, 'deltaL', 0, 40, 0.01);
-  testParamsFolder.add(visualizer.config, 'size', 0, 100, 0.01);
+  testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
+  testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
+  testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
+  testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
+  testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
+  testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
   testParamsFolder.close();
   // Update parameter calculation.
   // const updateParamCalculation = () => {
@@ -262,9 +280,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const saveFolder = gui.addFolder('Saving');
   saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
   saveFolder.add({ generateTestGcode: () => {
-      visualizer.printer.generate_varying_foam_gcode(generateTrialToolpath(visualizer.config.deltaL, new THREE.Vector3(100, 100, 0), visualizer.config.size, 6, 10, 
-        visualizer.config.startHStar, visualizer.config.endHStar, visualizer.config.startVStar, visualizer.config.endVStar), 
-        1, new THREE.Vector3(0, 0, 0), visualizer.config.startHStar, visualizer.config.endHStar, visualizer.config.startVStar, visualizer.config.endVStar);
+      visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
+        visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
+        visualizer.config.endVStarTest), 1, new THREE.Vector3(0, 0, 0));
     }}, 'generateTestGcode').name("Make Test Gcode");
   saveFolder.close();
   

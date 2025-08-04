@@ -1145,6 +1145,7 @@ export function generateTrialToolpath(
     lineLength: number,
     numLines: number,
     purgeDistance: number,
+    threadDiameter: number,
     startHStar: number,
     endHStar: number,
     startVStar: number,
@@ -1176,7 +1177,7 @@ export function generateTrialToolpath(
 
         // Purge at the start
         toolpath.push({
-            point: new THREE.Vector3((-lineLength / 2) - purgeDistance, y, 0),
+            point: new THREE.Vector3((-lineLength / 2) - purgeDistance, y, lineStartHStar * threadDiameter),
             travel: true,
             purge: false,
             hStar: lineStartHStar,
@@ -1188,18 +1189,23 @@ export function generateTrialToolpath(
 
         let x = -lineLength / 2;
         while (x < lineLength / 2) {
+            const pointHStar = lineStartHStar + x * ((lineEndHStar - lineStartHStar) / lineLength);
+            const pointVStar = lineStartVStar + x * ((lineEndVStar - lineStartVStar) / lineLength);
+            const zOffset = pointHStar * threadDiameter;
             toolpath.push({
-                point: new THREE.Vector3(x, y, 0),
+                point: new THREE.Vector3(x, y, zOffset),
                 travel: false,
                 purge: false,
-                hStar: lineStartHStar + x * ((lineEndHStar - lineStartHStar) / lineLength),
-                vStar: lineStartVStar + x * ((lineEndVStar - lineStartVStar) / lineLength),
+                hStar: pointHStar,
+                vStar: pointVStar,
             })
             x += 0.1;
         }
 
+        const endZOffset = lineEndHStar * threadDiameter;
+
         toolpath.push({
-            point: new THREE.Vector3(lineLength / 2, y, 0),
+            point: new THREE.Vector3(lineLength / 2, y, endZOffset),
             travel: false,
             purge: false,
             hStar: lineEndHStar,
