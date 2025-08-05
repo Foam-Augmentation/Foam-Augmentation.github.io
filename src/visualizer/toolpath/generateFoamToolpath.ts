@@ -19,6 +19,7 @@ import {
     extractRegionsFromPointCloud,
     pointAlongLine,
     pointInPolygon,
+    offsetContour,
 } from '../utils/TreeSlicer';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
@@ -1463,7 +1464,7 @@ export function generateAugmentFoamToolpath(
     // ]
     // ]
 
-    const bumpRegions: SliceRegion[] = []
+    const bumpRegions: SliceRegion[] = [];
     const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(samplePoints, 5);
 
     if (modelObj.toolpathConfig.generateBumps) {
@@ -1616,6 +1617,8 @@ export function generateAugmentFoamToolpath(
         }))
     }
 
+
+
     const regionTree = buildRegionTree(sliceRegions, modelObj.toolpathConfig.deltaZ);
     // printTree(regionTree[0]);
     const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
@@ -1623,8 +1626,11 @@ export function generateAugmentFoamToolpath(
 
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
     const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
-        visualizer.printer.useFermatSpirals, visualizer.printer.H_star, visualizer.printer.hStarEnd,
-        visualizer.printer.V_Star, visualizer.printer.vStarEnd, startPoint);
+        visualizer.printer.useFermatSpirals, modelObj.toolpathConfig.hStar, modelObj.toolpathConfig.hStarEnd,
+        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, startPoint);
+    
+    modelObj.geometry.computeBoundingBox();
+    const bbox = modelObj.geometry.boundingBox!;
 
 
     // let indicesToRemove: number[] = [];
@@ -1753,9 +1759,8 @@ export function generateAugmentFoamToolpath(
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(point, 3));
 
             const color = Math.floor(((Math.atan(Math.sqrt(Math.pow(gradientMatrix[i][j].x, 2) + Math.pow(gradientMatrix[i][j].y, 2)))) / (Math.PI / 2)) * 255) / 255;
-            // console.log("AngleX: " + angleX + ", AngleY: " + angleY);
             const material = new THREE.PointsMaterial({
-                color: 0xffffff * color, //+ 0x0000ff * ((angleY + 90) / 180),
+                color: 0xffffff * color
             });
 
             const line = new THREE.Points(geometry, material);
@@ -1868,6 +1873,18 @@ export function generateAugmentFoamToolpath(
         // Intended toolpath needs model position applied
         visualizationGroup.position.copy(modelObj.mesh.position);
     }
+
+    const startPath = [new THREE.Vector3(toolpath[0].point.x, toolpath[0].point.y, bbox.max.z + 10), 
+                       new THREE.Vector3(-modelObj.mesh.position.x, -modelObj.mesh.position.y, bbox.max.z + 10)];
+    
+    startPath.forEach(point => {
+        toolpath.unshift({
+            point: point,
+            travel: true,
+            hStar: 0,
+            vStar: 0,
+        })
+    })
 
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;

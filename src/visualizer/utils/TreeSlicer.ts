@@ -1221,26 +1221,67 @@ export function getBaseContour(mesh: THREE.Mesh): { start: THREE.Vector3; end: T
  * @param {number} offset How much to offset the contour outwards by.
  * @returns {THREE.Vector3[]} The offset contour.
  */
+// export function offsetContour(
+//   contour: THREE.Vector3[],
+//   offset: number,
+// ): THREE.Vector3[] {
+//   const expandedContour: THREE.Vector3[] = [];
+//   for (let i = 0; i < contour.length; i++) {
+//     const point = contour[i];
+
+//     // compute the normal using the two points next to the current point
+//     const tangent = getTangentAtPoint(contour, i);
+//     let norm = new THREE.Vector2(-tangent.y, tangent.x).normalize();
+//     if (getWindingOrder(contour)) {
+//       norm.negate();
+//     }
+
+//     expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
+//                                             point.y + norm.y * offset, 
+//                                             point.z));
+//   }
+//   return expandedContour;
+// }
 export function offsetContour(
   contour: THREE.Vector3[],
-  offset: number,
+  offset: number
 ): THREE.Vector3[] {
-  const expandedContour: THREE.Vector3[] = [];
-  for (let i = 0; i < contour.length; i++) {
-    const point = contour[i];
+  if (contour.length < 3) return [];
 
-    // compute the normal using the two points next to the current point
-    const tangent = getTangentAtPoint(contour, i);
-    let norm = new THREE.Vector2(-tangent.y, tangent.x).normalize();
-    if (getWindingOrder(contour)) {
-      norm.negate();
-    }
+  const path: ClipperLib.IntPoint[] = toClipperPath(contour.map(p => new THREE.Vector2(p.x, p.y)));
 
-    expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
-                                            point.y + norm.y * offset, 
-                                            point.z));
+  const co = new ClipperLib.ClipperOffset(
+    2, 
+    ClipperLib.ClipperOffset.def_arc_tolerance
+  );
+
+  co.AddPath(
+    path,
+    ClipperLib.JoinType.jtRound,
+    ClipperLib.EndType.etClosedPolygon
+  );
+
+  const solution: ClipperLib.Paths = [];
+  co.Execute(solution, offset * CLIPPER_SCALE);
+
+  if (!solution.length) {
+    return [];
   }
-  return expandedContour;
+
+  let best = solution[0];
+  let bestArea = Math.abs(clipperArea(best));
+  for (let i = 1; i < solution.length; i++) {
+    const a = Math.abs(clipperArea(solution[i]));
+    if (a > bestArea) {
+      bestArea = a;
+      best = solution[i];
+    }
+  }
+
+  const result2D = fromClipperPath(best);
+  return result2D.map(pt => 
+    new THREE.Vector3(pt.x, pt.y, contour[0].z)
+  );
 }
 
 

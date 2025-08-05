@@ -82,7 +82,9 @@ export class ViewCube {
             0.1, 100
         );
         this.camera.position.set(4, 4, 4);
+        this.camera.rotation.x = Math.PI / 2;
         this.camera.lookAt(0, 0, 0);
+        // this.camera.rotation.x = Math.PI / 2;
 
         // Setup renderer
         this.renderer = new THREE.WebGLRenderer({
