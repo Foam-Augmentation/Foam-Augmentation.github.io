@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import initScene from './initScene';
 import Printer from '../../printer/Printer'; 
+import { ViewCube } from '../gui/ViewCube';
 
 /**
  * Initializes the Three.js renderer, scene (calls initiScene(), creates light and printer base), 
@@ -25,6 +26,8 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x262626, 1);
+
+    
 
     // Create a new Three.js Scene.
     const scene = new THREE.Scene();
@@ -54,5 +57,12 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
     orbitControls.enableDamping = true;
     orbitControls.dampingFactor = 0.25;
 
-    return { renderer, scene, camera, orbitControls, printBaseObjects };
+    // Create the cube view for the camera
+    const viewCube = new ViewCube(camera, orbitControls, {
+        size: 120,
+        position: { top: 20, right: 20 },
+        opacity: 0.9
+    });
+
+    return { renderer, scene, camera, orbitControls, printBaseObjects, viewCube };
 }

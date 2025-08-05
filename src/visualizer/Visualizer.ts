@@ -17,6 +17,7 @@ import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer from '../printer/Printer';
 import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
+import {ViewCube} from './gui/ViewCube';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
@@ -55,6 +56,8 @@ export default class Visualizer {
 
     public showGcodeVisualization: boolean = false;
     public currentSelectedModel: EverydayModel | null = null;
+    public viewCube: ViewCube;
+
 
     /**
      * Configuration for selection and toolpath parameters.
@@ -149,12 +152,13 @@ export default class Visualizer {
         this.printer = printer;
 
         // Initialize renderer, scene, camera, orbit controls, and printer base objects.
-        const { renderer, scene, camera, orbitControls, printBaseObjects } = initRenderer(this.container, printer);
+        const { renderer, scene, camera, orbitControls, printBaseObjects, viewCube } = initRenderer(this.container, printer);
         this.renderer = renderer;
         this.scene = scene;
         this.camera = camera;
         this.orbitControls = orbitControls;
         this.printBaseObjects = printBaseObjects;
+        this.viewCube = viewCube;
 
         // Initialize transform controls for model manipulation.
         this.transformControls = initTransformControls(this);
@@ -308,6 +312,8 @@ export default class Visualizer {
         // Update the lasso shape scale based on the camera's field of view.
         const yScale = Math.tan(THREE.MathUtils.DEG2RAD * this.camera.fov / 2) * this.lassoState.selectionShape.position.z;
         this.lassoState.selectionShape.scale.set(-yScale * this.camera.aspect, -yScale, 1);
+        // update the orbit controls
+        this.orbitControls.update();
 
         // Render the scene.
         this.renderer.render(this.scene, this.camera);
