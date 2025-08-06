@@ -5,6 +5,9 @@ import { refreshModelGUIList } from '../gui/refreshModelGUIList';
 import { FoamModel, EverydayModel, GUIItem } from '../types/modelTypes';
 import { MeshBVH } from 'three-mesh-bvh';
 
+export interface RGBA { r: number; g: number; b: number; a: number; }
+export interface Gradient {width: number, height: number, sampleColor(x: number, y: number): RGBA}
+
 /**
  * Imports an STL model file and integrates it with the Visualizer.
  *
@@ -107,6 +110,13 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         bumpScale: 1,
                         generateBumps: false,
                     },
+                    gradient: {
+                        width: 1,
+                        height: 1,
+                        sampleColor(x: number, y: number): RGBA {
+                            return {r: 255, b: 255, g: 255, a: 1};
+                        }
+                    }
                     // guiItem: {
                     //     domElement: document.createElement('div') // or any other appropriate initialization
                     // } 
@@ -185,4 +195,53 @@ export function importBumpMesh(
 
     // Programmatically trigger the file input.
     input.click();
+}
+
+
+export function importSvgGradient(modelObj: EverydayModel): void {
+  const input = document.createElement('input');
+  input.type   = 'file';
+  input.accept = '.svg';
+
+  input.addEventListener('change', (ev) => {
+    const files = (ev.target as HTMLInputElement).files;
+    if (!files?.length) return;
+    const file = files[0];
+    const url  = URL.createObjectURL(file);
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src         = url;
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d')!;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+
+      modelObj.gradient = {
+        width:  canvas.width,
+        height: canvas.height,
+
+        sampleColor(x: number, y: number): RGBA {
+          const ix = Math.min(canvas.width  - 1, Math.max(0, Math.floor(x)));
+          const iy = Math.min(canvas.height - 1, Math.max(0, Math.floor(y)));
+          const d  = ctx.getImageData(ix, iy, 1, 1).data;
+          return { r: d[0], g: d[1], b: d[2], a: d[3] };
+        }
+      };
+
+      URL.revokeObjectURL(url);
+    };
+
+    img.onerror = (err) => {
+      console.error('Failed to load SVG for sampling', err);
+      URL.revokeObjectURL(url);
+    };
+  });
+
+  input.click();
 }

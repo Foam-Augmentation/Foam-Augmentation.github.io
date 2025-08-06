@@ -1,5 +1,6 @@
 // src/types/modelTypes.ts
 import * as THREE from 'three';
+import {Gradient} from '../loaders/modelLoader'
 
 /**
  * Represents a GUI item, typically a folder from a GUI library.
@@ -123,6 +124,8 @@ export interface EverydayModel extends BasicModel {
     sensingIntersectModelList?: THREE.Mesh[];
 
     bumpMesh?: THREE.Mesh;
+
+    gradient: Gradient;
 
     /** Toolpath configurations */
     toolpathConfig: ToolpathConfig;

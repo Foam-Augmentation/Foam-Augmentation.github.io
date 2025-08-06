@@ -3,7 +3,7 @@ import { updateEscDiv } from './bottomTooltip';
 import { visualize_All_Layers, generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
-import { importBumpMesh } from '../loaders/modelLoader';
+import { importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 
 // Extend Object3D to include highlightFoamMesh and highlightSenseMesh properties
 declare module 'three' {
@@ -407,6 +407,21 @@ export function addBumpsFolder(
     bumpFolder.close();
 }
 
+export function addGradientFolder(
+    modelGUIitem: GUI,
+    modelObj: EverydayModel,
+): void {
+    const gradientFolder = modelGUIitem.addFolder('gradient settings');
+    gradientFolder.domElement.classList.add('gradient-folder');
+
+    const selectGradient = {
+        selectGradientSVG: () => importSvgGradient(modelObj),
+    };
+
+    gradientFolder.add(selectGradient, 'selectGradientSVG').name("Select Gradient SVG");
+    gradientFolder.close();
+}
+
 
 /**
  * Refreshes the model list displayed in the GUI.
@@ -460,6 +475,7 @@ export function refreshModelGUIList(visualizer: Visualizer, listType: 'foam' | '
             addSelectedMeshFolder(modelGUIitem, modelObj as EverydayModel, visualizer);
             addParamsFolder_EverydayModel(modelGUIitem, modelObj as EverydayModel, visualizer);
             addBumpsFolder(modelGUIitem, modelObj as EverydayModel);
+            addGradientFolder(modelGUIitem, modelObj as EverydayModel);
         }
     });
 }

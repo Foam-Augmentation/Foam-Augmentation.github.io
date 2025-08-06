@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
+import { Gradient } from '../loaders/modelLoader';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import {
     sliceMeshIntoLayers,
@@ -517,6 +518,7 @@ function makeChunkPath(
     endHStar: number,
     startVStar: number,
     endVStar: number,
+    gradient: Gradient,
     fillDist: number = 0.5,
 ): PathPoint[] {
     let lastLayerEndPoint = lastLayerPoint;
@@ -573,7 +575,11 @@ function makeChunkPath(
     chunkPath = fillToolpath(chunkPath, fillDist);
 
     chunkPath.forEach(point => {
-        const percent = foamGradient(point.point, bounds);
+        const scaledX = ((point.point.x - bounds.min.x) / (bounds.max.x - bounds.min.x)) * gradient.width;
+        const scaledY = ((point.point.y - bounds.min.y) / (bounds.max.y - bounds.min.y)) * gradient.height;
+        const sampledColor = gradient.sampleColor(scaledX, scaledY);
+        // Black is 1 white is 0.
+        const percent = 1 - (sampledColor.r + sampledColor.b + sampledColor.g) / (3 * 255);
         point.hStar = startHStar + percent * (endHStar - startHStar);
         point.vStar = startVStar + percent * (endVStar - startVStar);
     })
@@ -601,6 +607,7 @@ function makeChunkTreePath(
     endHStar: number,
     startVStar: number,
     endVStar: number,
+    gradient: Gradient,
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
 ): PathPoint[] {
     let lowestHeight = Infinity;
@@ -638,7 +645,7 @@ function makeChunkTreePath(
             printIndex = i;
         }
     }
-    const chunkPath = makeChunkPath(roots[printIndex], deltaL, lastLayerPoint, useFermatSpirals, startHStar, endHStar, startVStar, endVStar);
+    const chunkPath = makeChunkPath(roots[printIndex], deltaL, lastLayerPoint, useFermatSpirals, startHStar, endHStar, startVStar, endVStar, gradient);
 
     // avoid collissions by only moving to the x and y first, then the z.
     const toolpath: PathPoint[] = chunkPath.length === 0 ? [] : [{
@@ -652,7 +659,7 @@ function makeChunkTreePath(
 
     let restOfPath: PathPoint[] = [];
     if (roots.length) {
-        restOfPath = makeChunkTreePath(roots, deltaL, nozzleHeight, useFermatSpirals, startHStar, endHStar, startVStar, endVStar, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point);
+        restOfPath = makeChunkTreePath(roots, deltaL, nozzleHeight, useFermatSpirals, startHStar, endHStar, startVStar, endVStar, gradient, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point);
     }
 
     // add the path in a for loop to avoid maximum call stack error for super long paths
@@ -976,7 +983,7 @@ export function generateFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
     const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
         visualizer.printer.useFermatSpirals, modelObj.toolpathConfig.hStar, modelObj.toolpathConfig.hStarEnd,
-        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, startPoint);
+        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, modelObj.gradient, startPoint);
 
     toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
     console.log("Created toolpath");
@@ -1627,7 +1634,7 @@ export function generateAugmentFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
     const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
         visualizer.printer.useFermatSpirals, modelObj.toolpathConfig.hStar, modelObj.toolpathConfig.hStarEnd,
-        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, startPoint);
+        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, modelObj.gradient, startPoint);
     
     modelObj.geometry.computeBoundingBox();
     const bbox = modelObj.geometry.boundingBox!;
