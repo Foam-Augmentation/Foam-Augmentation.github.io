@@ -472,7 +472,7 @@ M204 S1000
    * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
    * @returns {string} The generated foam toolpath G-code.
    */
-    public generate_foam_gcode(
+  public generate_foam_gcode(
     toolpath: PathPoint[],
     extruderId: number,
     modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
@@ -497,7 +497,20 @@ M204 S1000
 
       this.V_Star = point.vStar!;
       this.H_star = point.hStar!;
+      this.Edot = point.edot!;
       this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+
+      if (point.switchFilament) {
+        body_gcode.push(
+          `
+
+M600 ; switch filament to TPU
+M104 S${230} ; set extruder temp 
+M109 S${230} ; wait for extruder temp 
+
+          ` // For now it just switches to 230, but can add option for different nozzle temperatures
+        )
+      }
 
       if (point.travel) {
         // if (!nextPoint.travel) {

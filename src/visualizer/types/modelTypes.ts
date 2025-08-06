@@ -130,6 +130,9 @@ export interface EverydayModel extends BasicModel {
     /** Toolpath configurations */
     toolpathConfig: ToolpathConfig;
 
+    plaConfig: ToolpathConfig;
+    plaOffset: number;
+
     /** segments of regular + sensing area */
     all_area_segments?: { point: THREE.Vector3, type: string }[][];
     /** segments of regular area */

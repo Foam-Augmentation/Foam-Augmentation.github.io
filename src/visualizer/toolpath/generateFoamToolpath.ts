@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
-import { EverydayModel } from '../types/modelTypes';
+import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
 import { Gradient } from '../loaders/modelLoader';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import {
@@ -27,9 +27,11 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 export interface PathPoint {
     point: THREE.Vector3;
     travel: boolean;
+    switchFilament?: boolean;
     purge?: boolean;
     hStar?: number;
     vStar?: number;
+    edot?: number;
 }
 
 /**
@@ -405,7 +407,7 @@ function fillToolpath(
 
         if (dist > fillDist) {
             for (let i = 1; i < Math.floor(dist / fillDist); i++) {
-                newPath.push({ point: pointAlongLine(point.point, nextPoint.point, i * fillDist), travel: point.travel });
+                newPath.push({ point: pointAlongLine(point.point, nextPoint.point, i * fillDist), travel: nextPoint.travel });
             }
         }
     }
@@ -511,39 +513,66 @@ function generateRectilinearInfill(
 
 function makeChunkPath(
     chunk: ChunkNode,
-    deltaL: number,
+    config: ToolpathConfig,
+    plaConfig: ToolpathConfig,
+    plaOffset: number,
     lastLayerPoint: THREE.Vector3,
     useFermatSpirals: boolean,
-    startHStar: number,
-    endHStar: number,
-    startVStar: number,
-    endVStar: number,
     gradient: Gradient,
+    modelHeight: number,
     fillDist: number = 0.5,
 ): PathPoint[] {
     let lastLayerEndPoint = lastLayerPoint;
     let chunkPath: PathPoint[] = [];
     let scanX = false;
+    let lastPLA = false;
     for (const region of chunk.regions) {
+        let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / config.deltaZ);
+        const usePLA = regionLayer < plaConfig.initialFoamLayerCount;
+        if (regionLayer === 0 && usePLA) {
+            lastPLA = true;
+        }
+
+        const configToUse = usePLA ? plaConfig : config;
+        
         let path: THREE.Vector3[];
         if (useFermatSpirals) {
-            const insetContoursRoot = generateInsetContourTree(region.contour, region.holes, deltaL);
+            const insetContoursRoot = generateInsetContourTree(
+                usePLA ? offsetContour(region.contour, plaOffset) : region.contour, 
+                region.holes,
+                configToUse.gridSize
+            );
 
             // printTree(insetContoursRoot);
             // console.log("Tree done");
 
-            path = connectIsocontours(insetContoursRoot, deltaL, lastLayerEndPoint);
+            path = connectIsocontours(insetContoursRoot, configToUse.gridSize, lastLayerEndPoint);
         } else {
-            path = generateRectilinearInfill(region.contour, deltaL, scanX, lastLayerEndPoint);
+            path = generateRectilinearInfill(
+                usePLA ? offsetContour(region.contour, plaOffset) : region.contour,
+                configToUse.gridSize, 
+                scanX, 
+                lastLayerEndPoint
+            );
             scanX = !scanX;
         }
+
+        const prevPathLen = chunkPath.length;
 
         chunkPath.push(...path.map(point => {
             return {
                 point: point,
                 travel: false,
+                edot: usePLA ? plaConfig.edot : config.edot,
             }
         }));
+
+        chunkPath[prevPathLen].travel = true;
+
+        if (usePLA != lastPLA) {
+            chunkPath[prevPathLen].switchFilament = true;
+        }
+        lastPLA = usePLA;
 
         lastLayerEndPoint = chunkPath[chunkPath.length - 1].point;
     }
@@ -573,15 +602,21 @@ function makeChunkPath(
     })
 
     chunkPath = fillToolpath(chunkPath, fillDist);
+    
 
     chunkPath.forEach(point => {
+        let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / config.deltaZ);
+
+        const configToUse = pointLayer < plaConfig.initialFoamLayerCount ? plaConfig : config;
+
         const scaledX = ((point.point.x - bounds.min.x) / (bounds.max.x - bounds.min.x)) * gradient.width;
         const scaledY = ((point.point.y - bounds.min.y) / (bounds.max.y - bounds.min.y)) * gradient.height;
         const sampledColor = gradient.sampleColor(scaledX, scaledY);
-        // Black is 1 white is 0.
+        // Black is 1 white is 0
         const percent = 1 - (sampledColor.r + sampledColor.b + sampledColor.g) / (3 * 255);
-        point.hStar = startHStar + percent * (endHStar - startHStar);
-        point.vStar = startVStar + percent * (endVStar - startVStar);
+        point.hStar = configToUse.hStar + percent * (configToUse.hStarEnd - configToUse.hStar);
+        point.vStar = configToUse.vStar + percent * (configToUse.vStarEnd - configToUse.vStar);
+        point.edot = configToUse.edot;
     })
     return chunkPath;
 }
@@ -600,14 +635,13 @@ function makeChunkPath(
  */
 function makeChunkTreePath(
     roots: ChunkNode[],
-    deltaL: number,
+    config: ToolpathConfig,
+    plaConfig: ToolpathConfig,
+    plaOffset: number,
     nozzleHeight: number,
     useFermatSpirals: boolean,
-    startHStar: number,
-    endHStar: number,
-    startVStar: number,
-    endVStar: number,
     gradient: Gradient,
+    modelHeight: number,
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
 ): PathPoint[] {
     let lowestHeight = Infinity;
@@ -645,7 +679,7 @@ function makeChunkTreePath(
             printIndex = i;
         }
     }
-    const chunkPath = makeChunkPath(roots[printIndex], deltaL, lastLayerPoint, useFermatSpirals, startHStar, endHStar, startVStar, endVStar, gradient);
+    const chunkPath = makeChunkPath(roots[printIndex], config, plaConfig, plaOffset, lastLayerPoint, useFermatSpirals, gradient, modelHeight);
 
     // avoid collissions by only moving to the x and y first, then the z.
     const toolpath: PathPoint[] = chunkPath.length === 0 ? [] : [{
@@ -653,13 +687,14 @@ function makeChunkTreePath(
         travel: true,
         hStar: chunkPath[0].hStar,
         vStar: chunkPath[0].vStar,
+        edot: chunkPath[0].edot,
     }];
 
     roots.splice(printIndex, 1, ...roots[printIndex].children);
 
     let restOfPath: PathPoint[] = [];
     if (roots.length) {
-        restOfPath = makeChunkTreePath(roots, deltaL, nozzleHeight, useFermatSpirals, startHStar, endHStar, startVStar, endVStar, gradient, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point);
+        restOfPath = makeChunkTreePath(roots, config, plaConfig, plaOffset, nozzleHeight, useFermatSpirals, gradient, modelHeight, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point);
     }
 
     // add the path in a for loop to avoid maximum call stack error for super long paths
@@ -941,11 +976,28 @@ export function generateFoamToolpath(
     const layers = sliceMeshIntoLayers(modelObj.mesh, modelObj.toolpathConfig.deltaZ);
     console.log('Sliced layers:', layers.length, layers);
     let allRegions: SliceRegion[] = [];
+    let lowestHeight = Infinity;
     for (const { z, segments } of layers) {
         const regions = extractRegionsFromLayer(z, segments);
+        regions.forEach(region => {
+            if (region.height < lowestHeight) {
+                lowestHeight = region.height;
+            }
+        })
         allRegions.push(...regions);
     }
-    console.log('Extracted regions:', allRegions.length, allRegions.slice(0, 5));
+
+    // Set lowest height to 0
+    // allRegions.forEach(region => {
+    //     region.height -= lowestHeight;
+    //     region.contour.forEach(pt => {
+    //         pt.setZ(region.height);
+    //     })
+    //     region.holes.forEach(hole => hole.forEach(pt => {
+    //         pt.setZ(region.height);
+    //     }))
+    // });
+    // console.log('Extracted regions:', allRegions.length, allRegions.slice(0, 5));
 
     // Debug: Log contours for each region
     allRegions.forEach((region, idx) => {
@@ -980,10 +1032,21 @@ export function generateFoamToolpath(
     //     printTree(chunkTree[0]);
     // }
 
+    modelObj.geometry.computeBoundingBox();
+    const modelHeight = modelObj.geometry.boundingBox!.min.z;
+
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
-    const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
-        visualizer.printer.useFermatSpirals, modelObj.toolpathConfig.hStar, modelObj.toolpathConfig.hStarEnd,
-        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, modelObj.gradient, startPoint);
+    const toolpath = makeChunkTreePath(
+        chunkTree,
+        modelObj.toolpathConfig,
+        modelObj.plaConfig,
+        modelObj.plaOffset,
+        visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
+        visualizer.printer.useFermatSpirals,
+        modelObj.gradient, 
+        modelHeight,
+        startPoint
+    );
 
     toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
     console.log("Created toolpath");
@@ -1559,7 +1622,7 @@ export function generateAugmentFoamToolpath(
                 const startIndex = vertexIndex;
                 region.contour.forEach(point => {
                     // top surface
-                    const topHeight = (modelObj.toolpathConfig.initialFoamLayerCount - 1) * modelObj.toolpathConfig.deltaZ;
+                    const topHeight = (modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount - 1) * modelObj.toolpathConfig.deltaZ;
                     bumpVertices.push(point.x, point.y, topHeight);
                     vertexIndex++;
                 });
@@ -1611,7 +1674,7 @@ export function generateAugmentFoamToolpath(
     }
     
 
-    for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount; i++) {
+    for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount; i++) {
         const z = i * modelObj.toolpathConfig.deltaZ;
         sliceRegions.push(...cloudSliceRegions.map(region => {
             return {
@@ -1631,10 +1694,21 @@ export function generateAugmentFoamToolpath(
     const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
     // printTree(chunkTree[0]);
 
+    modelObj.geometry.computeBoundingBox();
+    const modelHeight = modelObj.geometry.boundingBox!.min.z;
+
     const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
-    const toolpath = makeChunkTreePath(chunkTree, modelObj.toolpathConfig.gridSize, visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
-        visualizer.printer.useFermatSpirals, modelObj.toolpathConfig.hStar, modelObj.toolpathConfig.hStarEnd,
-        modelObj.toolpathConfig.vStar, modelObj.toolpathConfig.vStarEnd, modelObj.gradient, startPoint);
+    const toolpath = makeChunkTreePath(
+        chunkTree,
+        modelObj.toolpathConfig,
+        modelObj.plaConfig,
+        modelObj.plaOffset,
+        visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
+        visualizer.printer.useFermatSpirals,
+        modelObj.gradient, 
+        modelHeight,
+        startPoint,
+    );
     
     modelObj.geometry.computeBoundingBox();
     const bbox = modelObj.geometry.boundingBox!;
