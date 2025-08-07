@@ -109,6 +109,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         bumpSpacing: 15,
                         bumpScale: 1,
                         generateBumps: false,
+                        steepnessThreshold: 75,
                     },
                     plaConfig: {
                         deltaZ: 1.16,
@@ -124,6 +125,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         bumpSpacing: 15,
                         bumpScale: 1,
                         generateBumps: false,
+                        steepnessThreshold: 75,
                     },
                     plaOffset: 0,
                     gradient: {

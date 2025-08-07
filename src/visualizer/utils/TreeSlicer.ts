@@ -1179,13 +1179,13 @@ export function generateBoundaryContours(
   const baseContours: THREE.Vector3[][] = connectSegments(getBaseContour(mesh));
 
   // push the contours out by offset
-  const expandedContours: THREE.Vector3[][] = [];
-  for (const contour of baseContours) {
-    expandedContours.push(offsetContour(contour, offset));
-  }
+  const expandedContours: THREE.Vector3[][] = baseContours.map(contour => offsetContour(contour, offset));
 
   // align contour with model
-  expandedContours.forEach(contour => contour.forEach(p => p.add(mesh.position)));
+  expandedContours.forEach(contour => contour.forEach(p => {
+    p.add(mesh.position);
+  }));
+
   return expandedContours;
 }
 

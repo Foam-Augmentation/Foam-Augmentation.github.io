@@ -39,6 +39,7 @@ export function updateSelection(
     const screenCentroid = new THREE.Vector3();
     const faceNormal = new THREE.Vector3();
     const toScreenSpaceMatrix = new THREE.Matrix4();
+    
     // Using Vector4 for homogeneous coordinates.
     const boxPoints: THREE.Vector4[] = new Array(8).fill(null).map(() => new THREE.Vector4());
     const boxLines: THREE.Line3[] = new Array(12).fill(null).map(
@@ -277,6 +278,7 @@ export function updateSelection(
     }
 
     visualizer.currentSelectedModel = modelObj;
+
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);

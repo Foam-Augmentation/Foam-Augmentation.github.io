@@ -613,7 +613,7 @@ function makeChunkPath(
         const scaledY = ((point.point.y - bounds.min.y) / (bounds.max.y - bounds.min.y)) * gradient.height;
         const sampledColor = gradient.sampleColor(scaledX, scaledY);
         // Black is 1 white is 0
-        const percent = 1 - (sampledColor.r + sampledColor.b + sampledColor.g) / (3 * 255);
+        const percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
         point.hStar = configToUse.hStar + percent * (configToUse.hStarEnd - configToUse.hStar);
         point.vStar = configToUse.vStar + percent * (configToUse.vStarEnd - configToUse.vStar);
         point.edot = configToUse.edot;
@@ -960,6 +960,15 @@ export function generateFoamToolpath(
 ): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
     modelObj.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
     modelObj.mesh.scale.setScalar(1);
+    const e = new THREE.Euler(
+        modelObj.mesh.rotation.x,
+        modelObj.mesh.rotation.y,
+        modelObj.mesh.rotation.z,
+        'XYZ'
+    );
+    const q = new THREE.Quaternion().setFromEuler(e);
+    modelObj.mesh.geometry.applyQuaternion(q);
+    modelObj.mesh.rotation.set(0, 0, 0);
     // Remove previous visualization
     if (modelObj.toolpathVisualizationObject) {
         visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -1187,7 +1196,7 @@ function lowerBoundXs(matrix: THREE.Vector3[][], tx: number): number {
     let lo = 0, hi = matrix.length;
     while (lo < hi) {
         const mid = (lo + hi) >>> 1;
-        if (matrix[mid][0].x < tx) lo = mid + 1;
+        if (matrix[mid][0] && matrix[mid][0].x < tx) lo = mid + 1;
         else hi = mid;
     }
     return lo;
@@ -1401,7 +1410,7 @@ export function generateAugmentFoamToolpath(
             if (child.material) child.material.dispose();
         });
     }
-
+    
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
     // --- 2. Check if there are sample points available.
@@ -1485,7 +1494,7 @@ export function generateAugmentFoamToolpath(
     const gradientMatrix = makeGradientMatrix(samplePointMatrix);
     const indicesToRemove: { col: number, row: number }[] = [];
 
-    const gradientThresholdDegrees = 75;
+    const gradientThresholdDegrees = modelObj.toolpathConfig.steepnessThreshold;
     const gradientThreshold = Math.tan(gradientThresholdDegrees * (Math.PI / 180));
 
     for (let i = 0; i < gradientMatrix.length; i++) {
@@ -1836,6 +1845,9 @@ export function generateAugmentFoamToolpath(
         const column = samplePointMatrix[i];
         for (let j = 0; j < column.length; j++) {
             const point = column[j];
+            if (!point) {
+                continue;
+            }
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(point, 3));
 
@@ -1937,9 +1949,11 @@ export function generateAugmentFoamToolpath(
     if (visualizer.printer.checkCollisions) {
         const requiredZOffsetAdditional = getRequiredZOffset(modelObj.mesh, toolpath.map(p => p.point), visualizer.printer.nozzleLength, visualizer.printer.printHeadDims);
         console.log("Required Height: " + requiredZOffsetAdditional);
+        const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
         if (requiredZOffsetAdditional > 0) {
-            const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
             console.warn("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
+        } else {
+            console.log("Lowest possible H* without collisions: " + recommendedHStar);
         }
     }
 
