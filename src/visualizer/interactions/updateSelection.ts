@@ -301,9 +301,29 @@ export function updateSelection(
     console.log("Toolpaths before generating G-Code:", toolpaths.foam);
    // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
     //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
-    console.log(gcode);
-    visualizer.printer.toolpathGcode = gcode;
+    
+    // og
+    // const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
+    // console.log(gcode);
+    // visualizer.printer.toolpathGcode = gcode;
+
+
+    const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
+
+    //generate G-code with start G-code only if first model
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position, isFirstModel);
+
+    //Initialize G-code if empty
+    if (!visualizer.printer.toolpathGcode) {
+        visualizer.printer.toolpathGcode = "";
+    }
+
+    // Append this model's G-code
+    visualizer.printer.toolpathGcode += `; === Model: ${modelObj.name || 'Unnamed'} ===\n`;
+    visualizer.printer.toolpathGcode += `; Parameters: hStar=${modelObj.toolpathConfig.hStar}, vStar=${modelObj.toolpathConfig.vStar}, deltaZ=${modelObj.toolpathConfig.deltaZ}, gridSize=${modelObj.toolpathConfig.gridSize}, edot=${modelObj.toolpathConfig.edot}\n`;
+
+    visualizer.printer.toolpathGcode += gcode;
+    visualizer.printer.toolpathGcode += "\n";
 
     console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
 

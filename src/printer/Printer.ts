@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import {generateBoundaryContours} from "../visualizer/utils/TreeSlicer";
-import {ToolpathConfig} from "../visualizer/types/modelTypes";
-import {PathPoint} from "../visualizer/toolpath/generateFoamToolpath";
+import { generateBoundaryContours } from "../visualizer/utils/TreeSlicer";
+import { ToolpathConfig } from "../visualizer/types/modelTypes";
+import { PathPoint } from "../visualizer/toolpath/generateFoamToolpath";
 import Visualizer from "../visualizer/Visualizer";
 
 
@@ -55,7 +55,7 @@ export default class Printer {
   public purgeLine: boolean;
   public checkCollisions: boolean;
 
-  public printHeadDims: {min: THREE.Vector2, max: THREE.Vector2};
+  public printHeadDims: { min: THREE.Vector2, max: THREE.Vector2 };
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -87,8 +87,8 @@ export default class Printer {
     this.generateBoundary = true;
     this.purgeLine = true;
     this.checkCollisions = false;
-    this.printHeadDims = {min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70)}
-   
+    this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
+
     this.end_gcode = `
 G4 S5; Dwell for 5 Second(s) 
 M104 S0 ; turn off temperature 
@@ -253,7 +253,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
           
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" +  this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.2), new THREE.Vector3(105, 5, 0.2)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.2), new THREE.Vector3(105, 5, 0.2)) : "");
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -350,7 +350,7 @@ M204 S1000
   }
 
 
-  private extrude_regular_segment (
+  private extrude_regular_segment(
     p0: THREE.Vector3,
     p1: THREE.Vector3,
   ): string {
@@ -387,7 +387,7 @@ M204 S1000
       boundaryGcode.push(`G0 X${firstPoint.x.toFixed(6)} Y${firstPoint.y.toFixed(6)} Z${firstPoint.z.toFixed(6)}
                           F${this.printHead_speed_when_free_move}`) // move to first point in contour
       for (let i = 0; i < expandedContour.length; i++) {
-        const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 -expandedContour.length] : expandedContour[i +  1];
+        const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 - expandedContour.length] : expandedContour[i + 1];
         const point = expandedContour[i];
         boundaryGcode.push(
           this.extrude_regular_segment(
@@ -472,11 +472,13 @@ M204 S1000
    * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
    * @returns {string} The generated foam toolpath G-code.
    */
-  public generate_foam_gcode(
-    toolpath: PathPoint[],
-    extruderId: number,
-    modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
-  ): string {
+  // public generate_foam_gcode(
+  //   toolpath: PathPoint[],
+  //   extruderId: number,
+  //   modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
+  // )
+  generate_foam_gcode(toolpath: any, extruderId: number, modelPosition: THREE.Vector3, includeStart: boolean = true)
+    : string {
     if (toolpath.length === 0) {
       console.error("Toolpath is empty.");
       return "";
@@ -582,16 +584,27 @@ M109 S${230} ; wait for extruder temp
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
 
-    this.toolpathGcode =
-      this.build_start_gcode(extruderId) +
-      "\n\n" +
-      this.boundaryGcode + 
-      "\n\n" +
-      body_gcode.join("\n") +
-      "\n\n" +
-      this.end_gcode;
 
-    return this.toolpathGcode;
+    //og
+    // this.toolpathGcode =
+    //   this.build_start_gcode(extruderId) +
+    //   "\n\n" +
+    //   this.boundaryGcode +
+    //   "\n\n" +
+    //   body_gcode.join("\n") +
+    //   "\n\n" +
+    //   this.end_gcode;
+
+    // return this.toolpathGcode;
+
+
+    let gcode = "";
+    if (includeStart) {
+      gcode += this.build_start_gcode(extruderId) + "\n\n";
+    }
+    gcode += this.boundaryGcode + "\n\n";
+    gcode += body_gcode.join("\n");
+    return gcode;
   }
 
 
