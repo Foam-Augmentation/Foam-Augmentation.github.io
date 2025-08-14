@@ -324,8 +324,9 @@ export default class Visualizer {
         console.log("G-code content:", gcode);
         console.log("saveToolpathGcodeToFile called");
         if (gcode) {
-            this.printer.toolpathGcode += this.printer.end_gcode;
-            saveGcodeToFile(this.printer.toolpathGcode, name);  //originally was just gcode but didnt getupdated stuff
+            // this.printer.toolpathGcode += this.printer.end_gcode;
+            // saveGcodeToFile(this.printer.toolpathGcode, name);  //originally was just gcode but didnt getupdated stuff
+            saveGcodeToFile(gcode, name);
         }
     }
 

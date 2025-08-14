@@ -278,6 +278,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
  
   
   const saveFolder = gui.addFolder('Saving');
+  visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
   saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
   saveFolder.add({ generateTestGcode: () => {
       visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
