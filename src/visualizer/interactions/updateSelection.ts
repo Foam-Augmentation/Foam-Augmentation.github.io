@@ -287,7 +287,7 @@ export function updateSelection(
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
     if (visualizer.printer.generateBoundary) {
-        visualizer.printer.generate_boundary_gcode(modelObj.mesh, 2);
+        visualizer.printer.generate_boundary_gcode([modelObj.mesh] as THREE.Mesh[], 1);
     } else {
         visualizer.printer.boundaryGcode = "";
     }
@@ -311,7 +311,7 @@ export function updateSelection(
     const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
 
     //generate G-code with start G-code only if first model
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position, isFirstModel);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, isFirstModel);
 
     //Initialize G-code if empty
     if (!visualizer.printer.toolpathGcode) {

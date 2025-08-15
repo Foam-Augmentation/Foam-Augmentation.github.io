@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import ClipperLib from 'clipper-lib';
 import Delaunator from 'delaunator';
-
+import { ToolpathConfig, EverydayModel } from '../types/modelTypes';
 
 
 const CLIPPER_SCALE = 1000;
@@ -29,6 +29,7 @@ export interface ChunkNode {
   regions: SliceRegion[];
   children: ChunkNode[];
   parent: ChunkNode | null;
+  modelObj?: EverydayModel;
 }
 
 export interface PrintChunk {
@@ -54,7 +55,7 @@ export function sliceMeshIntoLayers(mesh: THREE.Mesh, deltaZ: number): { z: numb
     
     const minZ = bbox.min.z + 0.00001;
     console.log("Minz: " + minZ);
-    const maxZ = bbox.max.z + 0.000011;
+    const maxZ = bbox.max.z - 0.00001;
     const layers: { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] = [];
     
     // go from bottom to top, slice every deltaZ

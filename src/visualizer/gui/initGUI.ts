@@ -8,6 +8,7 @@ import { importSTLModel } from '../loaders/modelLoader';
 import { generateFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
+import {EverydayModel} from '../types/modelTypes';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -283,7 +284,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   saveFolder.add({ generateTestGcode: () => {
       visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
         visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
-        visualizer.config.endVStarTest), 1, new THREE.Vector3(0, 0, 0));
+        visualizer.config.endVStarTest), 1);
     }}, 'generateTestGcode').name("Make Test Gcode");
   saveFolder.close();
   
@@ -293,44 +294,27 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   treeSlicerFolder.add({ sliceModel: () => {
     console.log('Slice Model button clicked');
 
-    if (visualizer.everydayModelList.length > 0) {
-      visualizer.currentSelectedModel = visualizer.everydayModelList[0];
-    }
-
-    if (!visualizer.currentSelectedModel) {
-        console.warn('No model selected. Please select a model first.');
-        return;
-    }
-
-    visualizer.printer.updateParameters(visualizer.currentSelectedModel.toolpathConfig);
-
-    console.log('Selected model:', visualizer.currentSelectedModel);
-    console.log('Selected model mesh:', visualizer.currentSelectedModel.mesh);
-    console.log('Selected model position:', visualizer.currentSelectedModel.mesh.position);
+    const models: EverydayModel[] = visualizer.everydayModelList.map(model => model as EverydayModel);
 
     if (visualizer.printer.generateBoundary) {
-      visualizer.printer.generate_boundary_gcode(visualizer.currentSelectedModel.mesh, 1);
+      visualizer.printer.generate_boundary_gcode(models.map(model => model.mesh), 1);
     } else {
       visualizer.printer.boundaryGcode = "";
     }
     
     // Generate toolpath
     console.log('Generating toolpath...');
-    const toolpath = generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+    const toolpath = generateFoamToolpath(visualizer, models);
     console.log('Generated toolpath:', toolpath);
     
     if (!toolpath || !toolpath.foam) {
         console.warn('Failed to generate toolpath. Please try again.');
         return;
     }
-
-    if (visualizer.printer.generateBoundary) {
-
-    }
     
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1, visualizer.currentSelectedModel.mesh.position);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1);
     console.log('Generated G-code:', gcode);
     
     // Save G-code file

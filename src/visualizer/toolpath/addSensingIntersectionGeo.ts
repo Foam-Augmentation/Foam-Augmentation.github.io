@@ -4,7 +4,7 @@ import { EverydayModel } from '../types/modelTypes';
 import { createSelectedMeshFromHighlight } from '../interactions/createSelectedMeshFromHighlight';
 import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
-import { generateFoamToolpath } from './generateFoamToolpath';
+import { generateAugmentFoamToolpath } from './generateFoamToolpath';
 
 /**
  * Adds a sensing intersection geometry to an EverydayModel.
@@ -253,5 +253,5 @@ function _updateSenseIntersectionRegion(
   
   updateSelectedMeshBoundingBox(visualizer, modelObj);
   sampleSelectedMesh(visualizer, modelObj);
-  generateFoamToolpath(visualizer, modelObj);
+  generateAugmentFoamToolpath(visualizer, modelObj);
 }

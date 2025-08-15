@@ -372,17 +372,20 @@ M204 S1000
    * @returns {string} The gcode as a string.
    */
   public generate_boundary_gcode(
-    mesh: THREE.Mesh,
+    meshs: THREE.Mesh[],
     offset: number = 1,
   ): string {
-    const expandedContours = generateBoundaryContours(mesh, offset);
-
-    expandedContours.forEach(contour => contour.forEach(point => point.setZ(point.z + 0.17)));
+    const contours: THREE.Vector3[][] = [];
+    meshs.forEach(mesh => {
+      const expandedContours = generateBoundaryContours(mesh, offset);
+      expandedContours.forEach(contour => contour.forEach(point => point.setZ(point.z)));
+      contours.push(...expandedContours);
+    })
 
     let boundaryGcode: string[] = [];
 
     // create gcode for following the expanded contours
-    for (const expandedContour of expandedContours) {
+    for (const expandedContour of contours) {
       const firstPoint = expandedContour[0];
       boundaryGcode.push(`G0 X${firstPoint.x.toFixed(6)} Y${firstPoint.y.toFixed(6)} Z${firstPoint.z.toFixed(6)}
                           F${this.printHead_speed_when_free_move}`) // move to first point in contour
@@ -477,7 +480,7 @@ M204 S1000
   //   extruderId: number,
   //   modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
   // )
-  generate_foam_gcode(toolpath: any, extruderId: number, modelPosition: THREE.Vector3, includeStart: boolean = true)
+  public generate_foam_gcode(toolpath: any, extruderId: number, includeStart: boolean = true)
     : string {
     if (toolpath.length === 0) {
       console.error("Toolpath is empty.");
@@ -486,7 +489,7 @@ M204 S1000
 
     let body_gcode: string[] = [];
     // Apply model position to first point
-    let firstPoint = toolpath[0].point.clone().add(modelPosition);
+    let firstPoint = toolpath[0].point.clone();
     let lastTarget: THREE.Vector3 = firstPoint;
 
     body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
@@ -495,7 +498,7 @@ M204 S1000
     for (let i = 0; i < toolpath.length; i++) {
       const point = toolpath[i];
       const nextPoint = toolpath[(i + 1) % toolpath.length];
-      const currentPoint = point.point.clone().add(modelPosition);
+      const currentPoint = point.point.clone();
 
       this.V_Star = point.vStar!;
       this.H_star = point.hStar!;

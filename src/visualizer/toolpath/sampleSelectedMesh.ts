@@ -29,10 +29,10 @@ export function sampleSelectedMesh(visualizer: Visualizer, modelObj: any): void 
     modelObj.toolpathSamplePoints = [];
     modelObj.selectedRegularFoamMesh.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
     const e = new THREE.Euler(
-    modelObj.mesh.rotation.x,
-    modelObj.mesh.rotation.y,
-    modelObj.mesh.rotation.z,
-    'XYZ'
+        modelObj.mesh.rotation.x,
+        modelObj.mesh.rotation.y,
+        modelObj.mesh.rotation.z,
+        'XYZ'
     );
     const q = new THREE.Quaternion().setFromEuler(e);
     modelObj.selectedRegularFoamMesh.geometry.applyQuaternion(q);
