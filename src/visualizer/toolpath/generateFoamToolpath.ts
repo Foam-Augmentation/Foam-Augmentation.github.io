@@ -1811,10 +1811,11 @@ export function generateAugmentFoamToolpath(
         // Can comment out from here until the end of the section mark if this is not wanted
         // Suppose to slightly flatten everything until the top is a flat plane
         const pointZOffset = toolpath[i].hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
-        // new trying
-        // // Calculate flat top plane height (highest Z in the model + some clearance)
-       
-        const flatTopHeight = bbox.max.z + modelObj.toolpathConfig.deltaZ * 2;
+        // // new trying
+        // // // Calculate flat top plane height (highest Z in the model + some clearance)
+        const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount;
+
+        const flatTopHeight = (bbox.max.z + modelObj.toolpathConfig.deltaZ * totalLayers);
 
         // 2. Get curved bottom height at this XY positin
         let curvedBottomHeight = getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position));
@@ -1823,36 +1824,21 @@ export function generateAugmentFoamToolpath(
         const distanceBetweenSurfaces = flatTopHeight - curvedBottomHeight;
 
         // 4. get increment per layer by dividing
-        const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount;
         const incrementPerLayer = distanceBetweenSurfaces / (totalLayers - 1);
 
         // 5 increment by the amt
-        const currentLayerZ = toolpath[i].point.z;
+        const currentLayerZ = point.z - modelObj.mesh.position.z;
         const layerNumber = Math.round(currentLayerZ / modelObj.toolpathConfig.deltaZ);
         const heightIncrement = incrementPerLayer * layerNumber;
 
         // 6. apply final height
         const targetHeight = curvedBottomHeight + heightIncrement;
 
-        point.setZ(targetHeight + pointZOffset);
+        point.setZ(modelObj.mesh.position.z + targetHeight + pointZOffset);
         // End of new trying
         // Can comment out until here
 
-        // og was not commented out
-        // if (nearestPoints.length >= 3) {
-        //     let addZ = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], point.x, point.y);
-        //     if (!addZ) {
-        //         addZ = nearestPoints[0].z;
-        //         // indicesToRemove.push(i);
-        //     }
-        //     point.setZ(point.z + addZ + pointZOffset);
-        // } else if (nearestPoints.length >= 1) {
-        //     point.setZ(point.z + nearestPoints[0].z + pointZOffset);
-        //     // indicesToRemove.push(i);
-        // } else {
-        //     console.warn("Not able to find any points");
-        //     // indicesToRemove.push(i);
-        // }
+        // point.setZ(point.z + getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position)) + pointZOffset);
     }
 
     // indicesToRemove.sort((a, b) => b - a);

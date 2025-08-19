@@ -97,7 +97,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                     transformZ: { z: parseFloat(mesh.position.z.toFixed(2)) },
                     toolpathConfig: {
                         deltaZ: 1.16,
-                        gridSize: 1.7,
+                        gridSize: 1,
                         deltaL: 1.7,
                         vStar: 0.15,
                         vStarEnd: 0.15,
@@ -115,7 +115,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                     },
                     plaConfig: {
                         deltaZ: 1.16,
-                        gridSize: 1.7,
+                        gridSize: 1,
                         deltaL: 1.7,
                         vStar: 0.15,
                         vStarEnd: 0.15,
