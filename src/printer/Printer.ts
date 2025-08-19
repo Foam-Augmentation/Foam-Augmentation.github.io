@@ -84,7 +84,7 @@ export default class Printer {
     this.H_star = 6.0
     this.hStarEnd = 6.0;
     this.useFermatSpirals = false;
-    this.generateBoundary = true;
+    this.generateBoundary = false;
     this.purgeLine = true;
     this.checkCollisions = false;
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
@@ -253,7 +253,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
           
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(105, 5, 0.1)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) : "");
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -292,7 +292,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
 
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(0, 0, 0.1), new THREE.Vector3(50, 0, 0.1)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) : "");
     }
   }
 

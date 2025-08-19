@@ -339,7 +339,8 @@ export function addParamsFolder_EverydayModel(
     paramsFolder.add(modelObj.toolpathConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size (deltaL)').onChange(() => {
+    paramsFolder.add(modelObj.toolpathConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size').onChange(() => {
         sampleSelectedMesh(visualizer, modelObj);
         // generateFoamToolpath(visualizer, modelObj);
     });

@@ -98,6 +98,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                     toolpathConfig: {
                         deltaZ: 1.16,
                         gridSize: 1.7,
+                        deltaL: 1.7,
                         vStar: 0.15,
                         vStarEnd: 0.15,
                         hStar: 9,
@@ -115,6 +116,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                     plaConfig: {
                         deltaZ: 1.16,
                         gridSize: 1.7,
+                        deltaL: 1.7,
                         vStar: 0.15,
                         vStarEnd: 0.15,
                         hStar: 9,

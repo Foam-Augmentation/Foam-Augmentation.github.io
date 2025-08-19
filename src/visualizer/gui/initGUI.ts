@@ -5,7 +5,7 @@ import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
-import { generateFoamToolpath, generateNonPlanarFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
+import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import {EverydayModel} from '../types/modelTypes';
@@ -293,7 +293,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     }}, 'generateTestGcode').name("Make Test Gcode");
   saveFolder.add({ generateTestGcode: () => {
     const model = visualizer.everydayModelList[0];
-    model.gcode = visualizer.printer.generate_foam_gcode(generateNonPlanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
+    model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
   }}, 'generateTestGcode').name("Make Nonplanar Gcode");
   saveFolder.close();
   

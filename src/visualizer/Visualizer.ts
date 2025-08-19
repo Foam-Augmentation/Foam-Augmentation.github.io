@@ -209,7 +209,7 @@ export default class Visualizer {
             currentSelectedModel: null,
             useTreeSlicer: false,
             useFermatSpirals: false,
-            generateBoundary: true,
+            generateBoundary: false,
             purgeLine: true,
             checkCollisions: false,
             printHeadMinX: -40,

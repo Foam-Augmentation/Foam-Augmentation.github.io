@@ -568,17 +568,17 @@ function makeChunkPath(
             const insetContoursRoot = generateInsetContourTree(
                 usePLA ? offsetContour(region.contour, plaOffset) : region.contour, 
                 region.holes,
-                configToUse.gridSize
+                configToUse.deltaL
             );
 
             // printTree(insetContoursRoot);
             // console.log("Tree done");
 
-            path = connectIsocontours(insetContoursRoot, configToUse.gridSize, lastLayerEndPoint);
+            path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
         } else {
             path = generateRectilinearInfill(
                 usePLA ? offsetContour(region.contour, plaOffset) : region.contour,
-                configToUse.gridSize, 
+                configToUse.deltaL, 
                 scanX,
                 lastLayerEndPoint
             );
@@ -1112,33 +1112,6 @@ export function generateFoamToolpath(
 }
 
 
-function lowerBoundXs(matrix: THREE.Vector3[][], tx: number): number {
-    let lo = 0, hi = matrix.length;
-    while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (matrix[mid][0] && matrix[mid][0].x < tx) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
-}
-
-function lowerBoundYs(row: THREE.Vector3[], ty: number): number {
-    let lo = 0, hi = row.length;
-    while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (row[mid].y < ty) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
-}
-
-function squaredXYDist(a: THREE.Vector3, b: THREE.Vector3): number {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return dx * dx + dy * dy;
-}
-
-
 export function generateTrialToolpath(
     deltaL: number,
     position: THREE.Vector3,
@@ -1234,6 +1207,35 @@ export function generateTrialToolpath(
 }
 
 
+function lowerBoundXs(matrix: THREE.Vector3[][], tx: number): number {
+    let lo = 0, hi = matrix.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (matrix[mid][0] && matrix[mid][0].x < tx) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+
+function lowerBoundYs(row: THREE.Vector3[], ty: number): number {
+    let lo = 0, hi = row.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (row[mid].y < ty) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+
+function squaredXYDist(a: THREE.Vector3, b: THREE.Vector3): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+}
+
+
 function findNearestPoints(
     matrix: THREE.Vector3[][],
     target: THREE.Vector3,
@@ -1281,11 +1283,42 @@ function getPlaneHeightAtXY(
     const { x: nx, y: ny, z: nz } = plane.normal;
     const d = plane.constant;
 
-    if (nz === 0) {
+    if (Math.abs(nz) <= 0.0001) {
         return NaN;
     }
 
     return -(nx * x + ny * y + d) / nz;
+}
+
+
+function getPointHeight(
+    matrix: THREE.Vector3[][],
+    point: THREE.Vector3
+): number {
+    const nearestPoints = findNearestPoints(matrix, point, 3);
+
+    if (nearestPoints.length >= 3) {
+        let height = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], point.x, point.y);
+        if (!height) {
+            const line = new THREE.Line3(nearestPoints[0], nearestPoints[2]);
+
+            const closest = new THREE.Vector3();
+            line.closestPointToPoint(point, true, closest);
+            height = closest.z;
+        }
+        return height
+    } else if (nearestPoints.length >= 2) {
+        const line = new THREE.Line3(nearestPoints[0], nearestPoints[1]);
+
+        const closest = new THREE.Vector3();
+        line.closestPointToPoint(point, true, closest);
+        return closest.z;
+    } else if (nearestPoints.length >= 1) {
+        return nearestPoints[0].z;
+    }
+
+    console.warn("Not able to find any points");
+    return 0;
 }
 
 
@@ -1358,7 +1391,7 @@ export function generateNonplanarFoamToolpath(
 
 
         for (const region of cloudSliceRegions) {
-            const infill = generateRectilinearInfill(region.contour, modelObj.toolpathConfig.gridSize, scanX, lastLayerEndPoint);
+            const infill = generateRectilinearInfill(region.contour, modelObj.toolpathConfig.deltaL, scanX, lastLayerEndPoint);
             let regionToolpath: PathPoint[] = [];
             const beforeLength = regionToolpath.length;
             regionToolpath.push(...infill.map(p => {
@@ -1371,31 +1404,27 @@ export function generateNonplanarFoamToolpath(
 
             regionToolpath = fillToolpath(regionToolpath, 0.5);
 
+            const gradient = modelObj.gradient;
             for (const point of regionToolpath) {
-                point.hStar = modelObj.toolpathConfig.hStar;
-                point.vStar = modelObj.toolpathConfig.vStar;
+                const scaledX = ((point.point.x - bbox.min.x) / (bbox.max.x - bbox.min.x)) * gradient.width;
+                const scaledY = ((point.point.y - bbox.min.y) / (bbox.max.y - bbox.min.y)) * gradient.height;
+                const sampledColor = gradient.sampleColor(scaledX, scaledY);
+                // Black is 1 white is 0
+                const percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
+                point.hStar = modelObj.toolpathConfig.hStar + percent * (modelObj.toolpathConfig.hStarEnd - modelObj.toolpathConfig.hStar);
+                point.vStar = modelObj.toolpathConfig.vStar + percent * (modelObj.toolpathConfig.vStarEnd - modelObj.toolpathConfig.vStar);
                 point.edot = modelObj.toolpathConfig.edot;
             }
 
             // Curve infill
             for (let i = 0; i < regionToolpath.length; i++) {
                 const point = regionToolpath[i].point;
-                const nearestPoints = findNearestPoints(samplePointMatrix, point.clone().sub(modelObj.mesh.position), 3);
 
                 const pointZOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
 
-                if (nearestPoints.length >= 3) {
-                    let addZ = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], 
-                        point.x - modelObj.mesh.position.x, point.y - modelObj.mesh.position.y);
-                    if (!addZ) {
-                        addZ = nearestPoints[0].z;
-                    }
-                    point.setZ(addZ + pointZOffset);
-                } else if (nearestPoints.length >= 1) {
-                    point.setZ(nearestPoints[0].z + pointZOffset);
-                } else {
-                    console.warn("Not able to find any points");
-                }
+                const pointHeight = getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position))
+
+                point.setZ(pointHeight + pointZOffset);
             }
 
             lastLayerEndPoint = infill[infill.length - 1];
@@ -1778,7 +1807,6 @@ export function generateAugmentFoamToolpath(
     // let indicesToRemove: number[] = [];
     for (let i = 0; i < toolpath.length; i++) {
         const point = toolpath[i].point;
-        const nearestPoints = findNearestPoints(samplePointMatrix, point, 3);
         
         // Can comment out from here until the end of the section mark if this is not wanted
         // Suppose to slightly flatten everything until the top is a flat plane
@@ -1789,14 +1817,7 @@ export function generateAugmentFoamToolpath(
         const flatTopHeight = bbox.max.z + modelObj.toolpathConfig.deltaZ * 2;
 
         // 2. Get curved bottom height at this XY positin
-        let curvedBottomHeight: number;
-        if (nearestPoints.length >= 3) {
-            curvedBottomHeight = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], point.x, point.y) || nearestPoints[0].z;
-        } else if (nearestPoints.length >= 1) {
-            curvedBottomHeight = nearestPoints[0].z;
-        } else {
-            curvedBottomHeight = 0;
-        }
+        let curvedBottomHeight = getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position));
 
         // 3. Calculate distance between the thet two
         const distanceBetweenSurfaces = flatTopHeight - curvedBottomHeight;

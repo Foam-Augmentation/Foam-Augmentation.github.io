@@ -67,6 +67,7 @@ export interface ToolpathConfig {
     // zOffset: number;
     /** grid size */
     gridSize: number;
+    deltaL: number;
     /** die swell */
     // dieSwell: number;
     // sandwiched structure
