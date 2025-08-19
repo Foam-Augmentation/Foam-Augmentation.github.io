@@ -34,7 +34,7 @@ export default class Printer {
   /** Stores the generated boundary G-code */
   public boundaryGcode: string;
   /** Stores the generated toolpath G-code */
-  public toolpathGcode: string;
+  // public toolpathGcode: string;
   /** End G-code string */
   public end_gcode: string;
 
@@ -73,7 +73,7 @@ export default class Printer {
     this.machine_depth_y = 210; // machine y axis length
     this.machine_height = 220; // machine height (max z)
     this.boundaryGcode = ""; // initialize boundary G-code
-    this.toolpathGcode = ""; // initialize toolpath G-code
+    // this.toolpathGcode = ""; // initialize toolpath G-code
     this.diameter_filament = 1.75;
     this.V_Star = 0.15;
     this.vStarEnd = 0.15;
@@ -144,7 +144,7 @@ M73 P100 R0 ; progress to 100%`
    * @param {number} extruderId - The extruder ID (1 for left extruder, any other value for right extruder).
    * @returns {string} The starting G-code string.
    */
-  private build_start_gcode(extruderId: number): string {
+  public build_start_gcode(extruderId: number): string {
     if (extruderId === 1) {
       // Left extruder (TPU)
       //       return `
@@ -253,7 +253,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
           
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.2), new THREE.Vector3(105, 5, 0.2)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(105, 5, 0.1)) : "");
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -292,7 +292,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
 
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(0, 0, 0.2), new THREE.Vector3(50, 0, 0.2)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(0, 0, 0.1), new THREE.Vector3(50, 0, 0.1)) : "");
     }
   }
 
@@ -376,6 +376,20 @@ M204 S1000
     offset: number = 1,
   ): string {
     const contours: THREE.Vector3[][] = [];
+    meshs.forEach(mesh => {
+      mesh.geometry.scale(mesh.scale.x, mesh.scale.y, mesh.scale.z);
+      mesh.scale.setScalar(1);
+      const e = new THREE.Euler(
+          mesh.rotation.x,
+          mesh.rotation.y,
+          mesh.rotation.z,
+          'XYZ'
+      );
+      const q = new THREE.Quaternion().setFromEuler(e);
+      mesh.geometry.applyQuaternion(q);
+      mesh.rotation.set(0, 0, 0);
+    });
+
     meshs.forEach(mesh => {
       const expandedContours = generateBoundaryContours(mesh, offset);
       expandedContours.forEach(contour => contour.forEach(point => point.setZ(point.z)));
@@ -602,11 +616,12 @@ M109 S${230} ; wait for extruder temp
 
 
     let gcode = "";
-    if (includeStart) {
-      gcode += this.build_start_gcode(extruderId) + "\n\n";
-    }
+    // if (includeStart) {
+    //   gcode += this.build_start_gcode(extruderId) + "\n\n";
+    // }
     gcode += this.boundaryGcode + "\n\n";
-    gcode += body_gcode.join("\n");
+    gcode += body_gcode.join("\n") + "\n\n";
+    // gcode += this.end_gcode;
     return gcode;
   }
 

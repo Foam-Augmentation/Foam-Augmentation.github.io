@@ -28,7 +28,6 @@ export interface PathPoint {
     point: THREE.Vector3;
     travel: boolean;
     switchFilament?: boolean;
-    purge?: boolean;
     hStar?: number;
     vStar?: number;
     edot?: number;
@@ -398,21 +397,47 @@ function fillToolpath(
     const newPath: PathPoint[] = [];
     for (let i = 0; i < toolpath.length - 1; i++) {
         const point = toolpath[i];
-        const nextPoint = toolpath[i + 1]
+        const nextPoint = toolpath[i + 1];
         newPath.push(point);
         const dist = point.point.distanceTo(nextPoint.point);
 
         if (dist > fillDist) {
             for (let i = 1; i < Math.floor(dist / fillDist); i++) {
-                newPath.push({ 
+                newPath.push({
                     point: pointAlongLine(point.point, nextPoint.point, i * fillDist), 
-                    travel: nextPoint.travel
+                    travel: nextPoint.travel,
                 });
             }
         }
     }
 
     newPath.push(toolpath[toolpath.length - 1])
+    return newPath;
+}
+
+
+function fillContour(
+    contour: THREE.Vector3[],
+    fillDist: number
+): THREE.Vector3[] {
+    const newPath: THREE.Vector3[] = [];
+    for (let i = 0; i < contour.length - 1; i++) {
+        const point = contour[i];
+        const nextPoint = contour[i + 1];
+        newPath.push(point);
+        const dist = point.distanceTo(nextPoint);
+
+        if (dist > fillDist) {
+            for (let i = 1; i < Math.floor(dist / fillDist); i++) {
+                newPath.push(pointAlongLine(point, nextPoint, i * fillDist));
+                if (!newPath[newPath.length - 1]) {
+                    console.log("Undefined point");
+                }
+            }
+        }
+    }
+
+    newPath.push(contour[contour.length - 1])
     return newPath;
 }
 
@@ -528,10 +553,11 @@ function makeChunkPath(
     const modelHeight = height ? height : chunk.modelObj!.geometry.boundingBox!.min.z;
     const plaOffset = chunk.modelObj!.plaOffset;
     const gradient = chunk.modelObj!.gradient;
+    let count = 0;
     for (const region of chunk.regions) {
         let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / config.deltaZ);
         const usePLA = regionLayer < plaConfig.initialFoamLayerCount;
-        if (regionLayer === 0 && usePLA) {
+        if (count === 0 && usePLA) {
             lastPLA = true;
         }
 
@@ -557,6 +583,15 @@ function makeChunkPath(
                 lastLayerEndPoint
             );
             scanX = !scanX;
+            for (const point in path) {
+                if (!point) {
+                    console.log("Undefined point");
+                }
+            }
+        }
+
+        if (!path.length) {
+            continue;
         }
 
         const prevPathLen = chunkPath.length;
@@ -569,7 +604,9 @@ function makeChunkPath(
             }
         }));
 
-        chunkPath[prevPathLen].travel = true;
+        if (chunkPath[prevPathLen]) {
+            chunkPath[prevPathLen].travel = true;
+        }
 
         if (usePLA != lastPLA) {
             chunkPath[prevPathLen].switchFilament = true;
@@ -577,6 +614,11 @@ function makeChunkPath(
         lastPLA = usePLA;
 
         lastLayerEndPoint = chunkPath[chunkPath.length - 1].point;
+        count++;
+    }
+
+    if (!chunkPath.length) {
+        return chunkPath;
     }
     chunkPath[0].travel = true;
 
@@ -601,11 +643,11 @@ function makeChunkPath(
         if (pt.z < bounds.min.z) {
             bounds.min.setZ(pt.z);
         }
-    })
+    });
 
     chunkPath = fillToolpath(chunkPath, fillDist);
-    
 
+    // Apply gradient
     chunkPath.forEach(point => {
         let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / config.deltaZ);
 
@@ -615,7 +657,7 @@ function makeChunkPath(
         const scaledY = ((point.point.y - bounds.min.y) / (bounds.max.y - bounds.min.y)) * gradient.height;
         const sampledColor = gradient.sampleColor(scaledX, scaledY);
         // Black is 1 white is 0
-        const percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
+        const percent = 1 - (sampledColor.r + sampledColor.g) / (2 * 255);
         point.hStar = configToUse.hStar + percent * (configToUse.hStarEnd - configToUse.hStar);
         point.vStar = configToUse.vStar + percent * (configToUse.vStarEnd - configToUse.vStar);
         point.edot = configToUse.edot;
@@ -842,8 +884,6 @@ function getRequiredZOffset(
         while (zOffset < stepMax) {
             const squareMin = new THREE.Vector3(point.x + printHeadBox.min.x, point.y + printHeadBox.min.y, point.z + nozzleLength + zOffset);
             const squareMax = new THREE.Vector3(point.x + printHeadBox.max.x, point.y + printHeadBox.max.y, point.z + nozzleLength + zOffset);
-            squareMin.add(mesh.position);
-            squareMax.add(mesh.position);
             if (meshIntersectsSquareAtZ(mesh, squareMin, squareMax)) {
                 zOffset += offsetStep;
             } else {
@@ -964,7 +1004,10 @@ export function generateFoamToolpath(
     // layerNum: number = visualizer.config.foamLayers
 ): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
     const chunkRoots: ChunkNode[] = [];
+    let highestStartHeight = -Infinity;
     modelObjs.forEach(modelObj => {
+        // Current it applies transformations to the geometry, but its not ideal because
+        // that requires us to set the transform back to default after.
         modelObj.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
         modelObj.mesh.scale.setScalar(1);
         const e = new THREE.Euler(
@@ -1012,6 +1055,13 @@ export function generateFoamToolpath(
         // }
         
         const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
+        regionTree.forEach(root => {
+            const height = root.region.height + modelObj.mesh.position.z
+            if (height > highestStartHeight) {
+                highestStartHeight = height;
+            }
+        });
+
         const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
 
         chunkTree.forEach(chunkNode => {
@@ -1029,15 +1079,7 @@ export function generateFoamToolpath(
 
     visualizer.scene.add(visualizationGroup);
 
-    // console.log('Extracted regions:', allRegions.length, allRegions.slice(0, 5));
-
-
-    // --- 2. Chunk regions by overlap/support ---
-    // const regionGroups = splitRegionsByOverlapOrSupport(allRegions);
-    // --- 3. Build dependency tree and print order ---
-
-
-    const startPoint = new THREE.Vector3(0, 0, 0);
+    const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const toolpath = makeChunkTreePath(
         chunkRoots,
         visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
@@ -1137,7 +1179,6 @@ export function generateTrialToolpath(
         toolpath.push({
             point: new THREE.Vector3((-lineLength / 2) - purgeDistance, y, lineStartHStar * threadDiameter),
             travel: true,
-            purge: false,
             hStar: lineStartHStar,
             vStar: lineStartVStar,
         })
@@ -1153,7 +1194,6 @@ export function generateTrialToolpath(
             toolpath.push({
                 point: new THREE.Vector3(x, y, zOffset),
                 travel: false,
-                purge: false,
                 hStar: pointHStar,
                 vStar: pointVStar,
             })
@@ -1165,7 +1205,6 @@ export function generateTrialToolpath(
         toolpath.push({
             point: new THREE.Vector3(lineLength / 2, y, endZOffset),
             travel: false,
-            purge: false,
             hStar: lineEndHStar,
             vStar: lineEndVStar,
         })
@@ -1174,7 +1213,6 @@ export function generateTrialToolpath(
         toolpath.push({
             point: new THREE.Vector3((lineLength / 2) + purgeDistance, y, 0),
             travel: false,
-            purge: true,
             hStar: lineEndHStar,
             vStar: lineEndVStar,
         })
@@ -1182,7 +1220,6 @@ export function generateTrialToolpath(
         toolpath.push({
             point: new THREE.Vector3((lineLength / 2) + purgeDistance * 1.5, y, 0),
             travel: false,
-            purge: true,
             hStar: lineEndHStar,
             vStar: lineEndVStar,
         })
@@ -1249,6 +1286,134 @@ function getPlaneHeightAtXY(
     }
 
     return -(nx * x + ny * y + d) / nz;
+}
+
+
+// Slices a model following a curved rectilinear path. The first layer is flat, then
+// each subsequent layer curves more and more until it eventually matches the passed in model.
+export function generateNonplanarFoamToolpath(
+    visualizer: Visualizer,
+    modelObj: EverydayModel,
+    layerNum: number,
+): { all: any; foam: any; sense: any } {
+    const pointMatrix: THREE.Vector3[][] = [];
+
+    const samplePoints = modelObj.toolpathSamplePoints!;
+
+    modelObj.geometry.computeBoundingBox();
+    const bbox = modelObj.geometry.boundingBox!;
+
+    for (const samplePoint of samplePoints) {
+        const point = samplePoint.point;
+        
+        const bottomHeight = bbox.min.z;
+
+        if (!bottomHeight) {
+            continue;
+        }
+
+        const heightDif = point.z - bottomHeight;
+
+        const columnDeltaZ = Math.max(heightDif / (layerNum - 1), modelObj.toolpathConfig.deltaZ);
+        let z = bottomHeight;
+        const columnPoints: THREE.Vector3[] = [];
+        while (z <= point.z) {
+            columnPoints.push(new THREE.Vector3(point.x, point.y, z));
+            z += columnDeltaZ;
+        }
+        pointMatrix.push(columnPoints);
+    }
+
+    // Turn each layer into a contour, generate rectilinear path, then curve it back.
+    let scanX = false;
+    let lastLayerEndPoint = new THREE.Vector3();
+    const toolpath: PathPoint[] = [];
+    for (let i = 0; i < layerNum; i++) {
+        const pointCloud: THREE.Vector3[] = [];
+        for (const column of pointMatrix) {
+            if (column[i]) {
+                pointCloud.push(column[i]);
+            }
+        }
+
+        if (!pointCloud.length) {
+            continue;
+        }
+
+        const samplePointMatrix: THREE.Vector3[][] = [[]];
+        let lastX = pointCloud[0].x;
+        for (const point of pointCloud) {
+            if (Math.abs(point.x - lastX) <= 0.0001) {
+                samplePointMatrix[samplePointMatrix.length - 1].push(point);
+            } else {
+                samplePointMatrix.push([point]);
+                lastX = point.x;
+            }
+        }
+        for (const column of samplePointMatrix) {
+            column.sort((a, b) => a.y - b.y);
+        }
+
+        const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(pointCloud, 5);
+
+
+        for (const region of cloudSliceRegions) {
+            const infill = generateRectilinearInfill(region.contour, modelObj.toolpathConfig.gridSize, scanX, lastLayerEndPoint);
+            let regionToolpath: PathPoint[] = [];
+            const beforeLength = regionToolpath.length;
+            regionToolpath.push(...infill.map(p => {
+                return {
+                    point: p.clone().add(modelObj.mesh.position),
+                    travel: false,
+                }
+            }));
+            regionToolpath[beforeLength].travel = true;
+
+            regionToolpath = fillToolpath(regionToolpath, 0.5);
+
+            for (const point of regionToolpath) {
+                point.hStar = modelObj.toolpathConfig.hStar;
+                point.vStar = modelObj.toolpathConfig.vStar;
+                point.edot = modelObj.toolpathConfig.edot;
+            }
+
+            // Curve infill
+            for (let i = 0; i < regionToolpath.length; i++) {
+                const point = regionToolpath[i].point;
+                const nearestPoints = findNearestPoints(samplePointMatrix, point.clone().sub(modelObj.mesh.position), 3);
+
+                const pointZOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+
+                if (nearestPoints.length >= 3) {
+                    let addZ = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], 
+                        point.x - modelObj.mesh.position.x, point.y - modelObj.mesh.position.y);
+                    if (!addZ) {
+                        addZ = nearestPoints[0].z;
+                    }
+                    point.setZ(addZ + pointZOffset);
+                } else if (nearestPoints.length >= 1) {
+                    point.setZ(nearestPoints[0].z + pointZOffset);
+                } else {
+                    console.warn("Not able to find any points");
+                }
+            }
+
+            lastLayerEndPoint = infill[infill.length - 1];
+
+            toolpath.push(...regionToolpath);
+        }
+        scanX = !scanX;
+    }
+
+    for (const point of toolpath) {
+        point.point.setZ(point.point.z - bbox.min.z);
+    }
+
+    return {
+        all: toolpath,
+        foam: null,
+        sense: null,
+    }
 }
 
 
@@ -1367,8 +1532,14 @@ export function generateAugmentFoamToolpath(
         column.sort((a, b) => a.y - b.y);
     }
 
+    const samplePointMatrixCopy: THREE.Vector3[][] = [];
+    samplePointMatrix.forEach(column => {
+        samplePointMatrixCopy.push([]);
+        column.forEach(point => {
+            samplePointMatrixCopy[samplePointMatrixCopy.length - 1].push(point.clone());
+        });
+    });
 
-    console.log("Started gradient");
     const gradientMatrix = makeGradientMatrix(samplePointMatrix);
     const indicesToRemove: { col: number, row: number }[] = [];
 
@@ -1395,7 +1566,6 @@ export function generateAugmentFoamToolpath(
         gradientMatrix[col].splice(row, 1);
         samplePointMatrix[col].splice(row, 1);
     }
-    console.log("Finished Gradient");
 
     const samplePoints: THREE.Vector3[] = [];
     samplePointMatrix.forEach(col => samplePoints.push(...col));
@@ -1437,6 +1607,8 @@ export function generateAugmentFoamToolpath(
 
         bumpContours.sort((a, b) => a[0].z - b[0].z);
 
+        bumpContours = bumpContours.map(contour => fillContour(contour, 0.5));
+
         // Normalize heights so the bottom is at z = 0
         const firstLayerHeight = bumpContours[0][0].z;
         bumpContours.forEach(contour => contour.forEach(pt => pt.setZ(pt.z - firstLayerHeight)));
@@ -1454,8 +1626,8 @@ export function generateAugmentFoamToolpath(
 
         const bumpPoints: THREE.Vector3[] = [];
 
-        const remainderY = (max.y - min.y) % modelObj.toolpathConfig.bumpSpacing;
-        const remainderX = (max.x - min.x) % modelObj.toolpathConfig.bumpSpacing;
+        const remainderY = (max.y - min.y) % modelObj.toolpathConfig.bumpSpacingY;
+        const remainderX = (max.x - min.x) % modelObj.toolpathConfig.bumpSpacingX;
         let y = min.y + remainderY / 2;
         while (y < max.y) {
             let x = min.x + remainderX / 2;
@@ -1464,9 +1636,9 @@ export function generateAugmentFoamToolpath(
                 if (cloudSliceRegions.some(region => pointInPolygon(point, region.contour))) {
                     bumpPoints.push(point);
                 }
-                x += modelObj.toolpathConfig.bumpSpacing;
+                x += modelObj.toolpathConfig.bumpSpacingX;
             }
-            y += modelObj.toolpathConfig.bumpSpacing;
+            y += modelObj.toolpathConfig.bumpSpacingY;
         }
 
         const bumpHeight = modelObj.toolpathConfig.initialFoamLayerCount * modelObj.toolpathConfig.deltaZ;
@@ -1475,6 +1647,8 @@ export function generateAugmentFoamToolpath(
             bumpContours.some(contour => {
                 const bumpContour = contour.map(contourPt => contourPt.clone().add(new THREE.Vector3(p.x, p.y, bumpHeight))).filter(
                     p => cloudSliceRegions.some(region => pointInPolygon(p, region.contour)));
+                
+                
                 if (bumpContour.length > 2) {
                     bumpRegions.push({
                         id: p.x + ", " + p.y + ", " + bumpContour[0].x + ", " + bumpContour[0].y + ", " + bumpContour[0].z,
@@ -1579,12 +1753,17 @@ export function generateAugmentFoamToolpath(
     const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
     chunkTree.forEach(chunkNode => {
         chunkNode.modelObj = modelObj;
-    })
+    });
 
     modelObj.geometry.computeBoundingBox();
-    const modelHeight = regionTree[0].region.height; //modelObj.geometry.boundingBox!.min.z;
+    let modelHeight = -Infinity  //modelObj.geometry.boundingBox!.min.z;
+    regionTree.forEach(region => {
+        if (region.region.height > modelHeight) {
+            modelHeight = region.region.height;
+        }
+    });
 
-    const startPoint = new THREE.Vector3(0, 0, regionTree[0].region.height);
+    const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
     const toolpath = makeChunkTreePath(
         chunkTree,
         visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
@@ -1592,15 +1771,14 @@ export function generateAugmentFoamToolpath(
         startPoint,
         modelHeight,
     );
-    
+
     modelObj.geometry.computeBoundingBox();
     const bbox = modelObj.geometry.boundingBox!;
-
 
     // let indicesToRemove: number[] = [];
     for (let i = 0; i < toolpath.length; i++) {
         const point = toolpath[i].point;
-        const nearestPoints = findNearestPoints(samplePointMatrix, point.clone().sub(modelObj.mesh.position), 3);
+        const nearestPoints = findNearestPoints(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position), 3);
 
         const pointZOffset = toolpath[i].hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
 
@@ -1742,9 +1920,9 @@ export function generateAugmentFoamToolpath(
 
     // --- 4. Decide what to visualize based on the boolean
     let pathToVisualize: THREE.Vector3[] = [];
-    if (visualizer.config.showGcodeVisualization && visualizer.printer.toolpathGcode) {
+    if (visualizer.config.showGcodeVisualization && modelObj.gcode) {
         // Parse G-code and visualize actual G-code path
-        const gcodePath = parseGcodeToPath(visualizer.printer.toolpathGcode);
+        const gcodePath = parseGcodeToPath(modelObj.gcode!);
         gcodePath.forEach(layer => pathToVisualize.push(...layer));
         console.log("Visualizing G-code path");
     } else {
@@ -1850,8 +2028,6 @@ export function generateAugmentFoamToolpath(
 
     const startPath = [new THREE.Vector3(toolpath[0].point.x, toolpath[0].point.y, bbox.max.z + 10), 
                        new THREE.Vector3(0, 0, bbox.max.z + 10)];
-
-    toolpath[0].point.setZ(bbox.max.z);
     
     startPath.forEach(point => {
         toolpath.unshift({

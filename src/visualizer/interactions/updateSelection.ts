@@ -307,25 +307,25 @@ export function updateSelection(
     // console.log(gcode);
     // visualizer.printer.toolpathGcode = gcode;
 
+    // const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
 
-    const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
 
     //generate G-code with start G-code only if first model
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, isFirstModel);
+    modelObj.gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1);
 
-    //Initialize G-code if empty
-    if (!visualizer.printer.toolpathGcode) {
-        visualizer.printer.toolpathGcode = "";
-    }
+    // Initialize G-code if empty
+    // if (!visualizer.printer.toolpathGcode) {
+    //     visualizer.printer.toolpathGcode = "";
+    // }
 
     // Append this model's G-code
-    visualizer.printer.toolpathGcode += `; === Model: ${modelObj.name || 'Unnamed'} ===\n`;
-    visualizer.printer.toolpathGcode += `; Parameters: hStar=${modelObj.toolpathConfig.hStar}, vStar=${modelObj.toolpathConfig.vStar}, deltaZ=${modelObj.toolpathConfig.deltaZ}, gridSize=${modelObj.toolpathConfig.gridSize}, edot=${modelObj.toolpathConfig.edot}\n`;
+    // visualizer.printer.toolpathGcode += `; === Model: ${modelObj.name || 'Unnamed'} ===\n`;
+    // visualizer.printer.toolpathGcode += `; Parameters: hStar=${modelObj.toolpathConfig.hStar}, vStar=${modelObj.toolpathConfig.vStar}, deltaZ=${modelObj.toolpathConfig.deltaZ}, gridSize=${modelObj.toolpathConfig.gridSize}, edot=${modelObj.toolpathConfig.edot}\n`;
 
-    visualizer.printer.toolpathGcode += gcode;
-    visualizer.printer.toolpathGcode += "\n";
+    // visualizer.printer.toolpathGcode += gcode;
+    // visualizer.printer.toolpathGcode += "\n";
 
-    console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
+    console.log("Model G-Code after generation:\n", modelObj.gcode);
 
     //saveGcodeToFile(gcode, "toolpath");
     // generateAugmentFoamToolpath(visualizer, modelObj);

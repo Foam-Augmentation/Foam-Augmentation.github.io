@@ -49,7 +49,8 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
     `edot ${config.edot}`,
     `gridSize ${config.gridSize}`,
     `initialFoamLayerCount ${config.initialFoamLayerCount}`,
-    `bumpSpacing ${config.bumpSpacing}`,
+    `bumpSpacingX ${config.bumpSpacingX}`,
+    `bumpSpacingY ${config.bumpSpacingY}`,
     `bumpScale ${config.bumpScale}`,
   ];
   

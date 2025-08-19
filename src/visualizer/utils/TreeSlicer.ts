@@ -902,7 +902,6 @@ export function connectIsocontours(
       let endIndex = 0;
       let lastPointIndex = childPaths[i].index;
       let endPoint = new THREE.Vector3;
-      let numIndicesToDelete = 0;
       const offsetAmount = step;
       for (let j = 1; totalDist < offsetAmount; j++) {
         endIndex = (startIndex - j);
@@ -1185,6 +1184,7 @@ export function generateBoundaryContours(
   // align contour with model
   expandedContours.forEach(contour => contour.forEach(p => {
     p.add(mesh.position);
+    p.setZ(p.z + 0.09);
   }));
 
   return expandedContours;

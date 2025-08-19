@@ -429,7 +429,8 @@ export function addBumpsFolder(
     bumpFolder.add(selectBump, 'selectBumpSTL').name("Select Bump Model");
 
     bumpFolder.add(modelObj.toolpathConfig, 'generateBumps');
-    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacing', 0, 100, 0.01).name("Bump Spacing");
+    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacingX', 0, 100, 0.01).name("Bump Spacing X");
+    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacingY', 0, 100, 0.01).name("Bump Spacing Y");
     bumpFolder.add(modelObj.toolpathConfig, 'bumpScale', 0, 100, 0.01).name("Bump Scale");
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');

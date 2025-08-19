@@ -31,6 +31,8 @@ export interface BasicModel {
     /** Associated GUI item. */
     guiItem?: GUIItem;
 
+    gcode?: string;
+
     // nozzle
     /** nozzle diameter for regular TPU */
     nozzleDiameterRegularTPU?: number;
@@ -75,7 +77,8 @@ export interface ToolpathConfig {
     /** final Foam layer count */
     finalFoamLayerCount: number;
     edot: number;
-    bumpSpacing: number;
+    bumpSpacingX: number;
+    bumpSpacingY: number;
     bumpScale: number;
     generateBumps: boolean;
     steepnessThreshold: number;

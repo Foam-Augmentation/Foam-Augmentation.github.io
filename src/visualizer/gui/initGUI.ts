@@ -5,7 +5,7 @@ import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
-import { generateFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
+import { generateFoamToolpath, generateNonPlanarFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import {EverydayModel} from '../types/modelTypes';
@@ -276,16 +276,25 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 //             generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
 //         }
 //     });
- 
   
   const saveFolder = gui.addFolder('Saving');
-  visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
-  saveFolder.add({ saveGcode: () => visualizer.saveGcodeToFile(visualizer.printer.toolpathGcode, "toolpath") }, 'saveGcode').name('Save Toolpath G-Code');
+  // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
+  saveFolder.add({ saveGcode: () => {
+    const gcode = visualizer.printer.build_start_gcode(1) + 
+                  visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
+                  visualizer.printer.end_gcode;
+
+    visualizer.saveGcodeToFile(gcode, "toolpath")
+  } }, 'saveGcode').name('Save Toolpath G-Code');
   saveFolder.add({ generateTestGcode: () => {
-      visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
-        visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
-        visualizer.config.endVStarTest), 1);
+    visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
+      visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
+      visualizer.config.endVStarTest), 1);
     }}, 'generateTestGcode').name("Make Test Gcode");
+  saveFolder.add({ generateTestGcode: () => {
+    const model = visualizer.everydayModelList[0];
+    model.gcode = visualizer.printer.generate_foam_gcode(generateNonPlanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
+  }}, 'generateTestGcode').name("Make Nonplanar Gcode");
   saveFolder.close();
   
 
@@ -314,7 +323,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1);
+    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1) + visualizer.printer.end_gcode;
     console.log('Generated G-code:', gcode);
     
     // Save G-code file
