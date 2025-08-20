@@ -3,7 +3,7 @@ import { updateEscDiv } from './bottomTooltip';
 import { visualize_All_Layers, generateFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
-import { importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
+import { importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 
 // Extend Object3D to include highlightFoamMesh and highlightSenseMesh properties
 declare module 'three' {
@@ -75,6 +75,8 @@ function createDeleteBtn(
             visualizer.scene.remove(modelObj.toolpathVisualizationObject);
         }
 
+        visualizer.currentSelectedModel = null;
+
         // Remove the model from the corresponding list.
         if (itemClass === 'foam-model-item') {
             visualizer.foamModelList.splice(index, 1);
@@ -131,9 +133,9 @@ function addTransformFolder(
                 visualizer.transformControls.setMode('translate');
                 break;
             case 'rotate':
-                transformX.x = modelObj.mesh.rotation.x;
-                transformY.y = modelObj.mesh.rotation.y;
-                transformZ.z = modelObj.mesh.rotation.z;
+                transformX.x = (180 / Math.PI) * modelObj.mesh.rotation.x;
+                transformY.y = (180 / Math.PI) * modelObj.mesh.rotation.y;
+                transformZ.z = (180 / Math.PI) * modelObj.mesh.rotation.z;
                 visualizer.transformControls.setMode('rotate');
                 break;
             case 'scale':
@@ -150,7 +152,7 @@ function addTransformFolder(
         if (transformType.type === 'move') {
             modelObj.mesh.position.x = value;
         } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.x = value;
+            modelObj.mesh.rotation.x = value * (Math.PI / 180);
         } else if (transformType.type === 'scale') {
             modelObj.mesh.scale.x = value;
         }
@@ -159,7 +161,7 @@ function addTransformFolder(
         if (transformType.type === 'move') {
             modelObj.mesh.position.y = value;
         } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.y = value;
+            modelObj.mesh.rotation.y = value * (Math.PI / 180);
         } else if (transformType.type === 'scale') {
             modelObj.mesh.scale.y = value;
         }
@@ -168,11 +170,33 @@ function addTransformFolder(
         if (transformType.type === 'move') {
             modelObj.mesh.position.z = value;
         } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.z = value;
+            modelObj.mesh.rotation.z = value * (Math.PI / 180);
         } else if (transformType.type === 'scale') {
             modelObj.mesh.scale.z = value;
         }
     });
+
+    const moveFunctions = {
+        snapToPlate: () => {
+            modelObj.mesh.geometry.computeBoundingBox();
+            const bbox = modelObj.mesh.geometry.boundingBox!;
+            modelObj.mesh.position.setZ((bbox.max.z - bbox.min.z) / 2);
+            if (transformType.type === 'move') {
+                transformZ.z = modelObj.mesh.position.z;
+            }
+        },
+        center: () => {
+            modelObj.mesh.position.setX(visualizer.printer.machine_depth / 2);
+            modelObj.mesh.position.setY(visualizer.printer.machine_depth_y / 2);
+            if (transformType.type === 'move') {
+                transformX.x = modelObj.mesh.position.x;
+                transformY.y = modelObj.mesh.position.y;
+            }
+        }
+    };
+
+    transformFolder.add(moveFunctions, 'snapToPlate').name("Snap Model To Plate");
+    transformFolder.add(moveFunctions, 'center').name("Center Model");
     transformFolder.close();
 }
 
@@ -349,21 +373,10 @@ export function addParamsFolder_EverydayModel(
     paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 100, 0.01).name('H*');
     paramsFolder.add(modelObj.toolpathConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
     paramsFolder.add(modelObj.toolpathConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
-    paramsFolder.add(modelObj.toolpathConfig, 'steepnessThreshold', 0, 90, 0.01).name('Max Angle');
     // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
-
-    paramsFolder.add(modelObj.toolpathConfig, 'initialFoamLayerCount', 0, 10, 1).name('Initial Foam Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
-    paramsFolder.add(modelObj.toolpathConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
-    paramsFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
 
     const paramsFolderPLA = modelGUIitem.addFolder('pla params');
     paramsFolderPLA.domElement.classList.add('params-folder-pla');
@@ -386,15 +399,15 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
     paramsFolderPLA.add(modelObj, 'plaOffset', 0, 50, 0.01).name('PLA Offset');
 
-    paramsFolderPLA.add(modelObj.plaConfig, 'initialFoamLayerCount', 0, 10, 1).name('Initial Foam Layers').onChange(() => {
+    paramsFolderPLA.add(modelObj.plaConfig, 'initialFoamLayerCount', 0, 20, 1).name('Initial PLA Foam Layers').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolderPLA.add(modelObj.plaConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
-    paramsFolderPLA.add(modelObj.plaConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
+    // paramsFolderPLA.add(modelObj.plaConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers').onChange(() => {
+    //     visualize_All_Layers(visualizer, modelObj);
+    // });
+    // paramsFolderPLA.add(modelObj.plaConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
+    //     visualize_All_Layers(visualizer, modelObj);
+    // });
 
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
@@ -442,6 +455,32 @@ export function addBumpsFolder(
     bumpFolder.close();
 }
 
+
+export function addAugmentFolder(
+    modelGUIitem: GUI,
+    modelObj: EverydayModel,
+): void {
+    const augmentFolder = modelGUIitem.addFolder('augment settings');
+    augmentFolder.domElement.classList.add('augment-folder');
+
+    const selectAugmentModel = {
+        selectAugmentModel: () => importAugmentSTL(modelObj),
+    };
+
+    augmentFolder.add(selectAugmentModel, 'selectAugmentModel').name("Select Augment Model")
+
+    augmentFolder.add(modelObj.toolpathConfig, 'curveAugment');
+    augmentFolder.add(modelObj.toolpathConfig, 'initialFoamLayerCount', 0, 20, 1).name('Foam Layers');
+    augmentFolder.add(modelObj.toolpathConfig, 'steepnessThreshold', 0, 90, 0.01).name('Max Angle');
+    augmentFolder.add(modelObj.toolpathConfig, 'flatLayerZOffset', 0, 100, 0.01).name("Flat Layer Z Offset");
+    // augmentFolder.add(modelObj.toolpathConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers');
+    // augmentFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers');
+    
+    augmentFolder.close();
+}
+
+
+
 export function addGradientFolder(
     modelGUIitem: GUI,
     modelObj: EverydayModel,
@@ -471,7 +510,10 @@ export function addGradientFolder(
  *                     scene, transformControls, uuid_to_modelObj_Map, etc.
  * @param listType - The type of model list to refresh; either 'foam' or 'everyday'.
  */
-export function refreshModelGUIList(visualizer: Visualizer, listType: 'foam' | 'everyday'): void {
+export function refreshModelGUIList(
+    visualizer: Visualizer, 
+    listType: 'foam' | 'everyday'
+): void {
     let modelList: (EverydayModel | FoamModel)[] = [];
     let guiFolder: GUI;
     let itemClass: string = '';
@@ -509,6 +551,7 @@ export function refreshModelGUIList(visualizer: Visualizer, listType: 'foam' | '
         if (listType === 'everyday') {
             addSelectedMeshFolder(modelGUIitem, modelObj as EverydayModel, visualizer);
             addParamsFolder_EverydayModel(modelGUIitem, modelObj as EverydayModel, visualizer);
+            addAugmentFolder(modelGUIitem, modelObj as EverydayModel);
             addBumpsFolder(modelGUIitem, modelObj as EverydayModel);
             addGradientFolder(modelGUIitem, modelObj as EverydayModel);
         }

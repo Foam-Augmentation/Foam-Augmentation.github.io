@@ -286,12 +286,6 @@ export function updateSelection(
     
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
-    if (visualizer.printer.generateBoundary) {
-        visualizer.printer.generate_boundary_gcode([modelObj.mesh] as THREE.Mesh[], 1);
-    } else {
-        visualizer.printer.boundaryGcode = "";
-    }
-
     const toolpaths = generateAugmentFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong

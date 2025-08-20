@@ -72,6 +72,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 
   const foamModelSliceParamFolder = modelFolder.addFolder('slice params');
   foamModelSliceParamFolder.close();
+  modelFolder.close();
   // (Additional slice parameter controls can be added here.)
 
   // ----- Everyday Object Model Folder -----
@@ -200,14 +201,15 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
   slicerFolder.close();
 
-  const testParamsFolder = settingFolder.addFolder('test params');
-  testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
-  testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
-  testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
-  testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
-  testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
-  testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
-  testParamsFolder.close();
+  // const testParamsFolder = settingFolder.addFolder('test params');
+  // testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
+  // testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
+  // testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
+  // testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
+  // testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
+  // testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
+  // testParamsFolder.close();
+
   // Update parameter calculation.
   // const updateParamCalculation = () => {
   //   visualizer.config.VStar = (visualizer.config.printHead_speed_when_foam / visualizer.config.extrusion_speed_when_foam).toFixed(2);
@@ -286,15 +288,15 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 
     visualizer.saveGcodeToFile(gcode, "toolpath")
   } }, 'saveGcode').name('Save Toolpath G-Code');
-  saveFolder.add({ generateTestGcode: () => {
-    visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
-      visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
-      visualizer.config.endVStarTest), 1);
-    }}, 'generateTestGcode').name("Make Test Gcode");
-  saveFolder.add({ generateTestGcode: () => {
-    const model = visualizer.everydayModelList[0];
-    model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
-  }}, 'generateTestGcode').name("Make Nonplanar Gcode");
+  // saveFolder.add({ generateTestGcode: () => {
+  //   visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
+  //     visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
+  //     visualizer.config.endVStarTest), 1);
+  //   }}, 'generateTestGcode').name("Make Test Gcode");
+  // saveFolder.add({ generateTestGcode: () => {
+  //   const model = visualizer.everydayModelList[0];
+  //   model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
+  // }}, 'generateTestGcode').name("Make Nonplanar Gcode");
   saveFolder.close();
   
 
@@ -304,12 +306,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     console.log('Slice Model button clicked');
 
     const models: EverydayModel[] = visualizer.everydayModelList.map(model => model as EverydayModel);
-
-    if (visualizer.printer.generateBoundary) {
-      visualizer.printer.generate_boundary_gcode(models.map(model => model.mesh), 1);
-    } else {
-      visualizer.printer.boundaryGcode = "";
-    }
     
     // Generate toolpath
     console.log('Generating toolpath...');

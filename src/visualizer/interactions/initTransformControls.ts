@@ -76,9 +76,9 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
                         obj.transformY.y = parseFloat(mesh.position.y.toFixed(2));
                         obj.transformZ.z = parseFloat(mesh.position.z.toFixed(2));
                     } else if (mode === 'rotate') {
-                        obj.transformX.x = parseFloat(mesh.rotation.x.toFixed(2));
-                        obj.transformY.y = parseFloat(mesh.rotation.y.toFixed(2));
-                        obj.transformZ.z = parseFloat(mesh.rotation.z.toFixed(2));
+                        obj.transformX.x = parseFloat((mesh.rotation.x * (180 / Math.PI)).toFixed(2));
+                        obj.transformY.y = parseFloat((mesh.rotation.y * (180 / Math.PI)).toFixed(2));
+                        obj.transformZ.z = parseFloat((mesh.rotation.z * (180 / Math.PI)).toFixed(2));
                     } else if (mode === 'scale') {
                         obj.transformX.x = parseFloat(mesh.scale.x.toFixed(2));
                         obj.transformY.y = parseFloat(mesh.scale.y.toFixed(2));

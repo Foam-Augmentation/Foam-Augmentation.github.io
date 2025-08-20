@@ -32,7 +32,7 @@ export default class Printer {
   /** Machine height (maximum z axis length) */
   public machine_height: number;
   /** Stores the generated boundary G-code */
-  public boundaryGcode: string;
+  // public boundaryGcode: string;
   /** Stores the generated toolpath G-code */
   // public toolpathGcode: string;
   /** End G-code string */
@@ -56,6 +56,8 @@ export default class Printer {
   public checkCollisions: boolean;
 
   public printHeadDims: { min: THREE.Vector2, max: THREE.Vector2 };
+  
+  public bedLeveling: boolean;
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -72,13 +74,13 @@ export default class Printer {
     this.machine_depth = 250; // machine depth (max x)
     this.machine_depth_y = 210; // machine y axis length
     this.machine_height = 220; // machine height (max z)
-    this.boundaryGcode = ""; // initialize boundary G-code
+    // this.boundaryGcode = ""; // initialize boundary G-code
     // this.toolpathGcode = ""; // initialize toolpath G-code
     this.diameter_filament = 1.75;
     this.V_Star = 0.15;
     this.vStarEnd = 0.15;
 
-    this.Edot = 35;
+    this.Edot = 50;
     this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
     this.ZOffset = 3.38
     this.H_star = 6.0
@@ -88,6 +90,7 @@ export default class Printer {
     this.purgeLine = true;
     this.checkCollisions = false;
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
+    this.bedLeveling = false;
 
     this.end_gcode = `
 G4 S5; Dwell for 5 Second(s) 
@@ -233,7 +236,6 @@ M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec
 M107 ; turns off fan
 M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
 
-
 M104 S${this.print_temp_left_extruder} ; set extruder temp 
 M190 S${this.material_bed_temperature} ; set bed temp and wait to reach it
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
@@ -241,19 +243,23 @@ M862.3 P "MK3S" ; printer model check
 
 G28 ; home axes
 G92 X0 Y0 ; tell printer all axes are 0
+${this.bedLeveling ? "G29" : "M420 S1\n"} ; probe the printbed or use previously stored printbed mesh
 
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
 M83  ; extruder relative mode 
 M900 K0.05 ; Filament gcode LA 1.5 
 M900 K30 ; Filament gcode LA 1.0 
-G92 E0.0 
 
 G1 Z0.200 F2400.000 
 
 M204 S1000 
           
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + 
+      this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) +
+      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1)) + 
+      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1), new THREE.Vector3(5, 7.5, 0.1))
+      : "");
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -272,7 +278,6 @@ M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec
 M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
 M107 ; turns off fan
 M862.1 P${this.nozzleDiameter} ; nozzle diameter check
-   
 
 M104 S${this.print_temp_left_extruder} ; set extruder temp 
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
@@ -280,6 +285,7 @@ M862.3 P "MK3S" ; printer model check
 
 G28 ; home axes
 G92 X0 Y0 ; tell printer all axes are 0
+${this.bedLeveling ? "G29" : "M420 S1\n"} ; probe the printbed or use previously stored printbed mesh
 
 G21 ; set units to millimeters 
 G90 ; use absolute coordinates 
@@ -292,7 +298,11 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
 
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) : "");
+`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + 
+      this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) +
+      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1)) + 
+      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1), new THREE.Vector3(5, 7.5, 0.1))
+      : "");
     }
   }
 
@@ -357,67 +367,10 @@ M204 S1000
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
     const beadArea = this.dieSwelling * Math.pow(this.nozzleDiameter, 2) / 2;
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
-    const filamentPerMM = (beadArea / crossSection) * 2;
+    const filamentPerMM = (beadArea / crossSection) * 2; // Multiplied by 2 because wasnt enough otherwise.
     const dist = this.norm(p0, p1);
     const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.printHead_speed_when_free_move}`;
     return gcode;
-  }
-
-
-  /**
-   * Generates the gcode for a brim around the bottom of a mesh.
-   * 
-   * @param {THREE.Mesh} mesh - The mesh to get the brim of.
-   * @param {number} offset - How far away the brim should be from the mesh.
-   * @returns {string} The gcode as a string.
-   */
-  public generate_boundary_gcode(
-    meshs: THREE.Mesh[],
-    offset: number = 1,
-  ): string {
-    const contours: THREE.Vector3[][] = [];
-    meshs.forEach(mesh => {
-      mesh.geometry.scale(mesh.scale.x, mesh.scale.y, mesh.scale.z);
-      mesh.scale.setScalar(1);
-      const e = new THREE.Euler(
-          mesh.rotation.x,
-          mesh.rotation.y,
-          mesh.rotation.z,
-          'XYZ'
-      );
-      const q = new THREE.Quaternion().setFromEuler(e);
-      mesh.geometry.applyQuaternion(q);
-      mesh.rotation.set(0, 0, 0);
-    });
-
-    meshs.forEach(mesh => {
-      const expandedContours = generateBoundaryContours(mesh, offset);
-      expandedContours.forEach(contour => contour.forEach(point => point.setZ(point.z)));
-      contours.push(...expandedContours);
-    })
-
-    let boundaryGcode: string[] = [];
-
-    // create gcode for following the expanded contours
-    for (const expandedContour of contours) {
-      const firstPoint = expandedContour[0];
-      boundaryGcode.push(`G0 X${firstPoint.x.toFixed(6)} Y${firstPoint.y.toFixed(6)} Z${firstPoint.z.toFixed(6)}
-                          F${this.printHead_speed_when_free_move}`) // move to first point in contour
-      for (let i = 0; i < expandedContour.length; i++) {
-        const nextPoint = i + 1 >= expandedContour.length ? expandedContour[i + 1 - expandedContour.length] : expandedContour[i + 1];
-        const point = expandedContour[i];
-        boundaryGcode.push(
-          this.extrude_regular_segment(
-            point,
-            nextPoint
-          )
-        );
-      }
-    }
-
-    this.boundaryGcode = boundaryGcode.join("\n") + "\n\nG0 X0 Y0 Z20 ; park for pause\nM0 ; wait for user to press start again\n";
-
-    return this.boundaryGcode;
   }
 
 
@@ -472,20 +425,18 @@ M204 S1000
           corners[i + 1],
         )
       );
-
     }
 
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
 
-    this.boundaryGcode = body_gcode.join("\n");
-    return this.boundaryGcode;
+    return body_gcode.join("\n");
   }
 
   /**
    * Generates foam toolpath G-code from a given toolpath.
    *
-   * @param {THREE.Vector3[][]} toolpath - A two-dimensional array of points where each sub-array represents a layer of the toolpath.
+   * @param {THREE.Vector3[]} toolpath - A two-dimensional array of points where each sub-array represents a layer of the toolpath.
    * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
    * @returns {string} The generated foam toolpath G-code.
    */
@@ -494,15 +445,18 @@ M204 S1000
   //   extruderId: number,
   //   modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
   // )
-  public generate_foam_gcode(toolpath: any, extruderId: number, includeStart: boolean = true)
-    : string {
+  public generate_foam_gcode(
+    toolpath: PathPoint[],
+    extruderId: number,
+    includeStart: boolean = true
+  ) : string {
     if (toolpath.length === 0) {
       console.error("Toolpath is empty.");
       return "";
     }
 
     let body_gcode: string[] = [];
-    // Apply model position to first point
+
     let firstPoint = toolpath[0].point.clone();
     let lastTarget: THREE.Vector3 = firstPoint;
 
@@ -511,34 +465,40 @@ M204 S1000
 
     for (let i = 0; i < toolpath.length; i++) {
       const point = toolpath[i];
-      const nextPoint = toolpath[(i + 1) % toolpath.length];
       const currentPoint = point.point.clone();
 
-      this.V_Star = point.vStar!;
-      this.H_star = point.hStar!;
-      this.Edot = point.edot!;
-      this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
-
       if (point.switchFilament) {
+        // For now it just switches to 230, but can add option for different nozzle temperatures
         body_gcode.push(
-          `
-
+          `\n
 M600 ; switch filament to TPU
 M104 S${230} ; set extruder temp 
-M109 S${230} ; wait for extruder temp 
-
-          ` // For now it just switches to 230, but can add option for different nozzle temperatures
+M109 S${230} ; wait for extruder temp\n\n`
         )
       }
 
-      if (point.travel) {
-        // if (!nextPoint.travel) {
-        //   this.move_to_position(new THREE.Vector3(currentPoint.x, currentPoint.y, currentPoint.z - this.ZOffset));
-        // }
+      if (point.pause) {
+        body_gcode.push(
+          `\nG0 X${0} Y${this.machine_depth_y} Z50 ; present bed for pause\nM0; pause and wait for user to resume\n`
+        )
+      }
+
+      if (point.regularSegment) {
+        body_gcode.push(
+          this.extrude_regular_segment(
+            lastTarget, 
+            currentPoint
+          )
+        );
+      } else if (point.travel) {
         body_gcode.push(
           this.move_to_position(currentPoint)
         );
       } else {
+        this.V_Star = point.vStar!;
+        this.H_star = point.hStar!;
+        this.Edot = point.edot!;
+        this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
         body_gcode.push(
           this.extrude_single_segment(
             lastTarget,
@@ -547,60 +507,12 @@ M109 S${230} ; wait for extruder temp
           )
         );
       }
+
       lastTarget = currentPoint;
     }
 
-    // console.log("Total layers:", toolpath.length);
-    // console.log("Model position applied:", modelPosition);
-
-
-
-    // for (let i = 0; i < toolpath.length; i++) {
-    //   let layerIndex = i;
-    //   if (i === 0) {
-    //     const firstPointPos = {
-    //       x: firstPoint.x,
-    //       y: firstPoint.y,
-    //       z: firstPoint.z
-    //     };
-
-    //     body_gcode.push(
-    //       `G0 F2880 X${firstPointPos.x.toFixed(4)} Y${firstPointPos.y.toFixed(4)} Z${firstPointPos.z.toFixed(4)}; move to start point`
-    //     );
-
-    //     body_gcode.push("M205 X8 Y8; tune down acceleration");
-    //     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
-    //   } else {
-    //     // Apply model position to the first point of each layer
-    //     const currentPoint = toolpath[i][0].clone().add(modelPosition);
-    //     body_gcode.push(
-    //       this.extrude_single_segment(
-    //         lastTarget,
-    //         currentPoint,
-    //         true
-    //       )
-    //     );
-    //     lastTarget = currentPoint;
-    //   }
-
-    //   // Process the rest of the points in the layer
-    //   for (let j = 1; j < toolpath[i].length; j++) {
-    //     // Apply model position to each point
-    //     const currentPoint = toolpath[i][j].clone().add(modelPosition);
-    //     body_gcode.push(
-    //       this.extrude_single_segment(
-    //         lastTarget,
-    //         currentPoint,
-    //         false
-    //       )
-    //     );
-    //     lastTarget = currentPoint;
-    //   }
-    // }
-
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
-
 
     //og
     // this.toolpathGcode =
@@ -615,14 +527,13 @@ M109 S${230} ; wait for extruder temp
     // return this.toolpathGcode;
 
 
-    let gcode = "";
+    // let gcode = "";
     // if (includeStart) {
     //   gcode += this.build_start_gcode(extruderId) + "\n\n";
     // }
-    gcode += this.boundaryGcode + "\n\n";
-    gcode += body_gcode.join("\n") + "\n\n";
+    // gcode += body_gcode.join("\n");
     // gcode += this.end_gcode;
-    return gcode;
+    return body_gcode.join("\n");
   }
 
 

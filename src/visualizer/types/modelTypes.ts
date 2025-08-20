@@ -82,7 +82,10 @@ export interface ToolpathConfig {
     bumpSpacingY: number;
     bumpScale: number;
     generateBumps: boolean;
+    curveAugment: boolean;
     steepnessThreshold: number;
+    flatLayerZOffset: number;
+
     /** regular Foam extrusion speed */
     // extrusionSpeedRegularFoam: number;
     /** regular Foam print head speed */
@@ -119,6 +122,8 @@ export interface EverydayModel extends BasicModel {
     pointsMesh_sense?: THREE.Points;
     /** Sampled points for toolpath generation. point: sample points; type: regular foam / sensing area */
     toolpathSamplePoints?: { point: THREE.Vector3, type: string }[];
+    
+    augmentSamplePoints?: THREE.Vector3[][];
     /** Group for Toolpath visualization. */
     toolpathVisualizationObject?: THREE.Group;
     /** Selected Regular Foam Mesh Area, for intersection detection. */

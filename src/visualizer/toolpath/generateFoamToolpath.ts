@@ -26,8 +26,10 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
 export interface PathPoint {
     point: THREE.Vector3;
-    travel: boolean;
+    travel?: boolean;
     switchFilament?: boolean;
+    pause?: boolean;
+    regularSegment?: boolean;
     hStar?: number;
     vStar?: number;
     edot?: number;
@@ -884,6 +886,8 @@ function getRequiredZOffset(
         while (zOffset < stepMax) {
             const squareMin = new THREE.Vector3(point.x + printHeadBox.min.x, point.y + printHeadBox.min.y, point.z + nozzleLength + zOffset);
             const squareMax = new THREE.Vector3(point.x + printHeadBox.max.x, point.y + printHeadBox.max.y, point.z + nozzleLength + zOffset);
+            squareMin.sub(mesh.position);
+            squareMax.sub(mesh.position);
             if (meshIntersectsSquareAtZ(mesh, squareMin, squareMax)) {
                 zOffset += offsetStep;
             } else {
@@ -982,6 +986,24 @@ function makeGradientMatrix(
 }
 
 
+function getTransformedMesh(
+  mesh: THREE.Mesh,
+): THREE.Mesh {
+    const position = mesh.position.clone();
+    mesh.position.setScalar(0);
+    mesh.updateWorldMatrix(true, false);
+
+    const m = mesh.matrix;
+    const geo = mesh.geometry.clone();
+    geo.applyMatrix4(m);
+
+    const newMesh = new THREE.Mesh(geo, mesh.material);
+    mesh.position.set(position.x, position.y, position.z);
+    return newMesh;
+}
+
+
+
 /**
  * Generates foam toolpaths based on region-based slicing and zigzag infill.
  *
@@ -999,26 +1021,15 @@ function makeGradientMatrix(
 export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObjs: EverydayModel[] & { regions?: SliceRegion[] },
-    // zOffset: number = visualizer.config.zOffset,
-    // deltaZ: number = visualizer.config.deltaZ,
-    // layerNum: number = visualizer.config.foamLayers
 ): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
     const chunkRoots: ChunkNode[] = [];
     let highestStartHeight = -Infinity;
     modelObjs.forEach(modelObj => {
         // Current it applies transformations to the geometry, but its not ideal because
         // that requires us to set the transform back to default after.
-        modelObj.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
-        modelObj.mesh.scale.setScalar(1);
-        const e = new THREE.Euler(
-            modelObj.mesh.rotation.x,
-            modelObj.mesh.rotation.y,
-            modelObj.mesh.rotation.z,
-            'XYZ'
-        );
-        const q = new THREE.Quaternion().setFromEuler(e);
-        modelObj.mesh.geometry.applyQuaternion(q);
-        modelObj.mesh.rotation.set(0, 0, 0);
+        // applyTransforms(modelObj);
+        const transformedMesh = getTransformedMesh(modelObj.mesh);
+
         // Remove previous visualization
         if (modelObj.toolpathVisualizationObject) {
             visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -1032,7 +1043,7 @@ export function generateFoamToolpath(
         visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
         // --- 1. Slice mesh into layers and extract regions ---
-        const layers = sliceMeshIntoLayers(modelObj.mesh, modelObj.toolpathConfig.deltaZ);
+        const layers = sliceMeshIntoLayers(transformedMesh, modelObj.toolpathConfig.deltaZ);
         console.log('Sliced layers:', layers.length, layers);
         let allRegions: SliceRegion[] = [];
         let lowestHeight = Infinity;
@@ -1045,14 +1056,6 @@ export function generateFoamToolpath(
             })
             allRegions.push(...regions);
         }
-
-        // Debug: Log contours for each region
-        // allRegions.forEach((region, idx) => {
-        // console.log(`Region ${idx} at Z=${region.height}:`, region.contour.length, 'points');
-        // if (region.contour.length > 0) {
-        //     console.log('  First point:', region.contour[0]);
-        //     console.log('  Last point:', region.contour[region.contour.length - 1]);
-        // }
         
         const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
         regionTree.forEach(root => {
@@ -1329,6 +1332,10 @@ export function generateNonplanarFoamToolpath(
     modelObj: EverydayModel,
     layerNum: number,
 ): { all: any; foam: any; sense: any } {
+    // applyTransforms(modelObj);
+
+    visualizer.printer.updateParameters(modelObj.toolpathConfig);
+
     const pointMatrix: THREE.Vector3[][] = [];
 
     const samplePoints = modelObj.toolpathSamplePoints!;
@@ -1482,6 +1489,8 @@ export function generateAugmentFoamToolpath(
             if (child.material) child.material.dispose();
         });
     }
+
+    const transformedMesh = getTransformedMesh(modelObj.mesh);
     
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
@@ -1784,7 +1793,6 @@ export function generateAugmentFoamToolpath(
         chunkNode.modelObj = modelObj;
     });
 
-    modelObj.geometry.computeBoundingBox();
     let modelHeight = -Infinity  //modelObj.geometry.boundingBox!.min.z;
     regionTree.forEach(region => {
         if (region.region.height > modelHeight) {
@@ -1801,10 +1809,9 @@ export function generateAugmentFoamToolpath(
         modelHeight,
     );
 
-    modelObj.geometry.computeBoundingBox();
-    const bbox = modelObj.geometry.boundingBox!;
+    transformedMesh.geometry.computeBoundingBox();
+    const bbox = transformedMesh.geometry.boundingBox!;
 
-    // let indicesToRemove: number[] = [];
     for (let i = 0; i < toolpath.length; i++) {
         const point = toolpath[i].point;
         
@@ -1812,33 +1819,35 @@ export function generateAugmentFoamToolpath(
         // Suppose to slightly flatten everything until the top is a flat plane
         const pointZOffset = toolpath[i].hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
         // // new trying
-        // // // Calculate flat top plane height (highest Z in the model + some clearance)
-        const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount;
+        if (modelObj.toolpathConfig.curveAugment) {
+            const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.plaConfig.initialFoamLayerCount;
 
-        const flatTopHeight = (bbox.max.z + modelObj.toolpathConfig.deltaZ * totalLayers);
+            // // // Calculate flat top plane height (highest Z in the model + some clearance)
+            const flatTopHeight = modelObj.augmentSamplePoints ? 
+                getPointHeight(modelObj.augmentSamplePoints, point.clone().sub(modelObj.mesh.position)) + bbox.max.z: 
+                (bbox.max.z + modelObj.toolpathConfig.flatLayerZOffset);
 
-        // 2. Get curved bottom height at this XY positin
-        let curvedBottomHeight = getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position));
+            // 2. Get curved bottom height at this XY position
+            let curvedBottomHeight = getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position));
 
-        // 3. Calculate distance between the thet two
-        const distanceBetweenSurfaces = flatTopHeight - curvedBottomHeight;
+            // 5 increment by the amt
+            const currentLayerZ = point.z - modelObj.mesh.position.z;
+            const layerNumber = Math.round(currentLayerZ / modelObj.toolpathConfig.deltaZ);
 
-        // 4. get increment per layer by dividing
-        const incrementPerLayer = distanceBetweenSurfaces / (totalLayers - 1);
+            // 3. Calculate distance between the thet two
+            const distanceBetweenSurfaces = flatTopHeight - curvedBottomHeight;
 
-        // 5 increment by the amt
-        const currentLayerZ = point.z - modelObj.mesh.position.z;
-        const layerNumber = Math.round(currentLayerZ / modelObj.toolpathConfig.deltaZ);
-        const heightIncrement = incrementPerLayer * layerNumber;
+            // 4. get increment per layer by dividing
+            const incrementPerLayer = distanceBetweenSurfaces / (totalLayers - 1);
 
-        // 6. apply final height
-        const targetHeight = curvedBottomHeight + heightIncrement;
+            const heightIncrement = layerNumber < totalLayers ? incrementPerLayer * layerNumber : 
+                                    incrementPerLayer * (totalLayers - 1) + modelObj.toolpathConfig.deltaZ * (layerNumber - totalLayers + 1);
+            const targetHeight = curvedBottomHeight + heightIncrement;
 
-        point.setZ(modelObj.mesh.position.z + targetHeight + pointZOffset);
-        // End of new trying
-        // Can comment out until here
-
-        // point.setZ(point.z + getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position)) + pointZOffset);
+            point.setZ(modelObj.mesh.position.z + targetHeight + pointZOffset);
+        } else {
+            point.setZ(point.z + getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position)) + pointZOffset);
+        }
     }
 
     // indicesToRemove.sort((a, b) => b - a);
@@ -1932,15 +1941,31 @@ export function generateAugmentFoamToolpath(
     //     toolpathZigzagPath.forEach(layer => toolpath.push(... layer));
     // }
 
-    console.log("Gradient Matrix Length: " + gradientMatrix.length);
-    console.log("Point matrix length: " + samplePointMatrix.length);
+
+    if (visualizer.printer.checkCollisions) {
+        // Only check the first layer for collisions to reduce time.
+        // This only works when each layer is roughly the same size.
+        const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
+            + modelObj.plaConfig.initialFoamLayerCount)).map(p => p.point);
+        transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
+        const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims);
+        console.log("Required additional offset: " + requiredZOffsetAdditional);
+        const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
+        if (requiredZOffsetAdditional > 0) {
+            console.warn("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
+        } else {
+            console.log("Lowest possible H* without collisions: " + recommendedHStar.toFixed(4));
+        }
+        
+        transformedMesh.position.setScalar(0);
+    }
 
 
     for (let i = 0; i < samplePointMatrix.length; i++) {
         const column = samplePointMatrix[i];
         for (let j = 0; j < column.length; j++) {
             const point = column[j].clone().add(modelObj.mesh.position);
-            point.setZ(point.z + 0.00001);
+            point.setZ(point.z + 0.001);
             if (!point) {
                 continue;
             }
@@ -1959,24 +1984,53 @@ export function generateAugmentFoamToolpath(
             visualizationGroup.add(line);
         }
     }
+    
+    toolpath.unshift({
+        point: new THREE.Vector3(toolpath[0].point.x, toolpath[0].point.y, bbox.max.z + 10),
+        travel: true,
+    });
+
+    if (visualizer.printer.generateBoundary) {
+        const expandedContours = generateBoundaryContours(transformedMesh, 1);
+
+        toolpath.unshift({
+            point: new THREE.Vector3(0, visualizer.printer.machine_depth_y, bbox.max.z + 10),
+            travel: true,
+            pause: true,
+        });
+
+        toolpath.unshift({
+            point: new THREE.Vector3(0, visualizer.printer.machine_depth_y, 50),
+            travel: true,
+        });
+        
+        expandedContours.forEach(contour => {
+            contour.forEach(pt => {
+                toolpath.unshift({
+                    point: pt.clone().add(modelObj.mesh.position),
+                    regularSegment: true,
+                })
+            });
+        });
+    } else {
+        toolpath.unshift({
+            point: new THREE.Vector3(0, 0, bbox.max.z + 10),
+            travel: true,
+        });
+    }
 
     // --- 4. Decide what to visualize based on the boolean
-    let pathToVisualize: THREE.Vector3[] = [];
+    const pathToVisualize: THREE.Vector3[] = toolpath.map(p => p.point);
+    let gcodePathToVisualize: THREE.Vector3[] = [];
     if (visualizer.config.showGcodeVisualization && modelObj.gcode) {
         // Parse G-code and visualize actual G-code path
         const gcodePath = parseGcodeToPath(modelObj.gcode!);
-        gcodePath.forEach(layer => pathToVisualize.push(...layer));
+        gcodePath.forEach(layer => gcodePathToVisualize.push(...layer));
         console.log("Visualizing G-code path");
-    } else {
-        // Visualize the intended zigzag path
-        pathToVisualize = toolpath.map(pt => pt.point);
-        console.log("Visualizing intended toolpath");
     }
 
     // --- 5. Visualize the chosen path
-    // const visualizationGroup = new THREE.Group();
-
-    if (pathToVisualize.length === 0) {
+    if (pathToVisualize.length === 0 && gcodePathToVisualize.length === 0) {
         console.warn("No path to visualize");
         return {
             all: toolpath,
@@ -1985,100 +2039,30 @@ export function generateAugmentFoamToolpath(
         };
     }
 
-    if (visualizer.config.showGcodeVisualization) {
-        // For G-code: Create one continuous line connecting all points across all layers
-        const allVertices: number[] = [];
-        pathToVisualize.forEach(point => allVertices.push(point.x, point.y, point.z));
+    const allVertices: number[] = [];
+    pathToVisualize.forEach(point => allVertices.push(point.x, point.y, point.z));
 
-        if (allVertices.length > 0) {
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
+    if (allVertices.length > 0) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
 
-            const material = new THREE.LineBasicMaterial({
-                color: 0x00ff00,
-                linewidth: 2
-            });
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ff00,
+            linewidth: 2
+        });
 
-            const line = new THREE.Line(geometry, material);
-            visualizationGroup.add(line);
-            console.log(`Added G-code visualization with ${allVertices.length / 3} total points`);
-        }
-    } else {
-        const allVertices: number[] = [];
-        pathToVisualize.forEach(point => allVertices.push(point.x, point.y, point.z));
-
-        if (allVertices.length > 0) {
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.Float32BufferAttribute(allVertices, 3));
-
-            const material = new THREE.LineBasicMaterial({
-                color: 0x00ff00,
-                linewidth: 2
-            });
-
-            const line = new THREE.Line(geometry, material);
-            visualizationGroup.add(line);
-            console.log(`Added G-code visualization with ${allVertices.length / 3} total points`);
-        }
-        // For intended toolpath: Create separate lines for each layer (original behavior)
-        // pathToVisualize.forEach((layer, layerIndex) => {
-        //     if (layer.length === 0) return;
-
-        //     const vertices: number[] = [];
-        //     layer.forEach(point => {
-        //         vertices.push(point.x, point.y, point.z);
-        //     });
-
-        //     if (vertices.length === 0) return;
-
-        //     const geometry = new THREE.BufferGeometry();
-        //     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-
-        //     const material = new THREE.LineBasicMaterial({ 
-        //         color: 0x0075ff,
-        //         linewidth: 2
-        //     });
-
-        //     const line = new THREE.Line(geometry, material);
-        //     visualizationGroup.add(line);
-        //     console.log(`Added intended toolpath layer ${layerIndex} with ${layer.length} points`);
-        // });
+        const line = new THREE.Line(geometry, material);
+        visualizationGroup.add(line);
     }
 
-    if (visualizer.printer.checkCollisions) {
-        // Only check the first layer for collisions to reduce time
-        const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
-            + modelObj.plaConfig.initialFoamLayerCount)).map(p => p.point);
-        const requiredZOffsetAdditional = getRequiredZOffset(modelObj.mesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims);
-        console.log("Required Height: " + requiredZOffsetAdditional);
-        const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
-        if (requiredZOffsetAdditional > 0) {
-            console.warn("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
-        } else {
-            console.log("Lowest possible H* without collisions: " + recommendedHStar);
-        }
-    }
-
-    console.log(`Total visualization objects: ${visualizationGroup.children.length}`);
+    // console.log(`Total visualization objects: ${visualizationGroup.children.length}`);
 
     // Add the visualization to the scene
     // Don't apply model position again since G-code already includes it
-    if (visualizer.config.showGcodeVisualization) {
-        // G-code coordinates are already in world space, don't add model position
-        visualizationGroup.position.set(0, 0, 0);
-    }
+    // if (visualizer.config.showGcodeVisualization) {
+    //     visualizationGroup.position.set(0, 0, 0);
+    // }
 
-    const startPath = [new THREE.Vector3(toolpath[0].point.x, toolpath[0].point.y, bbox.max.z + 10), 
-                       new THREE.Vector3(0, 0, bbox.max.z + 10)];
-    
-    startPath.forEach(point => {
-        toolpath.unshift({
-            point: point,
-            travel: true,
-            hStar: 0,
-            vStar: 0,
-        })
-    })
 
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;
@@ -2089,9 +2073,6 @@ export function generateAugmentFoamToolpath(
         sense: []
     };
 }
-
-
-
 
 
 /**

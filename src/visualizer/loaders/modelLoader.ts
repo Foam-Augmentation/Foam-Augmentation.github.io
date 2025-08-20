@@ -111,7 +111,9 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         bumpSpacingY: 15,
                         bumpScale: 1,
                         generateBumps: false,
+                        curveAugment: false,
                         steepnessThreshold: 75,
+                        flatLayerZOffset: 5,
                     },
                     plaConfig: {
                         deltaZ: 1.16,
@@ -129,7 +131,9 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         bumpSpacingY: 15,
                         bumpScale: 1,
                         generateBumps: false,
+                        curveAugment: false,
                         steepnessThreshold: 75,
+                        flatLayerZOffset: 5,
                     },
                     plaOffset: 0,
                     gradient: {
@@ -266,4 +270,102 @@ export function importSvgGradient(modelObj: EverydayModel): void {
   });
 
   input.click();
+}
+
+
+function sampleMesh(
+    mesh: THREE.Mesh,
+    gridSize: number,
+): THREE.Vector3[][] {
+    mesh.geometry.computeBoundingBox();
+    const bbox = mesh.geometry.boundingBox!;
+
+    const samplePoints: THREE.Vector3[][] = [];
+
+    const remainderX = (bbox.max.x - bbox.min.x) % gridSize
+    const remainderY = (bbox.max.y - bbox.min.y) % gridSize
+    let x = bbox.min.x + remainderX / 2;
+
+    while (x < bbox.max.x) {
+        let y = bbox.min.y + remainderY / 2;
+        const column: THREE.Vector3[] = [];
+        while (y < bbox.max.y) {
+            const rayOrigin = new THREE.Vector3(x, y, bbox.max.z + 10);
+            const rayDirection = new THREE.Vector3(0, 0, -1);
+            const raycaster = new THREE.Raycaster(rayOrigin, rayDirection);
+
+            const intersections = raycaster.intersectObject(mesh);
+            if (intersections.length) {
+                column.push(intersections[0].point);
+            }
+            y += gridSize;
+        }
+        samplePoints.push(column);
+        x += gridSize;
+    }
+    return samplePoints;
+}
+
+
+export function importAugmentSTL(
+    modelObj: EverydayModel
+): void {
+    const input: HTMLInputElement = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.stl';
+
+    console.log("Importing stl");
+
+    // Listen for the file selection.
+    input.addEventListener('change', (event: Event) => {
+        const target = event.target as HTMLInputElement;
+        if (!target.files || target.files.length === 0) return;
+        const file = target.files[0];
+
+        const reader = new FileReader();
+
+        reader.onload = (e: ProgressEvent<FileReader>) => {
+            if (!e.target || !e.target.result) return;
+
+            // Parse the STL file into a BufferGeometry.
+            const loader = new STLLoader();
+            const geometry = loader.parse(e.target.result as ArrayBuffer);
+
+            // Compute the bounding box to determine the center.
+            geometry.computeBoundingBox();
+            const bbox = geometry.boundingBox!;
+            const center = new THREE.Vector3();
+            bbox.getCenter(center);
+
+            modelObj.geometry.computeBoundingBox();
+            const modelBbox = modelObj.geometry.boundingBox!;
+
+            // Translate geometry so its center is at the origin.
+            geometry.translate(-center.x, -center.y, -center.z);
+            const scale = Math.max((modelBbox.max.x - modelBbox.min.x) / (bbox.max.x - bbox.min.x), 
+                                   (modelBbox.max.y - modelBbox.min.y) / (bbox.max.y - bbox.min.y));
+            
+            geometry.scale(scale, scale, scale);
+
+            // Create a mesh using the geometry and material.
+            const material = new THREE.MeshStandardMaterial({ color: 0x90ee90 });
+            const mesh = new THREE.Mesh(geometry, material);
+
+            // Position the mesh at the center of the printer's bed.
+            mesh.position.set(
+                0,
+                0,
+                0,
+            );
+
+
+
+            modelObj.augmentSamplePoints = sampleMesh(mesh, modelObj.toolpathConfig.gridSize);
+        };
+
+        reader.readAsArrayBuffer(file);
+    });
+
+    // Programmatically trigger the file input.
+    input.click();
 }
