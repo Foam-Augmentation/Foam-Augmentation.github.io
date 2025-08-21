@@ -305,7 +305,7 @@ export function updateSelection(
 
 
     //generate G-code with start G-code only if first model
-    modelObj.gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1);
+    modelObj.gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam);
 
     // Initialize G-code if empty
     // if (!visualizer.printer.toolpathGcode) {

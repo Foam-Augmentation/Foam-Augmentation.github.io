@@ -199,6 +199,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
   slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
+  slicerFolder.add(visualizer.config, 'bedLeveling').onChange((v: boolean) => {visualizer.printer.bedLeveling = v});
+  slicerFolder.add(visualizer.config, 'testSweep').onChange((v: boolean) => {visualizer.printer.testSweep = v});
   slicerFolder.close();
 
   // const testParamsFolder = settingFolder.addFolder('test params');
@@ -319,7 +321,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam, 1) + visualizer.printer.end_gcode;
+    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode;
     console.log('Generated G-code:', gcode);
     
     // Save G-code file

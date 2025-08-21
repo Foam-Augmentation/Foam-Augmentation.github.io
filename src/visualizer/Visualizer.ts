@@ -102,6 +102,8 @@ export default class Visualizer {
         printHeadMinY: number;
         printHeadMaxX: number;
         printHeadMaxY: number;
+        bedLeveling: boolean;
+        testSweep: boolean;
 
         startHStarTest: number;
         endHStarTest: number;
@@ -216,6 +218,8 @@ export default class Visualizer {
             printHeadMinY: -15,
             printHeadMaxX: 35,
             printHeadMaxY: 70,
+            bedLeveling: false,
+            testSweep: false,
 
             startHStarTest: 5,
             endHStarTest: 10,

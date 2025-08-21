@@ -180,7 +180,7 @@ function addTransformFolder(
         snapToPlate: () => {
             modelObj.mesh.geometry.computeBoundingBox();
             const bbox = modelObj.mesh.geometry.boundingBox!;
-            modelObj.mesh.position.setZ((bbox.max.z - bbox.min.z) / 2);
+            modelObj.mesh.position.setZ((bbox.max.z - bbox.min.z) * modelObj.mesh.scale.z / 2);
             if (transformType.type === 'move') {
                 transformZ.z = modelObj.mesh.position.z;
             }

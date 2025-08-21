@@ -46,6 +46,7 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
     `vStar ${config.vStar}`,
     `vStarEnd ${config.vStarEnd}`,
     `deltaZ ${config.deltaZ}`,
+    `deltaL ${config.deltaL}`,
     `edot ${config.edot}`,
     `gridSize ${config.gridSize}`,
     `initialFoamLayerCount ${config.initialFoamLayerCount}`,

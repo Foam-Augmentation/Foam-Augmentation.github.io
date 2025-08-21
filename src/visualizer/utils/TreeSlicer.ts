@@ -47,8 +47,18 @@ export interface ContourNode {
   parent: ContourNode | null;
 }
 
-// slice mesh into horizontal layers
-export function sliceMeshIntoLayers(mesh: THREE.Mesh, deltaZ: number): { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] {
+
+/**
+ * Slices a mesh into layers represented by a list of segments.
+ * 
+ * @param {THREE.Mesh} mesh The mesh to slice into layers.
+ * @param {number} deltaZ How far apart each layer should be.
+ * @returns {{ z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[]} The list of layers.
+ */
+export function sliceMeshIntoLayers(
+  mesh: THREE.Mesh, 
+  deltaZ: number
+): { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] {
     const geometry = mesh.geometry as THREE.BufferGeometry;
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox!;
@@ -69,6 +79,13 @@ export function sliceMeshIntoLayers(mesh: THREE.Mesh, deltaZ: number): { z: numb
 }
 
 
+/**
+ * Checks to see if a point is in a polygon/contour represented by an ordered list of points.
+ * 
+ * @param point The point to check.
+ * @param polygon The polygon to check if the point is inside.
+ * @returns {boolean} Whether or not the point is inside the polygon
+ */
 export function pointInPolygon(point: THREE.Vector3, polygon: THREE.Vector3[]): boolean {
   let inside = false;
   const x = point.x, y = point.y;
@@ -88,7 +105,14 @@ export function pointInPolygon(point: THREE.Vector3, polygon: THREE.Vector3[]): 
 }
 
 
-// For now just samples one point from the contour so it cant handle contours that intersect
+/**
+ * Determines whether contour2 is inside of contour1.
+ * Doesn't work for contours that intersect each other.
+ * 
+ * @param {THREE.Vector3[]} contour1 The contour to check if it contains the other.
+ * @param {THREE.Vector3[]} contour2 The contour to check if it is inside the other.
+ * @returns {boolean} Whether or not contour1 contains contour2.
+ */
 function contourContainsContour(
   contour1: THREE.Vector3[],
   contour2: THREE.Vector3[],
@@ -97,6 +121,13 @@ function contourContainsContour(
 }
 
 
+/**
+ * From a list of contours, groups them into outer contours and hole contours, then
+ * returns the list of outer contours and the hole contours for each outer.
+ * 
+ * @param contours The list of contours to group.
+ * @returns {{outer: THREE.Vector3[], holes: THREE.Vector3[][]}[]} A list of outer contours and hole contours.
+ */
 function getHolesAndOuters(
   contours: THREE.Vector3[][],
 ): {outer: THREE.Vector3[], holes: THREE.Vector3[][]}[] {
@@ -143,7 +174,14 @@ function getHolesAndOuters(
 }
 
 
-// take line segments and make closed shapes
+/**
+ * Takes in a layer represented by a list of segments and finds separate regions in it.
+ * Separate regions are parts of the layer that are not connected to each other by any segment.
+ * 
+ * @param z The z position of the layer
+ * @param segments The list of segments to find the regions from.
+ * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, bounds, an id, and a height.
+ */
 export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[]): SliceRegion[] {
     if (segments.length === 0) return [];
     

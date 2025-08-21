@@ -58,6 +58,7 @@ export default class Printer {
   public printHeadDims: { min: THREE.Vector2, max: THREE.Vector2 };
   
   public bedLeveling: boolean;
+  public testSweep: boolean;
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
@@ -91,6 +92,7 @@ export default class Printer {
     this.checkCollisions = false;
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
     this.bedLeveling = false;
+    this.testSweep = false;
 
     this.end_gcode = `
 G4 S5; Dwell for 5 Second(s) 
@@ -108,6 +110,11 @@ M73 P100 R0 ; progress to 100%`
   }
 
 
+  /**
+   * Updates the printers parameters.
+   * 
+   * @param {ToolpathConfig} toolpathConfig The toolpath config to update the parameters to.
+   */
   public updateParameters(
     toolpathConfig: ToolpathConfig
   ): void {
@@ -119,26 +126,6 @@ M73 P100 R0 ; progress to 100%`
     this.Edot = toolpathConfig.edot;
   }
 
-  // public updateVisualizerParameters(
-  //   config: Visualizer["config"]
-  // ): void {
-  //   this.nozzleDiameter = config.nozzleDiameter;
-  //   this.nozzleLength = config.nozzleLength;
-  //   this.dieSwelling = config.dieSwelling;
-  //   this.material_bed_temperature = config.bedTemp;
-  //   this.print_temp_left_extruder = config.nozzleLeftTemp;
-  //   this.print_temp_right_extruder = config.nozzleRightTemp;
-  //   this.machine_depth = config.machineDepth;
-  //   this.machine_depth_y = config.machineDepthY;
-  //   this.machine_height = config.machineHeight;
-  //   this.checkCollisions = config.checkCollisions;
-  //   this.useFermatSpirals = config.useFermatSpirals;
-  //   this.diameter_filament = config.filamentDiameter;
-  //   this.printHeadDims = {min: new THREE.Vector2(config.printHeadMinX, config.printHeadMinY), 
-  //                         max: new THREE.Vector2(config.printHeadMaxX, config.printHeadMaxY)},
-  //   this.purgeLine = config.purgeLine;
-  //   this.generateBoundary = config.generateBoundary;
-  // }
 
   /**
    * Builds the starting G-code to initialize printer settings.
@@ -236,8 +223,8 @@ M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec
 M107 ; turns off fan
 M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
 
-M104 S${this.print_temp_left_extruder} ; set extruder temp 
-M190 S${this.material_bed_temperature} ; set bed temp and wait to reach it
+M104 S${this.testSweep ? 20 : this.print_temp_left_extruder} ; set extruder temp 
+M190 S${this.testSweep ? 20 : this.material_bed_temperature} ; set bed temp and wait to reach it
 M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check
 
@@ -255,11 +242,7 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
           
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + 
-      this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) +
-      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1)) + 
-      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1), new THREE.Vector3(5, 7.5, 0.1))
-      : "");
+`;
     } else {
       return `; Parameters:
 ; V* = ${this.V_Star}
@@ -298,21 +281,17 @@ G1 Z0.200 F2400.000
 
 M204 S1000 
 
-`  + (this.purgeLine ? "G0 X5 Y5 Z0.2 F1000\n" + 
-      this.extrude_regular_segment(new THREE.Vector3(5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 5, 0.1)) +
-      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 5, 0.1), new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1)) + 
-      this.extrude_regular_segment(new THREE.Vector3(this.machine_depth - 5, 7.5, 0.1), new THREE.Vector3(5, 7.5, 0.1))
-      : "");
+`;
     }
   }
 
   /**
-   * Generates the G-code command for moving the print head to a target position.
+   * Generates the G-code command for moving the print head to a target position without extruding.
    *
-   * @param {[number, number, number]} target - The target [x, y, z] coordinates.
+   * @param {THREE.Vector3} target - The target coordinates.
    * @returns {string} The G-code command for moving to the target position.
    */
-  public move_to_position(target: THREE.Vector3): string {
+  public moveToPosition(target: THREE.Vector3): string {
     return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.printHead_speed_when_free_move}`;
   }
 
@@ -323,16 +302,11 @@ M204 S1000
    * @private
    * @param {THREE.Vector3} p0 - The starting point.
    * @param {THREE.Vector3} p1 - The ending point.
-   * @param {number} extrusion_speed_when_foam - The foam extrusion speed.
-   * @param {number} printHead_speed_when_foam - The print head speed when extruding foam.
    * @returns {string} The G-code command for the extrusion segment.
    */
-
-  private extrude_single_segment(
+  private extrudeSingleSegment(
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-    isFirstInLayer: boolean = false,
-    extrude: boolean = true,
   ): string {
     // Extract Vector3 points regardless of input type
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
@@ -344,30 +318,39 @@ M204 S1000
     const S = gamma / (beta * this.V_Star);
     const F = this.Edot / S;
 
-    // console.log("📌 Extruding segment: ", { p0Point, p1Point });
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
 
     this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
     let gcode = '';
 
-    if (isFirstInLayer) {
-      gcode += `G1 X${p0Point.x.toFixed(6)} Y${p0Point.y.toFixed(6)} Z${p0Point.z.toFixed(6)} E0.0050 F0114 ; Move to start of new layer\n`;
-    }
+    // if (isFirstInLayer) {
+    //   gcode += `G1 X${p0Point.x.toFixed(6)} Y${p0Point.y.toFixed(6)} Z${p0Point.z.toFixed(6)} E0.0050 F0114 ; Move to start of new layer\n`;
+    // }
 
-    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${extrude ? this.extrudedAmount.toFixed(6) : 0} F0${Math.round(F)}`;
+    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
 
     return gcode;
   }
 
 
-  private extrude_regular_segment(
+  /**
+   * Extrudes a regular line of filament between two points.
+   * The intended layer height of the extrusion is the nozzle diameter / 2 and the
+   * intended width of the extrusion is the thread diameter.
+   * Currently multiplied by 2 becuase it didn't seem like enough otherwise.
+   * 
+   * @param {THREE.Vector3} p0 The point the toolhead is coming from
+   * @param {THREE.Vector3} p1 The point the toolhead is moving to.
+   * @returns  {string} The gcode to print the segment.
+   */
+  private extrudeRegularSegment(
     p0: THREE.Vector3,
     p1: THREE.Vector3,
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
     const beadArea = this.dieSwelling * Math.pow(this.nozzleDiameter, 2) / 2;
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
-    const filamentPerMM = (beadArea / crossSection) * 2; // Multiplied by 2 because wasnt enough otherwise.
+    const filamentPerMM = (beadArea / crossSection) * 2;
     const dist = this.norm(p0, p1);
     const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.printHead_speed_when_free_move}`;
     return gcode;
@@ -376,6 +359,7 @@ M204 S1000
 
   /**
    * Generates the base (boundary) G-code based on the bottom boundary of the model.
+   * This prints a rectangular bounding box.
    * This is intended for PLA printing.
    *
    * @param {THREE.Vector3[]} constrainBounding - An array of at least 4 points defining the bottom boundary.
@@ -384,7 +368,7 @@ M204 S1000
    * @param {number} [layerHeight=0.2] - The Z height for the base layer.
    * @returns {string} The generated base G-code.
    */
-  public generate_base_constraints(
+  public generateBaseConstraints(
     constrainBounding: THREE.Vector3[],
     offset: number = 0.2,
     extruderId: number = 2,
@@ -416,11 +400,9 @@ M204 S1000
     body_gcode.push("M205 X8 Y8; tune down acceleration");
     body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
 
-
-
     for (let i = 0; i < corners.length - 1; i++) {
       body_gcode.push(
-        this.extrude_single_segment(
+        this.extrudeSingleSegment(
           corners[i],
           corners[i + 1],
         )
@@ -433,22 +415,17 @@ M204 S1000
     return body_gcode.join("\n");
   }
 
+
   /**
    * Generates foam toolpath G-code from a given toolpath.
    *
-   * @param {THREE.Vector3[]} toolpath - A two-dimensional array of points where each sub-array represents a layer of the toolpath.
-   * @param {number} extruderId - The extruder ID (1 for left, otherwise right).
+   * @param {PathPoint[]} toolpath The points to turn into gcode in order with correct properties.
+   *                               Any point that isn't a travel movement or regular segment should have
+   *                               hStar, vStar, and edot among their properties.
    * @returns {string} The generated foam toolpath G-code.
    */
-  // public generate_foam_gcode(
-  //   toolpath: PathPoint[],
-  //   extruderId: number,
-  //   modelPosition: THREE.Vector3 = new THREE.Vector3(0, 0, 0)
-  // )
   public generate_foam_gcode(
-    toolpath: PathPoint[],
-    extruderId: number,
-    includeStart: boolean = true
+    toolpath: PathPoint[]
   ) : string {
     if (toolpath.length === 0) {
       console.error("Toolpath is empty.");
@@ -483,16 +460,16 @@ M109 S${230} ; wait for extruder temp\n\n`
         )
       }
 
-      if (point.regularSegment) {
+      if (point.regularSegment && !this.testSweep) {
         body_gcode.push(
-          this.extrude_regular_segment(
+          this.extrudeRegularSegment(
             lastTarget, 
             currentPoint
           )
         );
-      } else if (point.travel) {
+      } else if (point.travel || this.testSweep) {
         body_gcode.push(
-          this.move_to_position(currentPoint)
+          this.moveToPosition(currentPoint)
         );
       } else {
         this.V_Star = point.vStar!;
@@ -500,10 +477,9 @@ M109 S${230} ; wait for extruder temp\n\n`
         this.Edot = point.edot!;
         this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
         body_gcode.push(
-          this.extrude_single_segment(
+          this.extrudeSingleSegment(
             lastTarget,
-            currentPoint,
-            false
+            currentPoint
           )
         );
       }
@@ -514,25 +490,6 @@ M109 S${230} ; wait for extruder temp\n\n`
     body_gcode.push("G92 E0");
     this.extrudedAmount = 0;
 
-    //og
-    // this.toolpathGcode =
-    //   this.build_start_gcode(extruderId) +
-    //   "\n\n" +
-    //   this.boundaryGcode +
-    //   "\n\n" +
-    //   body_gcode.join("\n") +
-    //   "\n\n" +
-    //   this.end_gcode;
-
-    // return this.toolpathGcode;
-
-
-    // let gcode = "";
-    // if (includeStart) {
-    //   gcode += this.build_start_gcode(extruderId) + "\n\n";
-    // }
-    // gcode += body_gcode.join("\n");
-    // gcode += this.end_gcode;
     return body_gcode.join("\n");
   }
 
