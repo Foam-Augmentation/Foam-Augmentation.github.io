@@ -273,7 +273,9 @@ export function getTrianglePlaneIntersection(a: THREE.Vector3, b: THREE.Vector3,
  * @param {{ start: THREE.Vector3; end: THREE.Vector3 }[]} segments - The contour in the form of line segments.
  * @returns {THREE.Vector3[][]} The ordered lists of points making up the contour.
  */
-export function connectSegments(segments: { start: THREE.Vector3; end: THREE.Vector3 }[]): THREE.Vector3[][] {
+export function connectSegments(
+  segments: { start: THREE.Vector3; end: THREE.Vector3 }[]
+): THREE.Vector3[][] {
     if (segments.length === 0) return [];
     
     const contours: THREE.Vector3[][] = [];
@@ -487,7 +489,9 @@ export function buildRegionTree(
 
 /**
  * Builds a tree of printable chunks from a tree of regions by splitting the regions into
- * super nodes and splitting the supernodes when they overlap. 
+ * super nodes and splitting the supernodes when they overlap. Note, this does not group
+ * nodes when they are closer than nozzle width/2, so there may be issues if regions are
+ * very close to each other.
  * 
  * @param {RegionNode[]} roots The root nodes of the region tree.
  * @param {number} nozzleHeight The height of the nozzle.
@@ -533,6 +537,13 @@ export function buildChunkTree(
 }
 
 
+/**
+ * Finds nodes in a tree whose heights overlap with the given node.
+ * 
+ * @param {ChunkNode[]} roots The roots of the tree to find siblings in.
+ * @param {ChunkNode} rootToFindSiblings The node to find the siblings of.
+ * @returns {ChunkNode[]} The list of siblings found.
+ */
 function findHeightSiblings(
   roots: ChunkNode[],
   rootToFindSiblings: ChunkNode,
@@ -552,6 +563,13 @@ function findHeightSiblings(
 }
 
 
+/**
+ * Splits the chunks in a tree into smaller nodes when one node overlaps with another.
+ * This is to prevent overlap being printed, and then the printer attempting to print
+ * something below the overlap.
+ * 
+ * @param {ChunkNode[]} roots The roots of the tree to split.
+ */
 function splitChunkTreeByOverlap(
   roots: ChunkNode[],
 ): void {
@@ -679,8 +697,15 @@ function findParentInTree(region: SliceRegion, regionTree: RegionNode[]): Region
 // }
 
 
-// Makes a clipper path from a 2D contour
-function toClipperPath(loop: THREE.Vector2[]) {
+/**
+ * Makes a 2D contour into a path readable by clipper, while scaling it up.
+ * 
+ * @param {THREE.Vector2[]} loop The 2D contour.
+ * @returns {ClipperLib.IntPoint[]} The clipper path.
+ */
+function toClipperPath(
+  loop: THREE.Vector2[]
+): ClipperLib.IntPoint[] {
   return loop.map(pt => ({
     X: Math.round(pt.x * CLIPPER_SCALE),
     Y: Math.round(pt.y * CLIPPER_SCALE),
@@ -688,7 +713,12 @@ function toClipperPath(loop: THREE.Vector2[]) {
 }
 
 
-// Gets a 2D contour from a clipper path
+/**
+ * Makes a clipper path into a 2D contour while scaling it down.
+ * 
+ * @param {ClipperLib.IntPoint[]} loop The clipper path.
+ * @returns {THREE.Vector2[]} The 2D contour.
+ */
 function fromClipperPath(path: ClipperLib.IntPoint[]) {
   return path.map(pt =>
     new THREE.Vector2(pt.X / CLIPPER_SCALE, pt.Y / CLIPPER_SCALE)
@@ -696,8 +726,15 @@ function fromClipperPath(path: ClipperLib.IntPoint[]) {
 }
 
 
-// Gets the signed area of a clipper path
-function clipperArea(path: ClipperLib.IntPoint[]) {
+/**
+ * Gets the signed area of a clipper path.
+ * 
+ * @param {ClipperLib.IntPoint[]} path The clipper path.
+ * @returns {number} The signed area.
+ */
+function clipperArea(
+  path: ClipperLib.IntPoint[]
+): number {
   let area = 0;
   for (let i = 0; i < path.length; i++) {
     const p1 = path[i], p2 = path[(i + 1) % path.length];
@@ -747,6 +784,14 @@ function preparePaths(
 }
 
 
+/**
+ * Gets a point a certain distance along a line.
+ * 
+ * @param {THREE.Vector3} a The start point of the line.
+ * @param {THREE.Vector3} b The end point of the line.
+ * @param {number} distance The distance, from the start point, along the line to get the point at.
+ * @returns {THREE.Vector3} The point along the line.
+ */
 export function pointAlongLine(
   a: THREE.Vector3,
   b: THREE.Vector3,
@@ -842,7 +887,7 @@ function spiralContours(
 }
 
 /**
- * Work in progress and buggy
+ * Work in progress and buggy, mostly has a bug when the path splits into multiple branches.
  * Connects a tree of inset isocontours into a continous fermat sprial.
  * 
  * @param {ContourNode} isocontoursRoot The root node of the inset contour tree.
@@ -1260,27 +1305,6 @@ export function getBaseContour(mesh: THREE.Mesh): { start: THREE.Vector3; end: T
  * @param {number} offset How much to offset the contour outwards by.
  * @returns {THREE.Vector3[]} The offset contour.
  */
-// export function offsetContour(
-//   contour: THREE.Vector3[],
-//   offset: number,
-// ): THREE.Vector3[] {
-//   const expandedContour: THREE.Vector3[] = [];
-//   for (let i = 0; i < contour.length; i++) {
-//     const point = contour[i];
-
-//     // compute the normal using the two points next to the current point
-//     const tangent = getTangentAtPoint(contour, i);
-//     let norm = new THREE.Vector2(-tangent.y, tangent.x).normalize();
-//     if (getWindingOrder(contour)) {
-//       norm.negate();
-//     }
-
-//     expandedContour.push(new THREE.Vector3(point.x + norm.x * offset, 
-//                                             point.y + norm.y * offset, 
-//                                             point.z));
-//   }
-//   return expandedContour;
-// }
 export function offsetContour(
   contour: THREE.Vector3[],
   offset: number
@@ -1324,20 +1348,12 @@ export function offsetContour(
 }
 
 
-function getTangentAtPoint(
-  contour: THREE.Vector3[],
-  pointIndex: number
-): THREE.Vector2 {
-  const lastPoint = contour[(pointIndex - 1 + contour.length) % contour.length];
-  const point = contour[pointIndex];
-  const nextPoint = contour[(pointIndex + 1) % contour.length];
-
-  const lastToCur = new THREE.Vector2(point.x - lastPoint.x, point.y - lastPoint.y).normalize();
-  const curToNext = new THREE.Vector2(nextPoint.x - point.x, nextPoint.y - point.y).normalize();
-  return lastToCur.add(curToNext).normalize();
-}
-
-
+/**
+ * Determines if a contour winds Counter clock wise or clock wise.
+ * 
+ * @param {THREE.Vector3[]} contour The contour to determine the winding order of.
+ * @returns {boolean} True if counter clockwise, false if clockwise.
+ */
 export function getWindingOrder(
   contour: THREE.Vector3[]
 ): boolean {
@@ -1345,11 +1361,20 @@ export function getWindingOrder(
   for (let i = 1; i < contour.length; i++) {
     signedArea += contour[i - 1].x * contour[i].y - contour[i].x * contour[i - 1].y;
   }
+  signedArea += contour[contour.length - 1].x * contour[0].y - contour[0].x * contour[contour.length - 1].y;
   return signedArea > 0;
 }
 
 
-
+/**
+ * Turns a point cloud into slice regions with an outer contour and hole contours.
+ * 
+ * @param {THREE.Vector3[]} points The point cloud.
+ * @param {number} alpha The circumradius threshold for triangles. Infinity will include all triangles,
+ *                       while a lower alpha will remove triangles that stretch a long distsance, allowing
+ *                       the capturing of holes.
+ * @returns {SliceRegion[]} The extracted slice regions.
+ */
 export function extractRegionsFromPointCloud(
   points: THREE.Vector3[],
   alpha: number = Infinity

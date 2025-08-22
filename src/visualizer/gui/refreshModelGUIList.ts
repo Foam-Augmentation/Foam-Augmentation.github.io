@@ -364,10 +364,7 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
     paramsFolder.add(modelObj.toolpathConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
-    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size').onChange(() => {
-        sampleSelectedMesh(visualizer, modelObj);
-        // generateFoamToolpath(visualizer, modelObj);
-    });
+    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
     paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
     paramsFolder.add(modelObj.toolpathConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
     paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 100, 0.01).name('H*');
@@ -378,28 +375,26 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
 
-    const paramsFolderPLA = modelGUIitem.addFolder('pla params');
-    paramsFolderPLA.domElement.classList.add('params-folder-pla');
+    const paramsFolderInitial = modelGUIitem.addFolder('initial params');
+    paramsFolderInitial.domElement.classList.add('params-folder-initial');
 
-    paramsFolderPLA.add(modelObj.plaConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
+    paramsFolderInitial.add(modelObj.initialConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
-    paramsFolderPLA.add(modelObj.plaConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size (deltaL)').onChange(() => {
-        sampleSelectedMesh(visualizer, modelObj);
-        // generateFoamToolpath(visualizer, modelObj);
-    });
-    paramsFolderPLA.add(modelObj.plaConfig, 'vStar', 0.01, 5, 0.01).name('V*');
-    paramsFolderPLA.add(modelObj.plaConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
-    paramsFolderPLA.add(modelObj.plaConfig, 'hStar', 0.01, 100, 0.01).name('H*');
-    paramsFolderPLA.add(modelObj.plaConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
-    paramsFolderPLA.add(modelObj.plaConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
+    paramsFolderInitial.add(modelObj.initialConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolderInitial.add(modelObj.initialConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
+    paramsFolderInitial.add(modelObj.initialConfig, 'vStar', 0.01, 5, 0.01).name('V*');
+    paramsFolderInitial.add(modelObj.initialConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
+    paramsFolderInitial.add(modelObj.initialConfig, 'hStar', 0.01, 100, 0.01).name('H*');
+    paramsFolderInitial.add(modelObj.initialConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
+    paramsFolderInitial.add(modelObj.initialConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
     // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
-    paramsFolderPLA.add(modelObj, 'plaOffset', 0, 50, 0.01).name('PLA Offset');
+    paramsFolderInitial.add(modelObj, 'initialOffset', 0, 50, 0.01).name('Layer Offset');
 
-    paramsFolderPLA.add(modelObj.plaConfig, 'initialFoamLayerCount', 0, 20, 1).name('Initial PLA Foam Layers').onChange(() => {
+    paramsFolderInitial.add(modelObj.initialConfig, 'initialFoamLayerCount', 0, 20, 1).name('Initial Foam Layers').onChange(() => {
         visualize_All_Layers(visualizer, modelObj);
     });
     // paramsFolderPLA.add(modelObj.plaConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers').onChange(() => {
@@ -416,7 +411,7 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
 
     paramsFolder.close();
-    paramsFolderPLA.close();
+    paramsFolderInitial.close();
 }
 
 

@@ -303,9 +303,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
 
   // Create TreeSlicer folder
-  const treeSlicerFolder = gui.addFolder('TreeSlicer Operations');
+  const treeSlicerFolder = gui.addFolder('Foam Slicing');
   treeSlicerFolder.add({ sliceModel: () => {
-    console.log('Slice Model button clicked');
+    console.log('Slice Plate button clicked');
 
     const models: EverydayModel[] = visualizer.everydayModelList.map(model => model as EverydayModel);
     
@@ -328,7 +328,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     console.log('Saving G-code file...');
     visualizer.saveGcodeToFile(gcode, "toolpath");
     console.log('G-code file saved successfully');
-  }}, 'sliceModel').name('Slice Selected Model');
+  }}, 'sliceModel').name('Slice Plate');
   treeSlicerFolder.close();
 
   // Open the GUI.

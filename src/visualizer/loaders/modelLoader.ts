@@ -115,7 +115,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
                     },
-                    plaConfig: {
+                    initialConfig: {
                         deltaZ: 1.16,
                         gridSize: 1,
                         deltaL: 1.7,
@@ -135,7 +135,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
                     },
-                    plaOffset: 0,
+                    initialOffset: 0,
                     gradient: {
                         width: 1,
                         height: 1,
