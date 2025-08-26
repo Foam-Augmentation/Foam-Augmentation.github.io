@@ -2011,7 +2011,34 @@ export function generateAugmentFoamToolpath(
             point.setZ(modelObj.mesh.position.z + targetHeight + pointZOffset);
         } else {
             point.setZ(point.z + getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position)) + pointZOffset);
+            // const rawHeight = getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position));
+            // const previousHeight = i > 0 ? (toolpath[i-1].point.z - modelObj.mesh.position.z) : rawHeight;
+            // const maxStep = 0.5; // Maximum Z change per point
+
+            // const clampedHeight = Math.max(previousHeight - maxStep, 
+            //                             Math.min(previousHeight + maxStep, rawHeight));
+
+            // point.setZ(point.z + clampedHeight + pointZOffset);
         }
+    }
+
+    const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
+
+    //flat layers
+    const additionalFlatLayers = 3;
+    const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
+
+    for (let layer = 1; layer <= additionalFlatLayers; layer++) {
+        topLayerPoints.forEach(point => {
+            toolpath.push({
+                ...point,
+                point: new THREE.Vector3(
+                    point.point.x,
+                    point.point.y,
+                    maxZ + (layer * modelObj.toolpathConfig.deltaZ)
+                )
+            });
+        });
     }
 
     // indicesToRemove.sort((a, b) => b - a);
