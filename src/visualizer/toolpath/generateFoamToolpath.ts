@@ -235,7 +235,6 @@ function _visualizeSegments(globalSegments: { point: THREE.Vector3, type: string
  * @param visualizer 
  * @param modelObj 
  */
-
 export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayModel): void {
     /** remove previous toolpathVisualizationObject */
     if (modelObj.toolpathVisualizationObject) {
@@ -359,21 +358,24 @@ function generateZigzagInfill(contour: THREE.Vector3[], z: number, params: { spa
 }
 
 
-function foamGradient(
-    position: THREE.Vector3,
-    bounds: { min: THREE.Vector3, max: THREE.Vector3 }
-): number {
-    return 1 - (bounds.max.y - position.y) / (bounds.max.y - bounds.min.y)
-}
-
-
+/**
+ * Gets the smallest distance from a contour to a given point.
+ * 
+ * @param {THREE.Vector3} point The point to find the distance to
+ * @param {THREE.Vector3} contour The contour to find the distance from
+ * @returns {number} The lowest possible distance from the given contour to the given point.
+ */
 function contourDistToPoint(
     point: THREE.Vector3,
     contour: THREE.Vector3[]
 ): number {
     let lowestDist = Infinity
+    let lastPoint = contour[contour.length - 1];
     for (const contourPoint of contour) {
-        const dist = point.distanceTo(contourPoint);
+        let closestPointOnLine: THREE.Vector3 = new THREE.Vector3;
+        const line = new THREE.Line3(lastPoint, contourPoint);
+        line.closestPointToPoint(point, true, closestPointOnLine);
+        const dist = point.distanceTo(closestPointOnLine);
         if (dist < lowestDist) {
             lowestDist = dist;
         }
@@ -382,16 +384,15 @@ function contourDistToPoint(
 }
 
 
-function printTree(
-    root: ChunkNode
-): void {
-    console.log("Children num: " + root.children.length);
-    for (const child of root.children) {
-        printTree(child);
-    }
-}
-
-
+/**
+ * Fills a toolpath with points so that the maximum distance between points is fillDist.
+ * Maintains parameters for filled points.
+ * Used for curving the toolpath and for gradients.
+ * 
+ * @param {PathPoint[]} toolpath The toolpath to fill
+ * @param {number} fillDist The maximum distance points can be from each other in the toolpath
+ * @returns {PathPoint[]} The new path filled with points.
+ */
 function fillToolpath(
     toolpath: PathPoint[],
     fillDist: number
@@ -408,6 +409,9 @@ function fillToolpath(
                 newPath.push({
                     point: pointAlongLine(point.point, nextPoint.point, i * fillDist), 
                     travel: nextPoint.travel,
+                    hStar: point.hStar,
+                    vStar: point.vStar,
+                    edot: point.edot,
                 });
             }
         }
@@ -418,6 +422,13 @@ function fillToolpath(
 }
 
 
+/**
+ * Fills a contour so the maximum distance between points is fillDist.
+ * 
+ * @param {THREE.Vector3[]} contour The contour to fill
+ * @param {number} fillDist The maximum distance between points
+ * @returns {THREE.Vector3[]} The new filled contour
+ */
 function fillContour(
     contour: THREE.Vector3[],
     fillDist: number
@@ -432,9 +443,6 @@ function fillContour(
         if (dist > fillDist) {
             for (let i = 1; i < Math.floor(dist / fillDist); i++) {
                 newPath.push(pointAlongLine(point, nextPoint, i * fillDist));
-                if (!newPath[newPath.length - 1]) {
-                    console.log("Undefined point");
-                }
             }
         }
     }
@@ -750,7 +758,7 @@ function makeChunkTreePath(
 
     // avoid collissions by only moving to the x and y first if current point is above next point, 
     // otherwise move in the z first then x and y.
-    const toolpath: PathPoint[] = [];
+    let toolpath: PathPoint[] = [];
     if (chunkPath.length) {
         if (lastLayerPoint.z >= chunkPath[0].point.z) {
             toolpath.push({
@@ -769,7 +777,13 @@ function makeChunkTreePath(
                 edot: chunkPath[0].edot,
             });
         }
+        // toolpath.push(chunkPath[0]);
     }
+
+    // console.log("Toolpath before: " + toolpath);
+    // toolpath = fillToolpath(toolpath, 0.5);
+    // console.log("Toolpath after: " + toolpath);
+
 
     roots[printIndex].children.forEach(child => {
         child.modelObj = roots[printIndex].modelObj;
@@ -789,6 +803,8 @@ function makeChunkTreePath(
     for (const point of restOfPath) {
         toolpath.push(point);
     }
+
+    toolpath = fillToolpath(toolpath, 0.5);
 
     return toolpath
 }
@@ -2025,20 +2041,22 @@ export function generateAugmentFoamToolpath(
     const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
 
     //flat layers
-    const additionalFlatLayers = 3;
-    const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
+    if (modelObj.toolpathConfig.curveAugment) {
+        const additionalFlatLayers = 3;
+        const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
 
-    for (let layer = 1; layer <= additionalFlatLayers; layer++) {
-        topLayerPoints.forEach(point => {
-            toolpath.push({
-                ...point,
-                point: new THREE.Vector3(
-                    point.point.x,
-                    point.point.y,
-                    maxZ + (layer * modelObj.toolpathConfig.deltaZ)
-                )
+        for (let layer = 1; layer <= additionalFlatLayers; layer++) {
+            topLayerPoints.forEach(point => {
+                toolpath.push({
+                    ...point,
+                    point: new THREE.Vector3(
+                        point.point.x,
+                        point.point.y,
+                        maxZ + (layer * modelObj.toolpathConfig.deltaZ)
+                    )
+                });
             });
-        });
+        }
     }
 
     // indicesToRemove.sort((a, b) => b - a);

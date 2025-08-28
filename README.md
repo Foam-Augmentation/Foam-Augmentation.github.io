@@ -12,10 +12,10 @@ Click `Import Everyday STL Model` and select an `stl` file to import. The app sh
 - If you don't want to have to set all the parameters again in the future, press `Export Preset` under the `Presets` folder so you can import them easily in the future.
 
 <div align="center", style="margin: 20px;">
-  <table>
+  <table style="border-width: 0px;">
     <tr>
       <td align="center">
-          <img src="src/images/params.png" width="300"><br>
+        <img src="src/images/params.png" width="300"><br>
         <img src="src/images/presets.png" width="300" style="margin-top: 50px;">
       </td>
       <td align="center">

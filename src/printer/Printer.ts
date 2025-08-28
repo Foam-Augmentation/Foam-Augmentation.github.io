@@ -225,7 +225,7 @@ M862.1 P${this.nozzleDiameter} ; nozzle diameter check
 
 M104 S${this.testSweep ? 20 : this.print_temp_left_extruder} ; set extruder temp 
 M190 S${this.testSweep ? 20 : this.material_bed_temperature} ; set bed temp and wait to reach it
-M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M109 S${this.testSweep ? 20 : this.print_temp_left_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check
 
 G28 ; home axes

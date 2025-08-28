@@ -319,9 +319,13 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
         return;
     }
     
+    
+
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode;
+    const gcode = visualizer.printer.build_start_gcode(1) + 
+                  visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode + 
+                  visualizer.printer.end_gcode;
     console.log('Generated G-code:', gcode);
     
     // Save G-code file
