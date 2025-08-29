@@ -114,6 +114,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         curveAugment: false,
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
+                        additionalCurveLayers: 3,
                     },
                     initialConfig: {
                         deltaZ: 1.16,
@@ -134,6 +135,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         curveAugment: false,
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
+                        additionalCurveLayers: 3,
                     },
                     initialOffset: 0,
                     gradient: {

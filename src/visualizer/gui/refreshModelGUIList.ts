@@ -468,6 +468,7 @@ export function addAugmentFolder(
     augmentFolder.add(modelObj.toolpathConfig, 'initialFoamLayerCount', 0, 20, 1).name('Foam Layers');
     augmentFolder.add(modelObj.toolpathConfig, 'steepnessThreshold', 0, 90, 0.01).name('Max Angle');
     augmentFolder.add(modelObj.toolpathConfig, 'flatLayerZOffset', 0, 100, 0.01).name("Flat Layer Z Offset");
+    augmentFolder.add(modelObj.toolpathConfig, 'additionalCurveLayers', 0, 100, 1).name("Additional Curve Layers");
     // augmentFolder.add(modelObj.toolpathConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers');
     // augmentFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers');
     

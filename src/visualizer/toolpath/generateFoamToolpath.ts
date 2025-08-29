@@ -379,6 +379,7 @@ function contourDistToPoint(
         if (dist < lowestDist) {
             lowestDist = dist;
         }
+        lastPoint = contourPoint;
     }
     return lowestDist;
 }
@@ -697,10 +698,12 @@ function makeChunkPath(
 
 /**
  * Makes a toolpath that minimizes travel movements given a tree of printable chunk regions.
+ * Expects the roots to have a modelObj object.
  * 
  * @param {ChunkNode[]} roots The root nodes of the chunk tree.
  * @param {number} nozzleHeight The height of the printer's nozzle.
  * @param {boolean} useFermatSpirals Whether it should make infill with fermat spirals. If false will use a rectilinear path.
+ * @param {THREE.Vector3} modelPosition The position of the model object.
  * @param {THREE.Vector3} lastLayerPoint It will try to start the print as close to this point as possible.
  *                                       It's mostly here for recursive calls and defaults to (0, 0, 0).
  * @param {number} modelHeight The distance from the base of the model to the print bed.
@@ -744,7 +747,7 @@ function makeChunkTreePath(
     let printIndex = 0;
     let lowestDist = Infinity;
     for (const i of printableChunkIndices) {
-        const dist = contourDistToPoint(lastLayerPoint, roots[i].regions[0].contour);
+        const dist = contourDistToPoint(lastLayerPoint.clone().sub(roots[i].modelObj!.mesh.position), roots[i].regions[0].contour);
         if (dist < lowestDist) {
             lowestDist = dist;
             printIndex = i;
@@ -777,12 +780,7 @@ function makeChunkTreePath(
                 edot: chunkPath[0].edot,
             });
         }
-        // toolpath.push(chunkPath[0]);
     }
-
-    // console.log("Toolpath before: " + toolpath);
-    // toolpath = fillToolpath(toolpath, 0.5);
-    // console.log("Toolpath after: " + toolpath);
 
 
     roots[printIndex].children.forEach(child => {
@@ -793,7 +791,14 @@ function makeChunkTreePath(
 
     let restOfPath: PathPoint[] = [];
     if (roots.length) {
-        restOfPath = makeChunkTreePath(roots, nozzleHeight, useFermatSpirals, chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, modelHeight, scanX);
+        restOfPath = makeChunkTreePath(
+            roots,
+            nozzleHeight, 
+            useFermatSpirals,
+            chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, 
+            modelHeight, 
+            scanX
+        );
     }
 
     // add the path in a for loop to avoid maximum call stack error for super long paths
@@ -1112,6 +1117,26 @@ export function generateFoamToolpath(
     let highestStartHeight = -Infinity;
     const boundaryPath: PathPoint[] = [];
     modelObjs.forEach(modelObj => {
+        if (modelObj.toolpathVisualizationObject) {
+            visualizer.scene.remove(modelObj.toolpathVisualizationObject);
+            modelObj.toolpathVisualizationObject.traverse((child: any) => {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) child.material.dispose();
+            });
+        }
+
+        if (modelObj.pointsMesh_sense) {
+            visualizer.scene.remove(modelObj.pointsMesh_sense);
+            modelObj.pointsMesh_sense.geometry.dispose();
+            (modelObj.pointsMesh_sense.material as THREE.Material).dispose();
+        }
+
+        if (modelObj.pointsMesh_foam) {
+            visualizer.scene.remove(modelObj.pointsMesh_foam);
+            modelObj.pointsMesh_foam.geometry.dispose();
+            (modelObj.pointsMesh_foam.material as THREE.Material).dispose();
+        }
+
         const transformedMesh = getTransformedMesh(modelObj.mesh);
         if (visualizer.printer.generateBoundary) {
             addBoundary(boundaryPath, transformedMesh, modelObj.mesh.position, visualizer.printer.machine_depth_y, 1, 1, false);
@@ -1484,7 +1509,7 @@ function getPlaneHeightAtXY(
 
 /**
  * Given a sorted matrix of points making up a surface, finds the 
- * height of a point if projected onto that matrix.
+ * height of a point if projected downwards onto that matrix.
  * 
  * @param {THREE.Vector3[][]} matrix The sorted matrix of points, with columns having a constant x value.
  * @param {THREE.Vector3} point The point to find the height of.
@@ -1521,8 +1546,6 @@ function getPointHeight(
 }
 
 
-// Slices a model following a curved rectilinear path. The first layer is flat, then
-// each subsequent layer curves more and more until it eventually matches the passed in model.
 /**
  * Not in use
  * Slices a model to print it by slowly curving a toolpath until it reaches the desired shape of the model.
@@ -1810,6 +1833,8 @@ export function generateAugmentFoamToolpath(
     const bumpRegions: SliceRegion[] = [];
     const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(samplePoints, 5);
 
+    const flatLayerNum = modelObj.toolpathConfig.additionalCurveLayers;
+
     if (modelObj.toolpathConfig.generateBumps) {
         modelObj.bumpMesh!.scale.setScalar(modelObj.toolpathConfig.bumpScale);
         const transformedBumpMesh = getTransformedMesh(modelObj.bumpMesh!);
@@ -1860,7 +1885,7 @@ export function generateAugmentFoamToolpath(
         }
 
         // Add the bump contours to every point we want to add a bump at.
-        const bumpHeight = modelObj.toolpathConfig.initialFoamLayerCount * modelObj.toolpathConfig.deltaZ;
+        const bumpHeight = (modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount + flatLayerNum) * modelObj.toolpathConfig.deltaZ;
         bumpPoints.forEach(p => {
             // Use .some so we can break by returning true
             bumpContours.some(contour => {
@@ -1953,7 +1978,8 @@ export function generateAugmentFoamToolpath(
     }
     
 
-    for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount; i++) {
+    for (let i = 0; i < modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount + 
+                        (modelObj.toolpathConfig.curveAugment ? flatLayerNum : 0); i++) {
         const z = i * modelObj.toolpathConfig.deltaZ;
         sliceRegions.push(...cloudSliceRegions.map(region => {
             return {
@@ -2041,23 +2067,23 @@ export function generateAugmentFoamToolpath(
     const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
 
     //flat layers
-    if (modelObj.toolpathConfig.curveAugment) {
-        const additionalFlatLayers = 3;
-        const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
+    // if (modelObj.toolpathConfig.curveAugment) {
+    //     const additionalFlatLayers = 3;
+    //     const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
 
-        for (let layer = 1; layer <= additionalFlatLayers; layer++) {
-            topLayerPoints.forEach(point => {
-                toolpath.push({
-                    ...point,
-                    point: new THREE.Vector3(
-                        point.point.x,
-                        point.point.y,
-                        maxZ + (layer * modelObj.toolpathConfig.deltaZ)
-                    )
-                });
-            });
-        }
-    }
+    //     for (let layer = 1; layer <= additionalFlatLayers; layer++) {
+    //         topLayerPoints.forEach(point => {
+    //             toolpath.push({
+    //                 ...point,
+    //                 point: new THREE.Vector3(
+    //                     point.point.x,
+    //                     point.point.y,
+    //                     maxZ + (layer * modelObj.toolpathConfig.deltaZ)
+    //                 )
+    //             });
+    //         });
+    //     }
+    // }
 
     // indicesToRemove.sort((a, b) => b - a);
     // indicesToRemove.forEach(i => toolpath.splice(i, 1));
@@ -2204,7 +2230,7 @@ export function generateAugmentFoamToolpath(
         addBoundary(toolpath, transformedMesh, modelObj.mesh.position, visualizer.printer.machine_depth_y, 1, 1, true);
     } else {
         toolpath.unshift({
-            point: new THREE.Vector3(toolpath[0].point.x || 0, toolpath[0].point.y || 0, bbox.max.z + modelObj.mesh.position.z + 10),
+            point: new THREE.Vector3(0, 0, bbox.max.z + modelObj.mesh.position.z + 10),
             travel: true,
         });
     }

@@ -319,8 +319,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
         return;
     }
     
-    
-
     // Create G-code
     console.log('Creating G-code...');
     const gcode = visualizer.printer.build_start_gcode(1) + 

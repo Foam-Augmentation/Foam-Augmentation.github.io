@@ -111,6 +111,7 @@ You can make foam gradients on the x and y axes using an SVG file. This way, if 
     - `Foam Layers`: How many layers to generate for augmentations. The total number of layers generated will be Foam Layers + Initial Foam Layers under the initial params folder.
     - `Max Angle`: The max angle to generate augmentations on. This allows you to only augment on flatter surfaces so you can print lower to the model and get better results.
     - `Flat Layer Z Offset`: This controls how far above the model the default flat layer is when the curveAugment feature is enabled. This only has any effect when curveAugment is enabled but no augment model has been selected.
+    - `Additional Curve Layers`: How many extra layers of the given curvature should be printed after the path reaches the desired curvature. For example, if you are flattening out a surface, setting this to 3 will print 3 additional flat layers after the path is curved to be totally flat.
 - `bump settings` folder:
     - `Select Bump Model`: This button lets you select a model to generate across the surface of your augmentation to improve grip.
     - `generateBumps`: If checked, generates bumps on the surface of any augmentation you generate.

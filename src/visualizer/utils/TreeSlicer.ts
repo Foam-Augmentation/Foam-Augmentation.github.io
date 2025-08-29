@@ -4,7 +4,9 @@ import Delaunator from 'delaunator';
 import { ToolpathConfig, EverydayModel } from '../types/modelTypes';
 
 
+// Clipper scale is how scaled up the points are when passed to clipper. They are then scaled down when turned back.
 const CLIPPER_SCALE = 1000;
+// Min area is the minimum area when insetting contours that a contour needs
 const MIN_AREA = 3;
 
 
@@ -338,8 +340,17 @@ export function connectSegments(
     return contours;
 }
 
-// calculate bounding box for contour
-export function getBounds(contour: THREE.Vector3[], z: number): { min: THREE.Vector3; max: THREE.Vector3 } {
+/**
+ * Gets the x and y bounds of a contour, and returns a 3d bounding square with a given z.
+ * 
+ * @param {THREE.Vector3[]} contour The contour to find the bounds of
+ * @param {number} z The height of the returned bounding box
+ * @returns {{min: THREE.Vector3, max: THREE.Vector3}} The bounding box for the contour
+ */
+export function getBounds(
+  contour: THREE.Vector3[],
+  z: number
+): { min: THREE.Vector3; max: THREE.Vector3 } {
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
     
@@ -961,7 +972,7 @@ export function connectIsocontours(
     for (const child of currentNode.children) {
       lowestDist = Infinity;
       let closestIndexOuter = 0;
-      for (let i = 0; i < Math.min(isocontours[isocontours.length - 1].length, path.length); i++) {
+      for (let i = 0; i < path.length; i++) {
         const point = path[path.length - 1 - i];
         for (let j = 0; j < child.contour.length; j++) {
           const otherPoint = child.contour[j];
@@ -972,39 +983,17 @@ export function connectIsocontours(
           }
         }
       }
+
       const childPath = connectIsocontours(child, step, path[closestIndexOuter], !reverse);
       childPaths.push({path: childPath, index: closestIndexOuter});
     }
 
     childPaths.sort((a, b) => b.index - a.index);
 
-    const endIndices: number[] = [];
-
-    for (let i = 0; i < childPaths.length; i++) {
-      let totalDist = 0;
-      let endIndex = 0;
-      let lastPointIndex = childPaths[i].index;
-      let endPoint = new THREE.Vector3;
-      const offsetAmount = step;
-      for (let j = 1; totalDist < offsetAmount; j++) {
-        endIndex = (startIndex - j);
-        const dist = path[lastPointIndex].distanceTo(path[endIndex]);
-        if (totalDist + dist >= offsetAmount) {
-          endPoint = pointAlongLine(path[lastPointIndex], path[endIndex], offsetAmount - totalDist);
-        }
-        totalDist += dist;
-        lastPointIndex = endIndex;
-      }
-
-      endIndices.push(endIndex);
-      childPaths[i].path.push(endPoint);
-    }
-
     for (let i = 0; i < childPaths.length; i++) {
       path.splice(childPaths[i].index, 0, ...childPaths[i].path);
     }
   }
-
 
   // make outwards path
   if (isocontours.length > 1) {
@@ -1050,29 +1039,30 @@ export function connectIsocontours(
     const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step);
 
     if (isocontours.length % 2 === 0 && currentNode.children.length > 0) {
-      const childPaths: THREE.Vector3[][] = [];
-      const childPathIndices: number[] = [];
+      const childPaths: {path: THREE.Vector3[], index: number}[] = [];
       for (const child of currentNode.children) {
         lowestDist = Infinity;
         let closestIndexOuter = 0;
-        for (let i = 0; i < Math.min(isocontours[isocontours.length - 1].length, path.length); i++) {
+        for (let i = 0; i < inwardSpiralPath.length; i++) {
           const point = inwardSpiralPath[inwardSpiralPath.length - 1 - i];
           for (let j = 0; j < child.contour.length; j++) {
             const otherPoint = child.contour[j];
             const dist = point.distanceTo(otherPoint);
             if (dist < lowestDist) {
               lowestDist = dist;
-              closestIndexOuter = i;
+              closestIndexOuter = inwardSpiralPath.length - 1 - i;
             }
           }
         }
-        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter]);
-        childPaths.push(childPath);
-        childPathIndices.push(closestIndexOuter);
+
+        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter], reverse);
+        childPaths.push({path: childPath, index: closestIndexOuter});
       }
 
+      childPaths.sort((a, b) => b.index - a.index);
+
       for (let i = 0; i < childPaths.length; i++) {
-        inwardSpiralPath.splice(childPathIndices[i], 0, ...childPaths[i]);
+        inwardSpiralPath.splice(childPaths[i].index, 0, ...childPaths[i].path);
       }
     }
 

@@ -85,6 +85,7 @@ export interface ToolpathConfig {
     curveAugment: boolean;
     steepnessThreshold: number;
     flatLayerZOffset: number;
+    additionalCurveLayers: number;
 
     /** regular Foam extrusion speed */
     // extrusionSpeedRegularFoam: number;

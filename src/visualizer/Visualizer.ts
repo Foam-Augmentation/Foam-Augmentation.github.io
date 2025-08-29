@@ -335,6 +335,9 @@ export default class Visualizer {
     }
 
 
+    /**
+     * Updates all the printer parameters to the visualizer parameters.
+     */
     public syncConfigToPrinter(): void {
         this.printer.material_bed_temperature = this.config.bedTemp;
         this.printer.print_temp_left_extruder = this.config.nozzleLeftTemp;
