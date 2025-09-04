@@ -63,6 +63,7 @@ export interface ToolpathConfig {
     hStarEnd: number;
     vStar: number;
     vStarEnd: number;
+    deltaLEnd: number;
     /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
     // zOffset: number;
     /** grid size */

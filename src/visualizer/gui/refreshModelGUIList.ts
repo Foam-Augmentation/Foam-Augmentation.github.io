@@ -364,6 +364,7 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
     paramsFolder.add(modelObj.toolpathConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolder.add(modelObj.toolpathConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L'); 
     paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
     paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
     paramsFolder.add(modelObj.toolpathConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
@@ -382,6 +383,7 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
     paramsFolderInitial.add(modelObj.initialConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolderInitial.add(modelObj.initialConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
     paramsFolderInitial.add(modelObj.initialConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
     paramsFolderInitial.add(modelObj.initialConfig, 'vStar', 0.01, 5, 0.01).name('V*');
     paramsFolderInitial.add(modelObj.initialConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
@@ -491,6 +493,8 @@ export function addGradientFolder(
     gradientFolder.add(selectGradient, 'selectGradientSVG').name("Select Gradient SVG");
     gradientFolder.close();
 }
+
+
 
 
 /**

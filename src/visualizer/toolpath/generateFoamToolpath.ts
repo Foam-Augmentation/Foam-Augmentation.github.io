@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
 import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
-import { Gradient } from '../loaders/modelLoader';
+import { Gradient, RGBA } from '../loaders/modelLoader';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import {
     sliceMeshIntoLayers,
@@ -33,6 +33,7 @@ export interface PathPoint {
     hStar?: number;
     vStar?: number;
     edot?: number;
+    deltaL?: number; // added this
 }
 
 /**
@@ -413,6 +414,7 @@ function fillToolpath(
                     hStar: point.hStar,
                     vStar: point.vStar,
                     edot: point.edot,
+                   deltaL: point.deltaL //added this
                 });
             }
         }
@@ -598,20 +600,44 @@ function makeChunkPath(
         }
 
         const configToUse = useInitial ? initialConfig : config;
+       
+
+        // does vertical gradient for deltaL only right now
+        // comment out from here to end mark if dont want deltaL vertical gradient
+        chunk.modelObj!.geometry.computeBoundingBox();
+        const modelMinZ = chunk.modelObj!.geometry.boundingBox!.min.z;
+        const modelMaxZ = chunk.modelObj!.geometry.boundingBox!.max.z;
         
+        // Calculate height percentage (0 = bottom, 1 = top)
+        const totalHeight = modelMaxZ - modelMinZ;
+        let heightPercent = 0;
+        if (totalHeight > 0) {
+            heightPercent = Math.min(1, Math.max(0, (region.height - modelMinZ) / totalHeight));
+        }
+        
+        // bottom = deltaL, top = deltaLEnd
+        const currentDeltaL = config.deltaL + heightPercent * (config.deltaLEnd - config.deltaL);
+    
+
+        console.log(`Region Layer: ${regionLayer}, Using DeltaL: ${currentDeltaL}`);
+        // end mark
+
         let path: THREE.Vector3[];
         if (useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
                 region.holes,
-                configToUse.deltaL
+                //configToUse.deltaL 
+                currentDeltaL 
             );
 
-            path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
+            //path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
+            path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint);  
         } else {
             path = generateRectilinearInfill(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour,
-                configToUse.deltaL, 
+                //configToUse.deltaL, 
+                currentDeltaL, 
                 scanX,
                 lastLayerEndPoint
             );
@@ -1101,6 +1127,115 @@ function getTransformedMesh(
 }
 
 
+
+/**
+ * Creates a horizontal linear gradient SVG programmatically and applies it to the model object.
+ * White (start values) on the left, black (end values) on the right, with gray gradient in between.
+ * This method silently creates the gradient without requiring user input.
+ * 
+ * @param {EverydayModel} modelObj The model object to apply the gradient to
+ * @param {number} width The width of the gradient SVG (default: 1000)
+ * @param {number} height The height of the gradient SVG (default: 1000)
+ */
+function createLinearSVG(modelObj: EverydayModel, width: number = 1000, height: number = 1000): void {
+    // Create SVG string with horizontal linear gradient
+    const svgString = `
+        <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="horizontalGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" style="stop-color:white;stop-opacity:1" />
+                    <stop offset="100%" style="stop-color:black;stop-opacity:1" />
+                </linearGradient>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#horizontalGradient)" />
+        </svg>
+    `;
+
+    // Convert SVG string to blob and create object URL
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+
+    //create img andf load svg
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+
+    img.onload = () => {
+        // Create canvas to rasterize the SVG
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        
+        // Clear canvas and draw the SVG
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+
+        //applies the gradient to the model object, uses same code essentially as importSvgGradient in modelloader.ts
+        modelObj.gradient = {
+            width: canvas.width,
+            height: canvas.height,
+            sampleColor(x: number, y: number): RGBA {
+                const ix = Math.min(canvas.width - 1, Math.max(0, Math.floor(x)));
+                const iy = Math.min(canvas.height - 1, Math.max(0, Math.floor(y)));
+                const d = ctx.getImageData(ix, iy, 1, 1).data;
+                return { r: d[0], g: d[1], b: d[2], a: d[3] };
+            }
+        };
+
+        // Clean up the object URL
+        URL.revokeObjectURL(url);
+        
+        console.log('Linear horizontal gradient applied to model object');
+        console.log(" gradient:", modelObj.gradient);
+    };
+
+    img.onerror = (err) => {
+        console.error('Failed to load generated SVG for gradient', err);
+        URL.revokeObjectURL(url);
+    };
+}
+
+
+
+/**
+ * Creates a vertical gradient effect by directly interpolating h* and v* values based on layer height.
+ * Bottom layers use start values, top layers use end values, with linear interpolation in between.
+ * 
+ * @param {PathPoint[]} chunkPath The toolpath points to apply vertical gradient to
+ * @param {number} modelHeight The base height of the model (lowest Z value)
+ * @param {number} maxHeight The maximum height of the model (highest Z value)  
+ * @param {any} config The configuration object containing hStar, vStar, hStarEnd, vStarEnd values
+ */
+function applyVerticalGradient(
+    chunkPath: PathPoint[], 
+    modelHeight: number, 
+    maxHeight: number, 
+    config: any
+): void {
+    const totalHeight = maxHeight - modelHeight;
+    
+    if (totalHeight <= 0) {
+        console.warn('Invalid height range for vertical gradient');
+        return;
+    }
+    
+    chunkPath.forEach(point => {
+        // Calculate the relative position in the height range (0 = bottom, 1 = top)
+        const heightPercent = Math.min(1, Math.max(0, (point.point.z - modelHeight) / totalHeight));
+        
+        // Linear interpolation: start + percent * (end - start)
+        point.hStar = config.hStar + heightPercent * (config.hStarEnd - config.hStar);
+        point.vStar = config.vStar + heightPercent * (config.vStarEnd - config.vStar);
+        //point.deltaL = config.deltaL + heightPercent * (config.deltaLEnd - config.deltaL);
+    });
+    
+    console.log(`Applied vertical gradient: bottom(${config.hStar}, ${config.vStar}, ${config.deltaL}) -> top(${config.hStarEnd}, ${config.vStarEnd}, ${config.deltaLEnd})`);
+}
+
+
+
+
 /**
  * Slices a model for foam printing, using travel slicer outer reductions to reduce travel movements
  * and uses either rectilinear or fermat spiral infill.
@@ -1113,6 +1248,7 @@ export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObjs: EverydayModel[],
 ): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
+    console.log('generating foam toolpath');
     const chunkRoots: ChunkNode[] = [];
     let highestStartHeight = -Infinity;
     const boundaryPath: PathPoint[] = [];
@@ -1141,6 +1277,7 @@ export function generateFoamToolpath(
         if (visualizer.printer.generateBoundary) {
             addBoundary(boundaryPath, transformedMesh, modelObj.mesh.position, visualizer.printer.machine_depth_y, 1, 1, false);
         }
+        
 
         // Remove previous visualization
         if (modelObj.toolpathVisualizationObject) {
@@ -1189,6 +1326,29 @@ export function generateFoamToolpath(
         // visualizeChunks(chunkTree, colors, 0, visualizationGroup);
     });
 
+ 
+
+    // Horizontal Gradient if no svg exiists
+    // Comment out from here to end mark
+    // modelObjs.forEach(modelObj => {
+    // console.log("Checking gradient:", modelObj.gradient);
+    // // Check if gradient is the default placeholder (1x1) or doesn't exist
+    // const config = modelObj.toolpathConfig;
+    // const hasGradientVariation = (config.hStar !== config.hStarEnd) || (config.vStar !== config.vStarEnd);
+    
+    // const hasValidGradient = modelObj.gradient && 
+    //                         modelObj.gradient.width > 1 && 
+    //                         modelObj.gradient.height > 1;
+    
+    //     if (!hasValidGradient && hasGradientVariation) {
+    //         console.log("No valid SVG gradient loaded, creating horizontal gradient fallback");
+    //         createLinearSVG(modelObj);
+    //     } else {
+    //         console.log("Using existing SVG gradient:", modelObj.gradient.width, "x", modelObj.gradient.height);
+    //     }
+    // });
+    // End mark
+
 
     const visualizationGroup = new THREE.Group();
 
@@ -1201,6 +1361,28 @@ export function generateFoamToolpath(
         visualizer.printer.useFermatSpirals,
         startPoint,
     );
+
+    // comment out from here till end mark if dont want vertical gradient
+    // vertical testing for vertical gradient 
+    modelObjs.forEach(modelObj => {
+        const config = modelObj.toolpathConfig;
+        const hasGradientVariation = (config.hStar !== config.hStarEnd) || (config.vStar !== config.vStarEnd);
+    
+        const hasValidGradient = modelObj.gradient && 
+                            modelObj.gradient.width > 1 && 
+                            modelObj.gradient.height > 1;
+        if (!hasValidGradient && hasGradientVariation) {
+            // Calculate model bounds for vertical gradient
+            modelObj.geometry.computeBoundingBox();
+            const modelHeight = modelObj.geometry.boundingBox!.min.z;
+            const maxHeight = modelObj.geometry.boundingBox!.max.z + modelObj.mesh.position.z;
+            console.log("applying vertical gradiet  to model from", modelHeight, "to", maxHeight);
+            // Apply vertical gradient using the toolpath config
+            applyVerticalGradient(toolpath, modelHeight, maxHeight, modelObj.toolpathConfig);
+        }
+    });
+    // end mark
+
 
     toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
 
@@ -1768,6 +1950,27 @@ export function generateAugmentFoamToolpath(
     
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
+    // HORIZTONAL gradient creation if no svg
+    // Check if svg exists, if not create horizontal linear svg for gradient
+
+    console.log("Checking gradient:", modelObj.gradient);
+    const hasValidGradient = modelObj.gradient && 
+                            modelObj.gradient.width > 1 && 
+                            modelObj.gradient.height > 1;
+    const config = modelObj.toolpathConfig;
+    const hasGradientVariation = (config.hStar !== config.hStarEnd) || (config.vStar !== config.vStarEnd);
+    
+    // Comment out from here to end mark if dont want hori gradient
+    // Applies the horixontal gradient (comment out if want to use vertical and vertical is not commented out)
+    // if (!hasValidGradient && hasGradientVariation) {
+    //     console.log("No valid SVG gradient loaded, creating horizontal gradient fallback");
+    //     createLinearSVG(modelObj);
+
+    // } else {
+    //     console.log("Using existing SVG gradient:", modelObj.gradient.width, "x", modelObj.gradient.height);
+    // }
+    // end mark
+
     // --- 2. Check if there are sample points available.
     if (!modelObj.toolpathSamplePoints || modelObj.toolpathSamplePoints.length === 0) {
         console.warn("No sample points available. Cannot generate toolpath.");
@@ -2018,11 +2221,27 @@ export function generateAugmentFoamToolpath(
     transformedMesh.geometry.computeBoundingBox();
     const bbox = transformedMesh.geometry.boundingBox!;
 
+    // comment out from here if no vertical gradient wanted till end mark
+    // Apply vertical gradient if no SVG gradient is loaded
+    if (!hasValidGradient && hasGradientVariation) {
+        // Calculate bounds from the toolpath itself
+        const zValues = toolpath.map(tp => tp.point.z);
+        const minZ = Math.min(...zValues);
+        const maxZ = Math.max(...zValues);
+        console.log("applying vertical gradiet  to model from", modelHeight, "to", maxZ);
+
+        // Apply vertical gradient using the toolpath config
+        applyVerticalGradient(toolpath, minZ, maxZ, modelObj.toolpathConfig);
+    }
+    // end mark
+
+    
+
     for (let i = 0; i < toolpath.length; i++) {
         const point = toolpath[i].point;
         
         // Can comment out from here until the end of the section mark if this is not wanted
-        // Suppose to slightly flatten everything until the top is a flat plane
+        // slightly flatten everything until the top is a flat plane
         const pointZOffset = toolpath[i].hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
         // // new trying
         if (modelObj.toolpathConfig.curveAugment) {
@@ -2064,26 +2283,28 @@ export function generateAugmentFoamToolpath(
         }
     }
 
+
+    //flat layers on top if needed
     const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
 
-    //flat layers
-    // if (modelObj.toolpathConfig.curveAugment) {
-    //     const additionalFlatLayers = 3;
-    //     const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
+ 
+    if (modelObj.toolpathConfig.curveAugment) {
+        const additionalFlatLayers = 3;
+        const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
 
-    //     for (let layer = 1; layer <= additionalFlatLayers; layer++) {
-    //         topLayerPoints.forEach(point => {
-    //             toolpath.push({
-    //                 ...point,
-    //                 point: new THREE.Vector3(
-    //                     point.point.x,
-    //                     point.point.y,
-    //                     maxZ + (layer * modelObj.toolpathConfig.deltaZ)
-    //                 )
-    //             });
-    //         });
-    //     }
-    // }
+        for (let layer = 1; layer <= additionalFlatLayers; layer++) {
+            topLayerPoints.forEach(point => {
+                toolpath.push({
+                    ...point,
+                    point: new THREE.Vector3(
+                        point.point.x,
+                        point.point.y,
+                        maxZ + (layer * modelObj.toolpathConfig.deltaZ)
+                    )
+                });
+            });
+        }
+    }
 
     // indicesToRemove.sort((a, b) => b - a);
     // indicesToRemove.forEach(i => toolpath.splice(i, 1));

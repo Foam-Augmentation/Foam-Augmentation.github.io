@@ -46,7 +46,7 @@ export default class Printer {
   public Edot: number;
 
   public deltaZ: number; // deltaZ (thickness of a single foam layer)
-
+  public deltaLEnd: number;  
   public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
   public H_star: number; // H_star (height of the foam layer)
   public hStarEnd: number;
@@ -86,6 +86,7 @@ export default class Printer {
     this.ZOffset = 3.38
     this.H_star = 6.0
     this.hStarEnd = 6.0;
+    this.deltaLEnd = 1.7;
     this.useFermatSpirals = false;
     this.generateBoundary = false;
     this.purgeLine = true;
@@ -312,11 +313,18 @@ M204 S1000
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
     const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
 
+    //console.log(this.V_Star, this.Edot, this.nozzleDiameter, this.dieSwelling, this.diameter_filament);
+
     const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
+    //console.log("beta", beta);
     const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
+   // console.log("gamnma ",gamma);
 
     const S = gamma / (beta * this.V_Star);
+    //console.log("S ", S);
     const F = this.Edot / S;
+    //console.log("F ", F);
+
 
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
 
@@ -328,7 +336,7 @@ M204 S1000
     // }
 
     gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
-
+   // console.log(`G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`)
     return gcode;
   }
 
