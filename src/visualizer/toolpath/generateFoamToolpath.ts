@@ -985,7 +985,6 @@ function segmentIntersectsSquare(
     return overlapX && overlapY;
 }
 
-
 /**
  * Gets the required additional z offset for the toolpath to not collide with a given mesh.
  * 
@@ -994,7 +993,7 @@ function segmentIntersectsSquare(
  * @param {number} nozzleLength The length off the printer's nozzle.
  * @param {{ min: THREE.Vector2, max: THREE.Vector2 }} printHeadBox The box representing the printheads x and y 
  *                                                                  dimensions with the nozzle being at 0, 0
- * @param {number} offsetStep Controls the accuracy of the returned height. If 0.1, the accuracy of the required
+ * @param {number} offsetTolerance Controls the accuracy of the returned height. If 0.1, the accuracy of the required
  *                            height will be within 0.1 of the true required height.
  * @returns {number} The required additional z offset for the toolpath. This will never be negative.
  */
@@ -1003,34 +1002,91 @@ function getRequiredZOffset(
     toolpath: THREE.Vector3[],
     nozzleLength: number,
     printHeadBox: { min: THREE.Vector2, max: THREE.Vector2 },
-    offsetStep: number = 0.1,
+    offsetTolerance: number
 ): number {
-    let maxHeight = 0;
 
+    // new binary search O(logn) implementation
+
+    let bestZOffset = 0;
     mesh.geometry.computeBoundingBox();
+    // where step max is the full vertical range available before the nozzle would be above the mesh
     const stepMax = mesh.geometry.boundingBox!.max.z - mesh.geometry.boundingBox!.min.z - nozzleLength;
 
-    for (const point of toolpath) {
-        let zOffset = maxHeight;
-        while (zOffset < stepMax) {
-            const squareMin = new THREE.Vector3(point.x + printHeadBox.min.x, point.y + printHeadBox.min.y, point.z + nozzleLength + zOffset);
-            const squareMax = new THREE.Vector3(point.x + printHeadBox.max.x, point.y + printHeadBox.max.y, point.z + nozzleLength + zOffset);
-            squareMin.sub(mesh.position);
-            squareMax.sub(mesh.position);
-            if (meshIntersectsSquareAtZ(mesh, squareMin, squareMax)) {
-                zOffset += offsetStep;
-            } else {
-                if (zOffset > maxHeight) maxHeight = zOffset;
-                break;
-            }
-        }
+    let low = 0;
+    let high = stepMax;
 
-        if (maxHeight >= stepMax) {
-            break;
+    while (high - low > offsetTolerance) {
+        let mid = (high + low) / 2;
+
+        // any collision with this current zOffset?
+        const anyCollision = toolpath.some(point => pointHasCollision(mesh, point, nozzleLength, printHeadBox, mid));
+
+        if (anyCollision) {
+            low = mid + offsetTolerance;;
+        } else {
+            high = mid - offsetTolerance;
+            bestZOffset = mid;
         }
     }
 
-    return maxHeight;
+    // return minimum non-colliding zOffset
+    return bestZOffset;
+
+
+    // OLD CODE: O(n) collision detection implementation
+    // let maxHeight = 0;
+
+    // mesh.geometry.computeBoundingBox();
+    // const stepMax = mesh.geometry.boundingBox!.max.z - mesh.geometry.boundingBox!.min.z - nozzleLength;
+
+    // for (const point of toolpath) {
+    //     let zOffset = maxHeight;
+    //     while (zOffset < stepMax) {
+    //         const squareMin = new THREE.Vector3(point.x + printHeadBox.min.x, point.y + printHeadBox.min.y, point.z + nozzleLength + zOffset);
+    //         const squareMax = new THREE.Vector3(point.x + printHeadBox.max.x, point.y + printHeadBox.max.y, point.z + nozzleLength + zOffset);
+    //         squareMin.sub(mesh.position);
+    //         squareMax.sub(mesh.position);
+    //         if (meshIntersectsSquareAtZ(mesh, squareMin, squareMax)) {
+    //             zOffset += offsetStep;
+    //         } else {
+    //             if (zOffset > maxHeight) maxHeight = zOffset;
+    //             break;
+    //         }
+    //     }
+
+    //     if (maxHeight >= stepMax) {
+    //         break;
+    //     }
+    // }
+
+    // return maxHeight;
+}
+
+/**
+ * Checks if the printhead at a given point and zOffset collides with the given mesh.
+ * 
+ * @param {THREE.Mesh} mesh The mesh to detect collisions for.
+ * @param {THREE.Vector3} point The printhead toolpath point.
+ * @param {number} nozzleLength The length off the printer's nozzle.
+ * @param {{ min: THREE.Vector2, max: THREE.Vector2 }} printHeadBox The box representing the printheads x and y 
+ *                                                                  dimensions with the nozzle being at 0, 0
+ * @param {number} zOffset The vertical offset being evaluated (mm), where larger means higher.
+ * 
+ * @returns {boolean} Whether the given point collides with the nozzle tip/printhead collides with the mesh at this zOffset
+ */
+
+function pointHasCollision(
+    mesh: THREE.Mesh,
+    point: THREE.Vector3,
+    nozzleLength: number,
+    printHeadBox: { min: THREE.Vector2, max: THREE.Vector2 },
+    zOffset: number
+): boolean {
+    const squareMin = new THREE.Vector3(point.x + printHeadBox.min.x, point.y + printHeadBox.min.y, point.z + nozzleLength + zOffset);
+    const squareMax = new THREE.Vector3(point.x + printHeadBox.max.x, point.y + printHeadBox.max.y, point.z + nozzleLength + zOffset);
+    squareMin.sub(mesh.position);
+    squareMax.sub(mesh.position);
+    return meshIntersectsSquareAtZ(mesh, squareMin, squareMax);
 }
 
 
@@ -2404,7 +2460,7 @@ export function generateAugmentFoamToolpath(
         const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
             + modelObj.initialConfig.initialFoamLayerCount - 1)).map(p => p.point);
         transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
-        const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims);
+        const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.1);
         console.log("Required additional offset: " + requiredZOffsetAdditional);
         const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
         if (requiredZOffsetAdditional > 0) {
