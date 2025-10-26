@@ -1004,9 +1004,7 @@ function getRequiredZOffset(
     printHeadBox: { min: THREE.Vector2, max: THREE.Vector2 },
     offsetTolerance: number
 ): number {
-
     // new binary search O(logn) implementation
-
     let bestZOffset = 0;
     mesh.geometry.computeBoundingBox();
     // where step max is the full vertical range available before the nozzle would be above the mesh
@@ -1022,7 +1020,7 @@ function getRequiredZOffset(
         const anyCollision = toolpath.some(point => pointHasCollision(mesh, point, nozzleLength, printHeadBox, mid));
 
         if (anyCollision) {
-            low = mid + offsetTolerance;;
+            low = mid + offsetTolerance;
         } else {
             high = mid - offsetTolerance;
             bestZOffset = mid;
@@ -1033,7 +1031,7 @@ function getRequiredZOffset(
     return bestZOffset;
 
 
-    // OLD CODE: O(n) collision detection implementation
+    // // OLD CODE: O(n) collision detection implementation
     // let maxHeight = 0;
 
     // mesh.geometry.computeBoundingBox();
@@ -1047,7 +1045,7 @@ function getRequiredZOffset(
     //         squareMin.sub(mesh.position);
     //         squareMax.sub(mesh.position);
     //         if (meshIntersectsSquareAtZ(mesh, squareMin, squareMax)) {
-    //             zOffset += offsetStep;
+    //             zOffset += offsetTolerance;
     //         } else {
     //             if (zOffset > maxHeight) maxHeight = zOffset;
     //             break;
@@ -2454,25 +2452,22 @@ export function generateAugmentFoamToolpath(
     // }
 
 
-    if (visualizer.printer.checkCollisions) {
-        // Only check the first two layer for collisions to reduce time.
-        // Does two layers to reduce variance when layer sizes aren't equal.
-        const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
-            + modelObj.initialConfig.initialFoamLayerCount - 1)).map(p => p.point);
-        transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
-        const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.1);
-        console.log("Required additional offset: " + requiredZOffsetAdditional);
-        const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
-        if (requiredZOffsetAdditional > 0) {
-            alert("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
-            console.warn("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4))
-        } else {
-            console.log("No collisions detected!");
-        }
-
-        transformedMesh.position.setScalar(0);
+    console.log("Checking visualizer.printer.checkCollisions");
+    // Only check the first two layer for collisions to reduce time.
+    // Does two layers to reduce variance when layer sizes aren't equal.
+    const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
+        + modelObj.initialConfig.initialFoamLayerCount - 1)).map(p => p.point);
+    transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
+    const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.1);
+    console.log("Required additional offset: " + requiredZOffsetAdditional);
+    const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
+    console.log("Recommended H*: " + recommendedHStar);
+    if (requiredZOffsetAdditional > 0) {
+        alert("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
+        console.warn("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4))
+    } else {
+        console.log("No collisions detected!");
     }
-
 
     for (let i = 0; i < samplePointMatrix.length; i++) {
         const column = samplePointMatrix[i];
