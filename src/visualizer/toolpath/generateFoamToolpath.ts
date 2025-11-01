@@ -1020,9 +1020,11 @@ function getRequiredZOffset(
         const anyCollision = toolpath.some(point => pointHasCollision(mesh, point, nozzleLength, printHeadBox, mid));
 
         if (anyCollision) {
-            low = mid + offsetTolerance;
+            // low = mid + offsetTolerance;
+            low = mid;
         } else {
-            high = mid - offsetTolerance;
+            // high = mid - offsetTolerance;
+            high = mid;
             bestZOffset = mid;
         }
     }
@@ -2458,7 +2460,10 @@ export function generateAugmentFoamToolpath(
     const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
         + modelObj.initialConfig.initialFoamLayerCount - 1)).map(p => p.point);
     transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
-    const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.1);
+    const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.02);
+
+    console.log("Print head dims ", visualizer.printer.printHeadDims);
+
     console.log("Required additional offset: " + requiredZOffsetAdditional);
     const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
     console.log("Recommended H*: " + recommendedHStar);
