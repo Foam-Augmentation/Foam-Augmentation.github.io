@@ -21,13 +21,24 @@ import Visualizer from '../Visualizer';
  */
 export function sampleSelectedMesh(visualizer: Visualizer, modelObj: any): void {
     // Get the bounding box from the model's bounding box helper.
-    const bbox: THREE.Box3 = modelObj.selectedRegularFoamMeshBoundingBoxHelper.box;
     const gridSize: number = modelObj.toolpathConfig.gridSize;
     // Arrays for foam and sense vertices.
     const vertices_foam: number[] = [];
     const vertices_sense: number[] = [];
     // Clear previous sample points.
     modelObj.toolpathSamplePoints = [];
+    modelObj.selectedRegularFoamMesh.geometry.scale(modelObj.mesh.scale.x, modelObj.mesh.scale.y, modelObj.mesh.scale.z);
+    const e = new THREE.Euler(
+        modelObj.mesh.rotation.x,
+        modelObj.mesh.rotation.y,
+        modelObj.mesh.rotation.z,
+        'XYZ'
+    );
+    const q = new THREE.Quaternion().setFromEuler(e);
+    modelObj.selectedRegularFoamMesh.geometry.applyQuaternion(q);
+
+    modelObj.selectedRegularFoamMesh.geometry.computeBoundingBox();
+    const bbox: THREE.Box3 = modelObj.selectedRegularFoamMesh.geometry.boundingBox!; //modelObj.selectedRegularFoamMeshBoundingBoxHelper.box;
 
     // Create materials for foam and sense points.
     const pointsMaterialFoam = new THREE.PointsMaterial({

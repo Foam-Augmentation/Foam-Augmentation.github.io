@@ -17,19 +17,20 @@ import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer from '../printer/Printer';
 import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
+import {ViewCube} from './gui/ViewCube';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
  * and user interactions (such as lasso selection and transform controls).
  */
-export default class Visualizer {
-    /** The container HTML element */
-    public container: HTMLElement;
-    /** Printer instance (used for generating G-code) */
-    public printer: Printer; 
-    /** Three.js renderer */
-    public renderer: THREE.WebGLRenderer;
-    /** Three.js scene */
+export default class Visualizer { 
+    /** The container HTML element */ 
+    public container: HTMLElement; 
+    /** Printer instance (used for generating G-code) */ 
+    public printer: Printer;  
+    /** Three.js renderer */ 
+    public renderer: THREE.WebGLRenderer; 
+    /** Three.js scene */ 
     public scene: THREE.Scene;
     /** Perspective camera */
     public camera: THREE.PerspectiveCamera;
@@ -55,6 +56,8 @@ export default class Visualizer {
 
     public showGcodeVisualization: boolean = false;
     public currentSelectedModel: EverydayModel | null = null;
+    public viewCube: ViewCube;
+
 
     /**
      * Configuration for selection and toolpath parameters.
@@ -72,26 +75,42 @@ export default class Visualizer {
         nozzleLeftTemp: number;
         nozzleRightTemp: number;
         machineDepth: number;
+        machineDepthY: number;
         machineHeight: number;
-        zOffset: number;
-        deltaZ: number;
+        // zOffset: number;
+        // deltaZ: number;
         //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-        foamLayers: number;
-        extrusion_speed_when_foam: number;
-        printHead_speed_when_foam: number;
+        // foamLayers: number;
+        // extrusion_speed_when_foam: number;
         nozzleDiameter: number;
+        nozzleLength: number;
         dieSwelling: number;
-        VStar: number;
-        HStar: number;
-        Edot: number;
-        diameter_filament: number;
-        extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
-        height: number;
+        // VStar: number;
+        // HStar: number;
+        // Edot: number;
+        filamentDiameter: number;
+        // extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
+        // height: number;
         showGcodeVisualization: false,
         currentSelectedModel: EverydayModel | null;
+        useTreeSlicer: boolean;
+        useFermatSpirals: boolean;
+        generateBoundary: boolean;
+        purgeLine: boolean;
+        checkCollisions: boolean;
+        printHeadMinX: number;
+        printHeadMinY: number;
+        printHeadMaxX: number;
+        printHeadMaxY: number;
+        bedLeveling: boolean;
+        testSweep: boolean;
 
-        
-
+        startHStarTest: number;
+        endHStarTest: number;
+        startVStarTest: number;
+        endVStarTest: number;
+        testDeltaL: number;
+        testSize: number;
     };
 
     /**
@@ -120,7 +139,6 @@ export default class Visualizer {
     public saveFolder: GUI;
 
 
-
     /**
      * Creates an instance of Visualizer.
      *
@@ -136,12 +154,13 @@ export default class Visualizer {
         this.printer = printer;
 
         // Initialize renderer, scene, camera, orbit controls, and printer base objects.
-        const { renderer, scene, camera, orbitControls, printBaseObjects } = initRenderer(this.container, printer);
+        const { renderer, scene, camera, orbitControls, printBaseObjects, viewCube } = initRenderer(this.container, printer);
         this.renderer = renderer;
         this.scene = scene;
         this.camera = camera;
         this.orbitControls = orbitControls;
         this.printBaseObjects = printBaseObjects;
+        this.viewCube = viewCube;
 
         // Initialize transform controls for model manipulation.
         this.transformControls = initTransformControls(this);
@@ -171,26 +190,43 @@ export default class Visualizer {
             bedTemp: 60,
             nozzleLeftTemp: 230,
             nozzleRightTemp: 230,
-            machineDepth: 302,
-            machineHeight: 402,
-            zOffset: 3.38,
-            deltaZ: 1.7,
-            height: 20,
+            machineDepth: 250,
+            machineDepthY: 210,
+            machineHeight: 220,
+            // zOffset: 3.38,
+            // deltaZ: 1.7,
+            // height: 20,
             // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-            foamLayers: 3,
-            extrusion_speed_when_foam: 758.17,
-            printHead_speed_when_foam: 113.7,
+            // foamLayers: 3,
+            // extrusion_speed_when_foam: 758.17,
             nozzleDiameter: 0.4,
-            dieSwelling: 0.94,
-            VStar: 0.15,
-            HStar: 9,
-            Edot: 35,
-            diameter_filament: 1.75,
-            extrusion_m: 0.92,
+            nozzleLength: 4.5,
+            dieSwelling: 1.0,
+            // VStar: 0.15,
+            // HStar: 9,
+            // Edot: 35,
+            filamentDiameter: 1.75,
+            // extrusion_m: 0.92,
             showGcodeVisualization: false,
-            currentSelectedModel: null
+            currentSelectedModel: null,
+            useTreeSlicer: false,
+            useFermatSpirals: false,
+            generateBoundary: false,
+            purgeLine: true,
+            checkCollisions: false,
+            printHeadMinX: -40,
+            printHeadMinY: -15,
+            printHeadMaxX: 35,
+            printHeadMaxY: 70,
+            bedLeveling: false,
+            testSweep: false,
 
-            
+            startHStarTest: 5,
+            endHStarTest: 10,
+            startVStarTest: 0.15,
+            endVStarTest: 0.3,
+            testDeltaL: 3,
+            testSize: 15,
         };
 
         // Initialize lasso selection state.
@@ -239,7 +275,6 @@ export default class Visualizer {
      */
     public render = (): void => {
         requestAnimationFrame(this.render);
-
         // Update the selection lasso lines if needed.
         if (this.lassoState.selectionShapeNeedsUpdate) {
             if (this.config.toolMode === 'lasso') {
@@ -281,18 +316,45 @@ export default class Visualizer {
         // Update the lasso shape scale based on the camera's field of view.
         const yScale = Math.tan(THREE.MathUtils.DEG2RAD * this.camera.fov / 2) * this.lassoState.selectionShape.position.z;
         this.lassoState.selectionShape.scale.set(-yScale * this.camera.aspect, -yScale, 1);
+        // update the orbit controls
+        this.orbitControls.update();
 
         // Render the scene.
         this.renderer.render(this.scene, this.camera);
     }
 
-    public saveToolpathGcodeToFile(): void {
-        const gcode = this.printer.toolpathGcode;
+    public saveGcodeToFile(gcode: string, name: string): void {
         console.log("G-code content:", this.printer);
         console.log("G-code content:", gcode);
         console.log("saveToolpathGcodeToFile called");
         if (gcode) {
-            saveGcodeToFile(gcode, "toolpath"); 
+            // this.printer.toolpathGcode += this.printer.end_gcode;
+            // saveGcodeToFile(this.printer.toolpathGcode, name);  //originally was just gcode but didnt getupdated stuff
+            saveGcodeToFile(gcode, name);
         }
     }
+
+
+    /**
+     * Updates all the printer parameters to the visualizer parameters.
+     */
+    public syncConfigToPrinter(): void {
+        this.printer.material_bed_temperature = this.config.bedTemp;
+        this.printer.print_temp_left_extruder = this.config.nozzleLeftTemp;
+        this.printer.print_temp_right_extruder = this.config.nozzleRightTemp;
+        this.printer.machine_depth = this.config.machineDepth;
+        this.printer.machine_height = this.config.machineHeight;
+        this.printer.dieSwelling = this.config.dieSwelling;
+        this.printer.nozzleDiameter = this.config.nozzleDiameter;
+        this.printer.diameter_filament = this.config.filamentDiameter;
+        this.printer.nozzleLength = this.config.nozzleLength;
+        this.printer.printHeadDims.min.setX(this.config.printHeadMinX);
+        this.printer.printHeadDims.min.setY(this.config.printHeadMinY);
+        this.printer.printHeadDims.max.setX(this.config.printHeadMaxX);
+        this.printer.printHeadDims.max.setY(this.config.printHeadMaxY);
+        this.printer.useFermatSpirals = this.config.useFermatSpirals;
+        this.printer.generateBoundary = this.config.generateBoundary;
+        this.printer.purgeLine = this.config.purgeLine;
+        this.printer.checkCollisions = this.config.checkCollisions;
+      }
 }

@@ -3,7 +3,7 @@ import Visualizer from '../Visualizer';
 import { createSelectedMeshFromHighlight } from './createSelectedMeshFromHighlight';
 import { updateSelectedMeshBoundingBox } from '../toolpath/updateSelectedMeshBoundingBox';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
-import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
+import { generateAugmentFoamToolpath } from '../toolpath/generateFoamToolpath';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { getConvexHull, pointRayCrossesSegments, lineCrossesLine } from '../utils/geometryUtils';
 import { EverydayModel } from '../types/modelTypes';
@@ -39,6 +39,7 @@ export function updateSelection(
     const screenCentroid = new THREE.Vector3();
     const faceNormal = new THREE.Vector3();
     const toScreenSpaceMatrix = new THREE.Matrix4();
+    
     // Using Vector4 for homogeneous coordinates.
     const boxPoints: THREE.Vector4[] = new Array(8).fill(null).map(() => new THREE.Vector4());
     const boxLines: THREE.Line3[] = new Array(12).fill(null).map(
@@ -277,11 +278,15 @@ export function updateSelection(
     }
 
     visualizer.currentSelectedModel = modelObj;
+
     updateSelectedMeshBoundingBox(visualizer, modelObj);
     sampleSelectedMesh(visualizer, modelObj);
     console.log("modelob", modelObj);
     console.log("vis", visualizer);
-    const toolpaths = generateFoamToolpath(visualizer, modelObj);
+    
+    visualizer.printer.updateParameters(modelObj.toolpathConfig);
+
+    const toolpaths = generateAugmentFoamToolpath(visualizer, modelObj);
     console.log("Generated Toolpaths:", toolpaths);
     // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
 
@@ -290,15 +295,34 @@ export function updateSelection(
     console.log("Toolpaths before generating G-Code:", toolpaths.foam);
    // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
     //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
-    const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
-    console.log(gcode);
-    visualizer.printer.toolpathGcode = gcode;
+    
+    // og
+    // const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
+    // console.log(gcode);
+    // visualizer.printer.toolpathGcode = gcode;
 
-    console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
+    // const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
+
+
+    //generate G-code with start G-code only if first model
+    modelObj.gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam);
+
+    // Initialize G-code if empty
+    // if (!visualizer.printer.toolpathGcode) {
+    //     visualizer.printer.toolpathGcode = "";
+    // }
+
+    // Append this model's G-code
+    // visualizer.printer.toolpathGcode += `; === Model: ${modelObj.name || 'Unnamed'} ===\n`;
+    // visualizer.printer.toolpathGcode += `; Parameters: hStar=${modelObj.toolpathConfig.hStar}, vStar=${modelObj.toolpathConfig.vStar}, deltaZ=${modelObj.toolpathConfig.deltaZ}, gridSize=${modelObj.toolpathConfig.gridSize}, edot=${modelObj.toolpathConfig.edot}\n`;
+
+    // visualizer.printer.toolpathGcode += gcode;
+    // visualizer.printer.toolpathGcode += "\n";
+
+    console.log("Model G-Code after generation:\n", modelObj.gcode);
 
     //saveGcodeToFile(gcode, "toolpath");
-    generateFoamToolpath(visualizer, modelObj);
-    
+    // generateAugmentFoamToolpath(visualizer, modelObj);
 
     return {
         all: toolpaths.all,

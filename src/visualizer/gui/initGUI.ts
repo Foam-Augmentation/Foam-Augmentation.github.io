@@ -5,7 +5,10 @@ import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
 import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
-import { generateFoamToolpath } from '../toolpath/generateFoamToolpath';
+import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
+import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
+import { exportPresetToFile, importPresetFromFile } from './presetManager';
+import {EverydayModel} from '../types/modelTypes';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -15,6 +18,8 @@ export interface InitGUIResult {
   foamModelListFolder: GUI;        // Folder for foam models list.
   everydayModelListFolder: GUI;    // Folder for everyday models list.
   saveFolder: GUI;
+  treeSlicerFolder: GUI;          // New folder for TreeSlicer operations
+  presetFolder: GUI;    
 }
 
 /**
@@ -67,6 +72,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 
   const foamModelSliceParamFolder = modelFolder.addFolder('slice params');
   foamModelSliceParamFolder.close();
+  modelFolder.close();
   // (Additional slice parameter controls can be added here.)
 
   // ----- Everyday Object Model Folder -----
@@ -103,6 +109,36 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   //   });
   // displayFolder.close();
 
+  const presetFolder = gui.addFolder('Presets');
+  presetFolder.add({ exportPreset: () => {
+    if (!visualizer.currentSelectedModel) {
+      visualizer.currentSelectedModel = visualizer.everydayModelList[0];
+      console.log("Set selected model to first model in list");
+    }
+
+    exportPresetToFile(visualizer)
+  } }, 'exportPreset').name('Export Preset');
+
+
+  presetFolder.add({ 
+    importPreset: async () => {
+      if (!visualizer.currentSelectedModel) {
+        visualizer.currentSelectedModel = visualizer.everydayModelList[0];
+        console.log("Set selected model to first model in list");
+      }
+
+      const filename = await importPresetFromFile(visualizer);
+      gui.controllersRecursive().forEach(controller => {
+        controller.updateDisplay();
+      });
+      
+      const titleElement = presetFolder.domElement.querySelector('.title');
+      if (titleElement && filename) {
+        titleElement.textContent = `Presets (applied: ${filename})`;
+      }
+    }
+  }, 'importPreset').name('Import Preset');
+
   // -----  Settings Folder -----
   const settingFolder = gui.addFolder('Settings');
 
@@ -128,17 +164,54 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       // Note: call to initScene here might need proper parameters.
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
+  printerFolder.add(visualizer.config, 'machineDepthY', 0, 1000, 1)
+    .onChange((v: number) => {
+      visualizer.printer.machine_depth_y = v;
+      // Note: call to initScene here might need proper parameters.
+      initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
+    });
   printerFolder.add(visualizer.config, 'machineHeight', 0, 2000, 1)
     .onChange((v: number) => {
       visualizer.printer.machine_height = v;
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
-    printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.1)
+  printerFolder.add(visualizer.config, 'dieSwelling', 0, 2, 0.01)
+    .onChange((v: number) => { visualizer.printer.dieSwelling = v; });
+  printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.01)
     .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
+  printerFolder.add(visualizer.config, 'filamentDiameter', 0, 5, 0.01)
+    .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
+  printerFolder.add(visualizer.config, 'nozzleLength', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.nozzleLength = v; });
+  printerFolder.add(visualizer.config, 'printHeadMinX', -100, 0, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setX(v); });
+  printerFolder.add(visualizer.config, 'printHeadMinY', -100, 0, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setY(v); });
+  printerFolder.add(visualizer.config, 'printHeadMaxX', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
+  printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
+    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
 
-
-  
   printerFolder.close();
+
+  const slicerFolder = settingFolder.addFolder('slicer settings');
+  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
+  slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
+  slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
+  slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
+  slicerFolder.add(visualizer.config, 'bedLeveling').onChange((v: boolean) => {visualizer.printer.bedLeveling = v});
+  slicerFolder.add(visualizer.config, 'testSweep').onChange((v: boolean) => {visualizer.printer.testSweep = v});
+  slicerFolder.close();
+
+  // const testParamsFolder = settingFolder.addFolder('test params');
+  // testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
+  // testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
+  // testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
+  // testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
+  // testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
+  // testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
+  // testParamsFolder.close();
+
   // Update parameter calculation.
   // const updateParamCalculation = () => {
   //   visualizer.config.VStar = (visualizer.config.printHead_speed_when_foam / visualizer.config.extrusion_speed_when_foam).toFixed(2);
@@ -148,72 +221,117 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 
   // adding a save folder for the save gcode for the toolpath output
 
-  const paramsFolder = settingFolder.addFolder('parameters');
-  paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
-    .onChange((v: number) => {
-      visualizer.printer.V_Star = v;
-      visualizer.config.VStar = v;
-    });
-  paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
-    .onChange((v: number) => {
-      visualizer.printer.Edot = v;
-      visualizer.config.Edot = v;
-  });
-  paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
-  .onChange((v: number) => {
-    visualizer.printer.diameter_filament = v;
-    visualizer.config.diameter_filament = v;
-});
+  // const paramsFolder = settingFolder.addFolder('parameters');
+//   paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
+//     .onChange((v: number) => {
+//       visualizer.printer.V_Star = v;
+//       visualizer.config.VStar = v;
+//     });
+//   paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
+//     .onChange((v: number) => {
+//       visualizer.printer.Edot = v;
+//       visualizer.config.Edot = v;
+//   });
+//   paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
+//   .onChange((v: number) => {
+//     visualizer.printer.diameter_filament = v;
+//     visualizer.config.diameter_filament = v;
+// });
 
-paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
-.onChange((v: number) => {
-  visualizer.printer.ZOffset = v;
-  visualizer.config.zOffset = v;
-});
+// paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
+// .onChange((v: number) => {
+//   visualizer.printer.ZOffset = v;
+//   visualizer.config.zOffset = v;
+// });
 
-paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
-.onChange((v: number) => {
-  visualizer.printer.deltaZ = v;
-  visualizer.config.deltaZ = v;
-});
-// layer height
-// H Star
-// Z Offset
+// paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
+// .onChange((v: number) => {
+//   visualizer.printer.deltaZ = v;
+//   visualizer.config.deltaZ = v;
+// });
+// // layer height
+// // H Star
+// // Z Offset
 
-paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
-.onChange((v: number) => {
-  visualizer.printer.extrusion_m = v;
-  visualizer.config.extrusion_m = v;
-});
+// paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
+// .onChange((v: number) => {
+//   visualizer.printer.extrusion_m = v;
+//   visualizer.config.extrusion_m = v;
+// });
 
-paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
-.onChange((v: number) => {
-  visualizer.printer.H_star = v;
-  visualizer.config.HStar = v;
-});
+// paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
+// .onChange((v: number) => {
+//   visualizer.printer.H_star = v;
+//   visualizer.config.HStar = v;
+// });
 
-paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
-.onChange((v: number) => {
-  visualizer.config.height = v;
-  visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
-});
+// paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
+// .onChange((v: number) => {
+//   visualizer.config.height = v;
+//   visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
+// });
 
-  //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
-  paramsFolder.add(visualizer.config, 'showGcodeVisualization')
-    .name('Show G-code Visualization')
-    .onChange((value: boolean) => {
-        // Regenerate toolpath visualization when toggle changes
-        if (visualizer.currentSelectedModel) {
-            generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
-        }
-    });
-
- 
+//   //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
+//   paramsFolder.add(visualizer.config, 'showGcodeVisualization')
+//     .name('Show G-code Visualization')
+//     .onChange((value: boolean) => {
+//         // Regenerate toolpath visualization when toggle changes
+//         if (visualizer.currentSelectedModel) {
+//             generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
+//         }
+//     });
   
   const saveFolder = gui.addFolder('Saving');
-  saveFolder.add({ saveGcode: () => visualizer.saveToolpathGcodeToFile() }, 'saveGcode').name('Save Toolpath G-Code');
+  // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
+  saveFolder.add({ saveGcode: () => {
+    const gcode = visualizer.printer.build_start_gcode(1) + 
+                  visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
+                  visualizer.printer.end_gcode;
+
+    visualizer.saveGcodeToFile(gcode, "toolpath")
+  } }, 'saveGcode').name('Save Toolpath G-Code');
+  // saveFolder.add({ generateTestGcode: () => {
+  //   visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
+  //     visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
+  //     visualizer.config.endVStarTest), 1);
+  //   }}, 'generateTestGcode').name("Make Test Gcode");
+  // saveFolder.add({ generateTestGcode: () => {
+  //   const model = visualizer.everydayModelList[0];
+  //   model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
+  // }}, 'generateTestGcode').name("Make Nonplanar Gcode");
   saveFolder.close();
   
+
+  // Create TreeSlicer folder
+  const treeSlicerFolder = gui.addFolder('Foam Slicing');
+  treeSlicerFolder.add({ sliceModel: () => {
+    console.log('Slice Plate button clicked');
+
+    const models: EverydayModel[] = visualizer.everydayModelList.map(model => model as EverydayModel);
+    
+    // Generate toolpath
+    console.log('Generating toolpath...');
+    const toolpath = generateFoamToolpath(visualizer, models);
+    console.log('Generated toolpath:', toolpath);
+    
+    if (!toolpath || !toolpath.foam) {
+        console.warn('Failed to generate toolpath. Please try again.');
+        return;
+    }
+    
+    // Create G-code
+    console.log('Creating G-code...');
+    const gcode = visualizer.printer.build_start_gcode(1) + 
+                  visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode + 
+                  visualizer.printer.end_gcode;
+    console.log('Generated G-code:', gcode);
+    
+    // Save G-code file
+    console.log('Saving G-code file...');
+    visualizer.saveGcodeToFile(gcode, "toolpath");
+    console.log('G-code file saved successfully');
+  }}, 'sliceModel').name('Slice Plate');
+  treeSlicerFolder.close();
 
   // Open the GUI.
   gui.open();
@@ -222,6 +340,8 @@ paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
     gui,
     foamModelListFolder,
     everydayModelListFolder,
-    saveFolder
+    saveFolder,
+    treeSlicerFolder,
+    presetFolder
   };
 }

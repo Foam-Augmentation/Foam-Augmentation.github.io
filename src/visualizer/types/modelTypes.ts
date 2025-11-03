@@ -1,5 +1,6 @@
 // src/types/modelTypes.ts
 import * as THREE from 'three';
+import {Gradient} from '../loaders/modelLoader'
 
 /**
  * Represents a GUI item, typically a folder from a GUI library.
@@ -30,6 +31,8 @@ export interface BasicModel {
     /** Associated GUI item. */
     guiItem?: GUIItem;
 
+    gcode?: string;
+
     // nozzle
     /** nozzle diameter for regular TPU */
     nozzleDiameterRegularTPU?: number;
@@ -53,15 +56,21 @@ export interface FoamModel extends BasicModel {
 /**
  * Toolpath Configurations.
  */
-interface ToolpathConfig {
+export interface ToolpathConfig {
     /** deltaZ (thickness of a single foam layer) */
     deltaZ: number;
-    /** zOffset (distance between the nozzle and the layer under to allow VTP) */
-    zOffset: number;
+    hStar: number;
+    hStarEnd: number;
+    vStar: number;
+    vStarEnd: number;
+    deltaLEnd: number;
+    /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
+    // zOffset: number;
     /** grid size */
     gridSize: number;
+    deltaL: number;
     /** die swell */
-    dieSwell: number;
+    // dieSwell: number;
     // sandwiched structure
     /** initial Foam layer count */
     initialFoamLayerCount: number;
@@ -69,22 +78,33 @@ interface ToolpathConfig {
     middleSenseLayerCount: number;
     /** final Foam layer count */
     finalFoamLayerCount: number;
+    edot: number;
+    bumpSpacingX: number;
+    bumpSpacingY: number;
+    bumpScale: number;
+    generateBumps: boolean;
+    curveAugment: boolean;
+    steepnessThreshold: number;
+    flatLayerZOffset: number;
+    additionalCurveLayers: number;
+
     /** regular Foam extrusion speed */
-    extrusionSpeedRegularFoam: number;
+    // extrusionSpeedRegularFoam: number;
     /** regular Foam print head speed */
-    printHeadSpeedRegularFoam: number;
+    // printHeadSpeedRegularFoam: number;
     /** regular Foam print head temp */
-    printHeadTempRegularFoam: number;
+    // printHeadTempRegularFoam: number;
     /** regular Foam nozzle size */
-    nozzleSizeRegularFoam: number;
+    // nozzleSizeRegularFoam: number;
+
     /** sensing Foam extrusion speed */
-    extrusionSpeedSensingFoam: number;
-    /** sensing Foam print head speed */
-    printHeadSpeedSensingFoam: number;
-    /** sensing Foam print head temp */
-    printHeadTempSensingFoam: number;
-    /** sensing Foam nozzle size */
-    nozzleSizeSensingFoam: number;
+    // extrusionSpeedSensingFoam: number;
+    // /** sensing Foam print head speed */
+    // printHeadSpeedSensingFoam: number;
+    // /** sensing Foam print head temp */
+    // printHeadTempSensingFoam: number;
+    // /** sensing Foam nozzle size */
+    // nozzleSizeSensingFoam: number;
 }
 
 
@@ -104,6 +124,8 @@ export interface EverydayModel extends BasicModel {
     pointsMesh_sense?: THREE.Points;
     /** Sampled points for toolpath generation. point: sample points; type: regular foam / sensing area */
     toolpathSamplePoints?: { point: THREE.Vector3, type: string }[];
+    
+    augmentSamplePoints?: THREE.Vector3[][];
     /** Group for Toolpath visualization. */
     toolpathVisualizationObject?: THREE.Group;
     /** Selected Regular Foam Mesh Area, for intersection detection. */
@@ -113,8 +135,15 @@ export interface EverydayModel extends BasicModel {
     /** List of models for intersect detection (for sensing areas) */
     sensingIntersectModelList?: THREE.Mesh[];
 
+    bumpMesh?: THREE.Mesh;
+
+    gradient: Gradient;
+
     /** Toolpath configurations */
     toolpathConfig: ToolpathConfig;
+
+    initialConfig: ToolpathConfig;
+    initialOffset: number;
 
     /** segments of regular + sensing area */
     all_area_segments?: { point: THREE.Vector3, type: string }[][];

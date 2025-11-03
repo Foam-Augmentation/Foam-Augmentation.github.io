@@ -3,13 +3,21 @@
       "target": "es5",
       "module": "es6",
       "moduleResolution": "node",
+      "downlevelIteration": true,
       "strict": true,
       "jsx": "react",
       "allowJs": true,
       "checkJs": false,
       "sourceMap": true,
       "outDir": "./dist",
-      "esModuleInterop": true
+      "esModuleInterop": true,
+      "typeRoots": [
+      "node_modules/@types",
+      "src/types"
+    ]
     },
-    "include": ["src/**/*"]
-  }  
+    "include": [
+      "src/**/*",
+      "src/types/**/*.d.ts"
+    ]
+}
