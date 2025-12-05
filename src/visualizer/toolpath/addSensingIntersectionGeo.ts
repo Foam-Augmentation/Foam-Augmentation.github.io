@@ -251,6 +251,7 @@ function _updateSenseIntersectionRegion(
     modelObj.selectedSenseFoamMesh = createSelectedMeshFromHighlight(highlightMesh);
   }
   
+  console.log("updated selected mesh bounding box call from addSensingIntersectionGeo");
   updateSelectedMeshBoundingBox(visualizer, modelObj);
   sampleSelectedMesh(visualizer, modelObj);
   generateAugmentFoamToolpath(visualizer, modelObj);

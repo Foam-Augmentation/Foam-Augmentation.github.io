@@ -284,7 +284,7 @@
     this.selectedMesh = this.#createSelectedMeshFromHighlight(this.highlightMesh); // create selected mesh
     this.selectedMesh.position.set(this.targetX, this.targetY, this.targetZ); // translate the selected mesh
 
-    this.#updateSelectedMeshBoundingBox(); // update selected mesh bounding box
+    this.#updateSelectedMeshBoundingBox(this.selectedMesh); // update selected mesh bounding box
 
     this.#sampleSelectedMesh(); // sample selected mesh
     this.createZigzagPath(); // create zigzag toolpath based on the sample points
@@ -1591,21 +1591,69 @@ export default class Visualizer {
     }
 
 
-
-
-    // update the bounding box of the selected mesh
+    // NEW: tighter fit; update the bounding box of the selected mesh
     #updateSelectedMeshBoundingBox(object) {
-        // 移除先前的边界盒（如果存在）
+
+        console.log("Entered update selected mesh bounding");
+        // Remove old helpers
         if (object.selectedRegularFoamMeshBoundingBoxHelper) {
             this.scene.remove(object.selectedRegularFoamMeshBoundingBoxHelper);
             object.selectedRegularFoamMeshBoundingBoxHelper.geometry.dispose();
             object.selectedRegularFoamMeshBoundingBoxHelper.material.dispose();
         }
+        if (object.selectedRegularFoamMeshOutline) {
+            this.scene.remove(object.selectedRegularFoamMeshOutline);
+            object.selectedRegularFoamMeshOutline.geometry.dispose();
+            object.selectedRegularFoamMeshOutline.material.dispose();
+        }
 
-        // 创建新的边界盒
-        const box = new THREE.Box3().setFromObject(object.selectedRegularFoamMesh);
-        object.selectedRegularFoamMeshBoundingBoxHelper = new THREE.Box3Helper(box, 0xff0000);
+        // Compute geometry bounds
+        const geometry = object.selectedRegularFoamMesh.geometry;
+        geometry.computeBoundingBox();
+
+        const tightBox = geometry.boundingBox.clone();
+        tightBox.applyMatrix4(object.selectedFoamRegularMesh.matrixWorld);
+
+        // 🔵 Green rectangular bounding box
+        const boxMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        const bboxHelper = new THREE.Box3Helper(tightBox, 0x0000ff);
+        bboxHelper.material = boxMaterial;
+        this.scene.add(bboxHelper);
+        object.selectedRegularFoamMeshBoundingBoxHelper = bboxHelper;
+
+        // 🔴 Red outline of actual geometry
+        const outlineMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+        const outlineGeometry = new THREE.EdgesGeometry(geometry);
+
+        console.log("Outline vertex count:", outlineGeometry.attributes.position.count);
+
+
+        const outline = new THREE.LineSegments(outlineGeometry, outlineMaterial);
+
+        // Transform to world space
+        outline.applyMatrix4(object.selectedFoamRegularMesh.matrixWorld);
+
+        // Lift slightly above surface to avoid z-fighting
+        outline.position.z += 0.5;
+
+        this.scene.add(outline);
+        object.selectedRegularFoamMeshOutline = outline;
     }
+
+    // // OLD: update the bounding box of the selected mesh
+    // // using entire object hierarchy, not accurate
+    // #updateSelectedMeshBoundingBoxOld(object) {
+    //     // 移除先前的边界盒（如果存在）
+    //     if (object.selectedRegularFoamMeshBoundingBoxHelper) {
+    //         this.scene.remove(object.selectedRegularFoamMeshBoundingBoxHelper);
+    //         object.selectedRegularFoamMeshBoundingBoxHelper.geometry.dispose();
+    //         object.selectedRegularFoamMeshBoundingBoxHelper.material.dispose();
+    //     }
+
+    //     // 创建新的边界盒
+    //     const box = new THREE.Box3().setFromObject(object.selectedRegularFoamMesh);
+    //     object.selectedRegularFoamMeshBoundingBoxHelper = new THREE.Box3Helper(box, 0xff0000);
+    // }
 
     // sample the selected mesh (simple grid sampling method, scanning X&Y)
     #sampleSelectedMesh(object) {

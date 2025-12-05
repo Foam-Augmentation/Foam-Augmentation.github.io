@@ -36,6 +36,37 @@ export interface PathPoint {
     deltaL?: number; // added this
 }
 
+export function generateCalibrationLine(z = 0.4, length = 40) {
+    const thinRect = [
+        new THREE.Vector3(0,      0, z),
+        new THREE.Vector3(length, 0, z),
+        new THREE.Vector3(length, 0.0001, z),
+        new THREE.Vector3(0,      0.0001, z)
+    ];
+
+    const rawLine = generateRectilinearInfill(
+        thinRect,
+        999999,               // huge spacing = just ONE line
+        false,                // scan direction
+        new THREE.Vector3(0, 0, z)
+    );
+
+    const toolpath = rawLine.map(pt => ({
+        point: pt,
+        travel: false,
+        hStar: 1,
+        vStar: 1,
+        edot: 1
+    }));
+
+    return {
+        all: toolpath,
+        foam: toolpath,
+        sense: []
+    };
+}
+
+
 /**
      * Private helper function that constructs continuous paths from a filtered set of sample points.
      *
@@ -2566,6 +2597,8 @@ export function generateAugmentFoamToolpath(
 
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;
+
+
 
     return {
         all: toolpath,
