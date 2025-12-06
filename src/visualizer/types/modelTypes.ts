@@ -151,4 +151,6 @@ export interface EverydayModel extends BasicModel {
     regular_area_segments?: { point: THREE.Vector3, type: string }[][];
     /** segments of sensing area */
     sense_area_segments?: { point: THREE.Vector3, type: string }[][];
+
+    outlineGcode?:string;
 }

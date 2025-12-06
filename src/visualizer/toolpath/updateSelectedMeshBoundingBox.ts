@@ -140,6 +140,8 @@ export function updateSelectedMeshBoundingBox(
   const gcode = generateOutlineGCode(orderedPoints);
   console.log("--- GENERATED OUTLINE G-CODE ---");
   console.log(gcode);
+
+  object.outlineGcode = gcode;
 }
 
 /**
