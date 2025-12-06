@@ -4,6 +4,7 @@ import Visualizer from '../Visualizer';
 import { refreshModelGUIList } from '../gui/refreshModelGUIList';
 import { FoamModel, EverydayModel, GUIItem } from '../types/modelTypes';
 import { MeshBVH } from 'three-mesh-bvh';
+import { updateSelectedMeshBoundingBox } from '../toolpath/updateSelectedMeshBoundingBox';
 
 export interface RGBA { r: number; g: number; b: number; a: number; }
 export interface Gradient {width: number, height: number, sampleColor(x: number, y: number): RGBA}
@@ -21,6 +22,7 @@ export interface Gradient {width: number, height: number, sampleColor(x: number,
  * @param type - The model type to import; must be either 'foam' or 'everyday'.
  */
 export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'): void {
+    console.warn("STL MODEL LOADED, type passed in:", type);
     // Create a hidden file input element.
     const input: HTMLInputElement = document.createElement('input');
     input.type = 'file';
@@ -85,7 +87,9 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 };
                 visualizer.foamModelList.push(foamModelObj);
                 visualizer.uuid_to_modelObj_Map.set(mesh.uuid, foamModelObj);
+
                 foamModelObj.mesh.geometry.boundsTree = new MeshBVH(foamModelObj.geometry); // Add bounds tree for raycasting.
+                console.log("BVH BUILT:", foamModelObj.mesh.geometry.boundsTree);
             } else {
                 const everydayModelObj: EverydayModel = {
                     name: file.name,
@@ -153,7 +157,11 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                 };
                 visualizer.everydayModelList.push(everydayModelObj);
                 visualizer.uuid_to_modelObj_Map.set(mesh.uuid, everydayModelObj);
+                
                 everydayModelObj.mesh.geometry.boundsTree = new MeshBVH(everydayModelObj.geometry); // Add bounds tree for raycasting.
+                
+                console.log("Calling outline generation on STL load...");
+                updateSelectedMeshBoundingBox(visualizer, everydayModelObj);
             }
 
             // Add the mesh to the scene.

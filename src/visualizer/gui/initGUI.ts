@@ -9,6 +9,7 @@ import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolp
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import {EverydayModel} from '../types/modelTypes';
+import { saveGcodeToFile } from '../toolpath/saveGcodeToFile';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -202,103 +203,20 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   slicerFolder.add(visualizer.config, 'bedLeveling').onChange((v: boolean) => {visualizer.printer.bedLeveling = v});
   slicerFolder.add(visualizer.config, 'testSweep').onChange((v: boolean) => {visualizer.printer.testSweep = v});
   slicerFolder.close();
-
-  // const testParamsFolder = settingFolder.addFolder('test params');
-  // testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
-  // testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
-  // testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
-  // testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
-  // testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
-  // testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
-  // testParamsFolder.close();
-
-  // Update parameter calculation.
-  // const updateParamCalculation = () => {
-  //   visualizer.config.VStar = (visualizer.config.printHead_speed_when_foam / visualizer.config.extrusion_speed_when_foam).toFixed(2);
-  //   visualizer.config.HStar = (visualizer.config.zOffset / (visualizer.config.nozzleDiameter * visualizer.config.dieSwelling)).toFixed(2);
-  // };
-  // updateParamCalculation();
-
-  // adding a save folder for the save gcode for the toolpath output
-
-  // const paramsFolder = settingFolder.addFolder('parameters');
-//   paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
-//     .onChange((v: number) => {
-//       visualizer.printer.V_Star = v;
-//       visualizer.config.VStar = v;
-//     });
-//   paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
-//     .onChange((v: number) => {
-//       visualizer.printer.Edot = v;
-//       visualizer.config.Edot = v;
-//   });
-//   paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
-//   .onChange((v: number) => {
-//     visualizer.printer.diameter_filament = v;
-//     visualizer.config.diameter_filament = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.ZOffset = v;
-//   visualizer.config.zOffset = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.deltaZ = v;
-//   visualizer.config.deltaZ = v;
-// });
-// // layer height
-// // H Star
-// // Z Offset
-
-// paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.extrusion_m = v;
-//   visualizer.config.extrusion_m = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.H_star = v;
-//   visualizer.config.HStar = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.config.height = v;
-//   visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
-// });
-
-//   //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
-//   paramsFolder.add(visualizer.config, 'showGcodeVisualization')
-//     .name('Show G-code Visualization')
-//     .onChange((value: boolean) => {
-//         // Regenerate toolpath visualization when toggle changes
-//         if (visualizer.currentSelectedModel) {
-//             generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
-//         }
-//     });
   
   const saveFolder = gui.addFolder('Saving');
-  // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
   saveFolder.add({ saveGcode: () => {
+
     const gcode = visualizer.printer.build_start_gcode(1) + 
-                  visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
+                  visualizer.everydayModelList.map(model => 
+                    (model.outlineGcode || "") +  // Outline gcode
+                    (model.gcode || "")            // Mesh gcode
+                  ).join("\n; Moving to next model\n") + 
                   visualizer.printer.end_gcode;
 
-    visualizer.saveGcodeToFile(gcode, "toolpath")
+    saveGcodeToFile(gcode, "toolpath")
   } }, 'saveGcode').name('Save Toolpath G-Code');
-  // saveFolder.add({ generateTestGcode: () => {
-  //   visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
-  //     visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
-  //     visualizer.config.endVStarTest), 1);
-  //   }}, 'generateTestGcode').name("Make Test Gcode");
-  // saveFolder.add({ generateTestGcode: () => {
-  //   const model = visualizer.everydayModelList[0];
-  //   model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
-  // }}, 'generateTestGcode').name("Make Nonplanar Gcode");
+  
   saveFolder.close();
   
 
@@ -328,7 +246,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     
     // Save G-code file
     console.log('Saving G-code file...');
-    visualizer.saveGcodeToFile(gcode, "toolpath");
+    saveGcodeToFile(gcode, "toolpath");
     console.log('G-code file saved successfully');
   }}, 'sliceModel').name('Slice Plate');
   treeSlicerFolder.close();
