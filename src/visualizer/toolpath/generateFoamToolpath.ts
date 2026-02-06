@@ -3,6 +3,7 @@ import Visualizer from '../Visualizer';
 import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
 import { Gradient, RGBA } from '../loaders/modelLoader';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
+import { saveGcodeToFile } from './saveGcodeToFile';
 import {
     sliceMeshIntoLayers,
     extractRegionsFromLayer,
@@ -1320,127 +1321,70 @@ function applyVerticalGradient(
     console.log(`Applied vertical gradient: bottom(${config.hStar}, ${config.vStar}, ${config.deltaL}) -> top(${config.hStarEnd}, ${config.vStarEnd}, ${config.deltaLEnd})`);
 }
 
-
-
-
 /**
- * Slices a model for foam printing, using travel slicer outer reductions to reduce travel movements
- * and uses either rectilinear or fermat spiral infill.
- 
- * @param {Visualizer} visualizer The Visualizer instance
- * @param {EverydayModel[]} modelObjs A list of model objects to slice.
- * @returns Toolpaths for all, foam, and sense (currently only all/foam)
+ * Internal helper for generateFoamToolpath - contains the actual toolpath generation logic
+ * This is called repeatedly by the parameter sweep loop.
  */
-export function generateFoamToolpath(
+function generateFoamToolpathInternal(
     visualizer: Visualizer,
     modelObjs: EverydayModel[],
 ): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
-    console.log('generating foam toolpath');
+    console.log('Generating internal foam toolpath logic...');
     const chunkRoots: ChunkNode[] = [];
     let highestStartHeight = -Infinity;
     const boundaryPath: PathPoint[] = [];
+
     modelObjs.forEach(modelObj => {
+        // 1. Cleanup old visualization
         if (modelObj.toolpathVisualizationObject) {
             visualizer.scene.remove(modelObj.toolpathVisualizationObject);
             modelObj.toolpathVisualizationObject.traverse((child: any) => {
                 if (child.geometry) child.geometry.dispose();
                 if (child.material) child.material.dispose();
             });
-        }
-
-        if (modelObj.pointsMesh_sense) {
-            visualizer.scene.remove(modelObj.pointsMesh_sense);
-            modelObj.pointsMesh_sense.geometry.dispose();
-            (modelObj.pointsMesh_sense.material as THREE.Material).dispose();
-        }
-
-        if (modelObj.pointsMesh_foam) {
-            visualizer.scene.remove(modelObj.pointsMesh_foam);
-            modelObj.pointsMesh_foam.geometry.dispose();
-            (modelObj.pointsMesh_foam.material as THREE.Material).dispose();
         }
 
         const transformedMesh = getTransformedMesh(modelObj.mesh);
+        
+        // 2. Add boundary if enabled
         if (visualizer.printer.generateBoundary) {
             addBoundary(boundaryPath, transformedMesh, modelObj.mesh.position, visualizer.printer.machine_depth_y, 1, 1, false);
         }
-        
 
-        // Remove previous visualization
-        if (modelObj.toolpathVisualizationObject) {
-            visualizer.scene.remove(modelObj.toolpathVisualizationObject);
-            modelObj.toolpathVisualizationObject.traverse((child: any) => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) child.material.dispose();
-            });
-        }
-
-        // Update parameters for printing
+        // 3. Update printer parameters for the current iteration
         visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
-        // --- 1. Slice mesh into layers and extract regions ---
+        // 4. Slice mesh and build the region/chunk tree
         const layers = sliceMeshIntoLayers(transformedMesh, modelObj.toolpathConfig.deltaZ);
-        console.log('Sliced layers:', layers.length, layers);
         let allRegions: SliceRegion[] = [];
         let lowestHeight = Infinity;
+
         for (const { z, segments } of layers) {
             const regions = extractRegionsFromLayer(z, segments);
             regions.forEach(region => {
-                if (region.height < lowestHeight) {
-                    lowestHeight = region.height;
-                }
-            })
+                if (region.height < lowestHeight) lowestHeight = region.height;
+            });
             allRegions.push(...regions);
         }
         
         const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
         regionTree.forEach(root => {
-            const height = root.region.height + modelObj.mesh.position.z
-            if (height > highestStartHeight) {
-                highestStartHeight = height;
-            }
+            const height = root.region.height + modelObj.mesh.position.z;
+            if (height > highestStartHeight) highestStartHeight = height;
         });
 
         const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
-
         chunkTree.forEach(chunkNode => {
             chunkNode.modelObj = modelObj;
         });
 
         chunkRoots.push(...chunkTree);
-        
-        // const colors: number[] = [0xff0000, 0x00ff00, 0x0000ff, 0x00aaaa];
-        // visualizeChunks(chunkTree, colors, 0, visualizationGroup);
     });
 
- 
-
-    // Horizontal Gradient if no svg exiists
-    // Comment out from here to end mark
-    // modelObjs.forEach(modelObj => {
-    // console.log("Checking gradient:", modelObj.gradient);
-    // // Check if gradient is the default placeholder (1x1) or doesn't exist
-    // const config = modelObj.toolpathConfig;
-    // const hasGradientVariation = (config.hStar !== config.hStarEnd) || (config.vStar !== config.vStarEnd);
-    
-    // const hasValidGradient = modelObj.gradient && 
-    //                         modelObj.gradient.width > 1 && 
-    //                         modelObj.gradient.height > 1;
-    
-    //     if (!hasValidGradient && hasGradientVariation) {
-    //         console.log("No valid SVG gradient loaded, creating horizontal gradient fallback");
-    //         createLinearSVG(modelObj);
-    //     } else {
-    //         console.log("Using existing SVG gradient:", modelObj.gradient.width, "x", modelObj.gradient.height);
-    //     }
-    // });
-    // End mark
-
-
     const visualizationGroup = new THREE.Group();
-
     visualizer.scene.add(visualizationGroup);
 
+    // 5. Generate the actual path
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const toolpath = makeChunkTreePath(
         chunkRoots,
@@ -1449,30 +1393,14 @@ export function generateFoamToolpath(
         startPoint,
     );
 
-    // comment out from here till end mark if dont want vertical gradient
-    // vertical testing for vertical gradient 
-    modelObjs.forEach(modelObj => {
-        const config = modelObj.toolpathConfig;
-        const hasGradientVariation = (config.hStar !== config.hStarEnd) || (config.vStar !== config.vStarEnd);
-    
-        const hasValidGradient = modelObj.gradient && 
-                            modelObj.gradient.width > 1 && 
-                            modelObj.gradient.height > 1;
-        if (!hasValidGradient && hasGradientVariation) {
-            // Calculate model bounds for vertical gradient
-            modelObj.geometry.computeBoundingBox();
-            const modelHeight = modelObj.geometry.boundingBox!.min.z;
-            const maxHeight = modelObj.geometry.boundingBox!.max.z + modelObj.mesh.position.z;
-            console.log("applying vertical gradiet  to model from", modelHeight, "to", maxHeight);
-            // Apply vertical gradient using the toolpath config
-            applyVerticalGradient(toolpath, modelHeight, maxHeight, modelObj.toolpathConfig);
-        }
+    // 6. Apply "hStar" height offset (Vertical Die Swell calculation)
+    toolpath.forEach(point => {
+        // Ensure hStar is present for height calculation
+        const hValue = point.hStar ?? modelObjs[0].toolpathConfig.hStar;
+        point.point.setZ(point.point.z + hValue * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling));
     });
-    // end mark
 
-
-    toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
-
+    // 7. Add Boundary and Purge lines
     boundaryPath.reverse();
     boundaryPath.forEach(point => toolpath.unshift(point));
 
@@ -1480,16 +1408,115 @@ export function generateFoamToolpath(
         addPurgeLine(toolpath, visualizer.printer.machine_depth, 2, 2);
     }
 
+    // 8. Visualize current iteration result
     visualizeToolpath(toolpath, visualizationGroup, 0x00ff00, 0x0000ff);
-
-    visualizer.scene.add(visualizationGroup);
     modelObjs[0].toolpathVisualizationObject = visualizationGroup;
+
     return {
         all: toolpath,
         foam: toolpath,
         sense: []
     };
 }
+
+/**
+ * Main Entry Point: Performs the Parameter Sweep Loop
+ */
+export function generateFoamToolpath(
+    visualizer: Visualizer,
+    modelObjs: EverydayModel[],
+): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
+
+    const ENABLE_PARAMETER_SWEEP = true;
+    const V_STAR_VALUES = [5.0];
+    const H_STAR = 80; 
+    
+    let lastResult: { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } | null = null;
+
+    if (ENABLE_PARAMETER_SWEEP) {
+        // Save original user-set config to restore later
+        const originalConfig = { ...modelObjs[0].toolpathConfig };
+        
+        for (const vStar of V_STAR_VALUES) {
+            console.log(`\n--- SWEEPING: H*=${H_STAR}, V*=${vStar} ---`);
+            
+            // Strictly override the config for this iteration
+            modelObjs[0].toolpathConfig.hStar = H_STAR;
+            modelObjs[0].toolpathConfig.vStar = vStar;
+            modelObjs[0].toolpathConfig.hStarEnd = H_STAR;
+            modelObjs[0].toolpathConfig.vStarEnd = vStar;
+            
+            // Run the internal logic for the full model
+            lastResult = generateFoamToolpathInternal(visualizer, modelObjs);
+            
+            // Export G-code for this specific setting
+            const gcode = convertToolpathToGcode(lastResult.all, visualizer);
+            saveGcodeToFile(gcode, `mouse_foam_H${H_STAR}_V${vStar.toFixed(1)}`);
+            
+            console.log(`✓ Generated and Saved: V*=${vStar}`);
+        }
+        
+        // Restore original config
+        Object.assign(modelObjs[0].toolpathConfig, originalConfig);
+        console.log(`\n--- ALL SWEEPS COMPLETE ---\n`);
+    } else {
+        // Just run once if sweep is disabled
+        lastResult = generateFoamToolpathInternal(visualizer, modelObjs);
+    }
+
+    return lastResult || { all: [], foam: [], sense: [] };
+}
+
+/**
+ * Converts a toolpath to G-code
+ */
+function convertToolpathToGcode(
+    toolpath: PathPoint[],
+    visualizer: Visualizer
+): string {
+    let gcode = `; VTP Foam G-code\n`;
+    gcode += `; Generated: ${new Date().toISOString()}\n`;
+    gcode += `; H*=${toolpath[0]?.hStar?.toFixed(2)}, V*=${toolpath[0]?.vStar?.toFixed(2)}\n\n`;
+    
+    // Printer setup
+    gcode += `G21 ; Set units to mm\n`;
+    gcode += `G90 ; Absolute positioning\n`;
+    gcode += `M82 ; Absolute extrusion mode\n`;
+    gcode += `G28 ; Home all axes\n\n`;
+    
+    let E = 0; // Cumulative extrusion
+    
+    for (let i = 0; i < toolpath.length; i++) {
+        const point = toolpath[i];
+        const x = point.point.x.toFixed(3);
+        const y = point.point.y.toFixed(3);
+        const z = point.point.z.toFixed(3);
+        
+        if (point.travel) {
+            gcode += `G0 X${x} Y${y} Z${z} ; Travel\n`;
+        } else {
+            // Calculate extrusion based on distance and V*
+            if (i > 0) {
+                const dist = point.point.distanceTo(toolpath[i-1].point);
+                const extrusionAmount = dist * (point.vStar || 1) * (point.edot || 1) * 0.1;
+                E += extrusionAmount;
+            }
+            gcode += `G1 X${x} Y${y} Z${z} E${E.toFixed(5)} F1800\n`;
+        }
+        
+        if (point.pause) {
+            gcode += `M0 ; Pause\n`;
+        }
+    }
+    
+    gcode += `\nM104 S0 ; Turn off hotend\n`;
+    gcode += `M140 S0 ; Turn off bed\n`;
+    gcode += `G28 X Y ; Home X Y\n`;
+    gcode += `M84 ; Disable steppers\n`;
+    
+    return gcode;
+}
+
 
 
 /**
