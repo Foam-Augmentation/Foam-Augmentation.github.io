@@ -58,26 +58,58 @@ export interface ContourNode {
  * @returns {{ z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[]} The list of layers.
  */
 export function sliceMeshIntoLayers(
-  mesh: THREE.Mesh, 
+  mesh: THREE.Mesh,
   deltaZ: number
 ): { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] {
     const geometry = mesh.geometry as THREE.BufferGeometry;
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox!;
-    
+
     const minZ = bbox.min.z + 0.00001;
     console.log("Minz: " + minZ);
     const maxZ = bbox.max.z - 0.00001;
-    const layers: { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] = [];
-    
-    // go from bottom to top, slice every deltaZ
+
+    // Pre-build the layer array and pre-compute plane constants.
+    const layerZs: number[] = [];
     for (let z = minZ; z <= maxZ; z += deltaZ) {
-        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -z);
-        const segments = getSegmentsFromMesh(mesh, plane);
-        layers.push({ z, segments });
+        layerZs.push(z);
     }
-    
-    return layers;
+    const numLayers = layerZs.length;
+    const layerSegments: { start: THREE.Vector3, end: THREE.Vector3 }[][] = Array.from({ length: numLayers }, () => []);
+
+    // Single pass over all triangles: bin each triangle into only the layers it spans
+    // instead of scanning all triangles once per layer (O(triangles × layers) → O(triangles + intersections)).
+    const positions = geometry.attributes.position.array as Float32Array;
+    const planeNormal = new THREE.Vector3(0, 0, 1);
+
+    for (let i = 0; i < positions.length; i += 9) {
+        const za = positions[i + 2];
+        const zb = positions[i + 5];
+        const zc = positions[i + 8];
+
+        const triMinZ = Math.min(za, zb, zc);
+        const triMaxZ = Math.max(za, zb, zc);
+
+        // Find only the layers this triangle actually spans
+        const firstLayer = Math.max(0, Math.ceil((triMinZ - minZ) / deltaZ));
+        const lastLayer  = Math.min(numLayers - 1, Math.floor((triMaxZ - minZ) / deltaZ));
+
+        if (firstLayer > lastLayer) continue;
+
+        const a = new THREE.Vector3(positions[i],     positions[i + 1], za);
+        const b = new THREE.Vector3(positions[i + 3], positions[i + 4], zb);
+        const c = new THREE.Vector3(positions[i + 6], positions[i + 7], zc);
+
+        for (let l = firstLayer; l <= lastLayer; l++) {
+            const plane = new THREE.Plane(planeNormal, -layerZs[l]);
+            const intersections = getTrianglePlaneIntersection(a, b, c, plane);
+            if (intersections.length === 2) {
+                layerSegments[l].push({ start: intersections[0], end: intersections[1] });
+            }
+        }
+    }
+
+    return layerZs.map((z, idx) => ({ z, segments: layerSegments[idx] }));
 }
 
 
@@ -279,11 +311,26 @@ export function connectSegments(
   segments: { start: THREE.Vector3; end: THREE.Vector3 }[]
 ): THREE.Vector3[][] {
     if (segments.length === 0) return [];
-    
+
     const contours: THREE.Vector3[][] = [];
     const used = new Set<number>();
     const tolerance = 0.00001; // how close endpoints need to be to connect
-    
+
+    // Build a spatial endpoint map (keyed by quantized coordinates) for O(1) neighbour
+    // lookup instead of an O(n) full scan on every step — same idea as TRAvel_Slicer's Grid.
+    function vecKey(v: THREE.Vector3): string {
+        return `${v.x.toFixed(5)},${v.y.toFixed(5)},${v.z.toFixed(5)}`;
+    }
+    const pointToSegs = new Map<string, number[]>();
+    for (let i = 0; i < segments.length; i++) {
+        const sk = vecKey(segments[i].start);
+        const ek = vecKey(segments[i].end);
+        if (!pointToSegs.has(sk)) pointToSegs.set(sk, []);
+        if (!pointToSegs.has(ek)) pointToSegs.set(ek, []);
+        pointToSegs.get(sk)!.push(i);
+        pointToSegs.get(ek)!.push(i);
+    }
+
     while (used.size < segments.length) {
         // find unused segment to start new contour
         let startIdx = -1;
@@ -293,28 +340,29 @@ export function connectSegments(
                 break;
             }
         }
-        
+
         if (startIdx === -1) break;
-        
+
         const contour: THREE.Vector3[] = [];
         let currentSegment = segments[startIdx];
         let currentPoint = currentSegment.start;
-        
+
         used.add(startIdx);
         contour.push(currentPoint.clone());
         contour.push(currentSegment.end.clone());
         currentPoint = currentSegment.end;
-        
-        // try to keep connecting more segments
+
+        // try to keep connecting more segments via the lookup map
         let foundConnection = true;
         while (foundConnection && used.size < segments.length) {
             foundConnection = false;
-            
-            for (let i = 0; i < segments.length; i++) {
+
+            const candidates = pointToSegs.get(vecKey(currentPoint)) ?? [];
+            for (const i of candidates) {
                 if (used.has(i)) continue;
-                
+
                 const seg = segments[i];
-                
+
                 // see if we can connect to this segment
                 if (currentPoint.distanceTo(seg.start) < tolerance) {
                     contour.push(seg.end.clone());
@@ -331,12 +379,12 @@ export function connectSegments(
                 }
             }
         }
-        
+
         if (contour.length > 2) {
             contours.push(contour);
         }
     }
-    
+
     return contours;
 }
 
@@ -872,22 +920,25 @@ function spiralContours(
       let lowestDist = Infinity;
       let closestIndex = 0;
       let closestPoint = new THREE.Vector3;
+      // Reuse a single Line3 and Vector3 across all iterations to avoid allocating
+      // new objects in this tight loop (one per contour point per isocontour transition).
+      const scratchLine = new THREE.Line3();
+      const scratchClosest = new THREE.Vector3();
       let lastPoint = isocontours[checkContourIndex][isocontours[checkContourIndex].length - 1];
       for (let j = 0; j < isocontours[checkContourIndex].length; j++) {
         const point = isocontours[checkContourIndex][j];
-        const line = new THREE.Line3(lastPoint, point);
-        let closestPointOnLine = new THREE.Vector3;
-        line.closestPointToPoint(endPoint, true, closestPointOnLine);
-        const dist = endPoint.distanceTo(closestPointOnLine);
+        scratchLine.set(lastPoint, point);
+        scratchLine.closestPointToPoint(endPoint, true, scratchClosest);
+        const dist = endPoint.distanceTo(scratchClosest);
         if (dist < lowestDist) {
           lowestDist = dist;
           closestIndex = j;
-          closestPoint = closestPointOnLine;
+          closestPoint = scratchClosest.clone();
         }
 
         lastPoint = point;
       }
-      
+
       path.push(closestPoint);
       startIndex = closestIndex;
       initialDist = -isocontours[checkContourIndex][startIndex].distanceTo(closestPoint);
@@ -972,7 +1023,11 @@ export function connectIsocontours(
     for (const child of currentNode.children) {
       lowestDist = Infinity;
       let closestIndexOuter = 0;
-      for (let i = 0; i < path.length; i++) {
+      // Child contours are inner splits produced when the inward spiral reached its deepest
+      // point, so the closest path position is always near the end of the accumulated path.
+      // Capping the backward search to the last 200 points avoids an O(path × child) scan.
+      const searchLimit = Math.min(path.length, 200);
+      for (let i = 0; i < searchLimit; i++) {
         const point = path[path.length - 1 - i];
         for (let j = 0; j < child.contour.length; j++) {
           const otherPoint = child.contour[j];
@@ -1043,7 +1098,10 @@ export function connectIsocontours(
       for (const child of currentNode.children) {
         lowestDist = Infinity;
         let closestIndexOuter = 0;
-        for (let i = 0; i < inwardSpiralPath.length; i++) {
+        // Same cap as the inward spiral's child search: child contours are near the end
+        // of the accumulated path, so searching the last 200 points is sufficient.
+        const searchLimit = Math.min(inwardSpiralPath.length, 200);
+        for (let i = 0; i < searchLimit; i++) {
           const point = inwardSpiralPath[inwardSpiralPath.length - 1 - i];
           for (let j = 0; j < child.contour.length; j++) {
             const otherPoint = child.contour[j];
@@ -1119,8 +1177,8 @@ export function generateInsetContourTree(
     current.forEach(path =>
       co.AddPath(
         path,
-        ClipperLib.JoinType.jtRound,
-        ClipperLib.EndType.etClosedPolygon
+        ClipperLib.JoinType.jtMiter,  // jtRound generated ~240 arc points per full corner circle;
+        ClipperLib.EndType.etClosedPolygon  // jtMiter clips sharp corners without adding any extra points
       )
     );
 

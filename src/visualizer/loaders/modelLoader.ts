@@ -250,6 +250,12 @@ export function importSvgGradient(modelObj: EverydayModel): void {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
 
+      // Read the entire canvas once into a flat array instead of calling getImageData
+      // per sample point — getImageData(x,y,1,1) crosses the JS→GPU boundary and
+      // allocates a new typed array on every call, which is catastrophically slow when
+      // invoked tens of thousands of times during gradient application.
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
       modelObj.gradient = {
         width:  canvas.width,
         height: canvas.height,
@@ -257,8 +263,8 @@ export function importSvgGradient(modelObj: EverydayModel): void {
         sampleColor(x: number, y: number): RGBA {
           const ix = Math.min(canvas.width  - 1, Math.max(0, Math.floor(x)));
           const iy = Math.min(canvas.height - 1, Math.max(0, Math.floor(y)));
-          const d  = ctx.getImageData(ix, iy, 1, 1).data;
-          return { r: d[0], g: d[1], b: d[2], a: d[3] };
+          const offset = (iy * canvas.width + ix) * 4;
+          return { r: imageData[offset], g: imageData[offset + 1], b: imageData[offset + 2], a: imageData[offset + 3] };
         }
       };
 
