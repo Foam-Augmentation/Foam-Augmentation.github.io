@@ -33,6 +33,8 @@ export interface PathPoint {
     hStar?: number;
     vStar?: number;
     edot?: number;
+    deltaZ?: number;
+    deltaL?: number;
 }
 
 /**
@@ -689,6 +691,8 @@ function makeChunkPath(
         point.hStar = configToUse.hStar + percent * (configToUse.hStarEnd - configToUse.hStar);
         point.vStar = configToUse.vStar + percent * (configToUse.vStarEnd - configToUse.vStar);
         point.edot = configToUse.edot;
+        point.deltaZ = configToUse.deltaZ;
+        point.deltaL = configToUse.deltaL;
         point.point.add(chunk.modelObj!.mesh.position);
     });
 
@@ -1885,7 +1889,7 @@ export function generateAugmentFoamToolpath(
         }
 
         // Add the bump contours to every point we want to add a bump at.
-        const bumpHeight = (modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount + flatLayerNum) * modelObj.toolpathConfig.deltaZ;
+        const bumpHeight = (modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount + (modelObj.toolpathConfig.curveAugment ? flatLayerNum : 0)) * modelObj.toolpathConfig.deltaZ;
         bumpPoints.forEach(p => {
             // Use .some so we can break by returning true
             bumpContours.some(contour => {

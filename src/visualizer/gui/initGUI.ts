@@ -41,7 +41,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const titleElement = gui.domElement.querySelector('.title');
   console.log('Title Element:', titleElement);
   if (titleElement) {
-    titleElement.textContent = 'SMART FOAM SOFTWARE';
+    titleElement.textContent = 'AugPrint Design Tool';
     titleElement.classList.add('lil-gui-1st-title');
   }
 

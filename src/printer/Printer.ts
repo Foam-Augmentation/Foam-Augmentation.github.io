@@ -476,11 +476,9 @@ M109 S${230} ; wait for extruder temp\n\n`
         this.H_star = point.hStar!;
         this.Edot = point.edot!;
         this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+        const line = this.extrudeSingleSegment(lastTarget, currentPoint);
         body_gcode.push(
-          this.extrudeSingleSegment(
-            lastTarget,
-            currentPoint
-          )
+          `${line} ; V*=${point.vStar!.toFixed(4)} H*=${point.hStar!.toFixed(4)} deltaZ=${point.deltaZ?.toFixed(4) ?? this.deltaZ.toFixed(4)} deltaL=${point.deltaL?.toFixed(4) ?? 'N/A'} Edot=${point.edot!.toFixed(4)}`
         );
       }
 
