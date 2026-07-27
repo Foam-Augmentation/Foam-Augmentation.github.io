@@ -101,13 +101,13 @@ def sample_surface(
     surface_pts = np.column_stack([
         xs[cols_all[kept_mask]],
         ys[rows_all[kept_mask]],
-        z_grid[rows_all[kept_mask]],
+        z_grid[rows_all[kept_mask], cols_all[kept_mask]],
     ]) if kept_mask.any() else np.empty((0, 3))
 
     edge_pts = np.column_stack([
         xs[cols_all[~kept_mask]],
         ys[rows_all[~kept_mask]],
-        z_grid[rows_all[~kept_mask]],
+        z_grid[rows_all[~kept_mask], cols_all[~kept_mask]],
     ]) if (~kept_mask).any() else np.empty((0, 3))
 
     return surface_pts, edge_pts, valid_grid, eroded_grid, xs, ys

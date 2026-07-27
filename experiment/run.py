@@ -1,203 +1,215 @@
 """
 AugPrint mesh-corruption experiment.
 
-Tests how VTP augmentation tolerates low-fidelity meshes by:
-  1. Corrupting the reference mesh (normal-direction noise or uniform scale)
-  2. Generating a toolpath from the corrupted mesh at a given H*
-  3. Simulating that toolpath over the original mesh
-  4. Reporting tip and body collision rates
+For each STL in STLs/:
+  1. Renders examples of each corruption type (mesh_examples.png)
+  2. Pre-computes corrupted surface points (expensive raycasting done once)
+  3. Sweeps H* values and reports averaged collision rates (N_TRIALS each)
+  4. Saves per-mesh results CSV and any-collision heatmap PNG
 
-Set PREVIEW = True to inspect the toolpath coverage and edge erosion on the
-original mesh before committing to a full simulation run.
+Corruption types
+----------------
+  noise    : spatially correlated normal-direction noise (sigma in NOISE_SIGMAS)
+  scale    : uniform scale about centroid (factors in SCALE_FACTORS)
+  combined : same noise realization applied to original, THEN scaled — ensures
+             collision rates change monotonically with scale factor
 """
 
 import os
 import sys
+import glob
 import numpy as np
 import pandas as pd
 import trimesh
 
-# ── make local imports work regardless of working directory ───────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 
 from corrupt import corrupt_normal_noise, corrupt_scale
 from simulate import compute_heightfield, sample_surface, make_toolpath, check_collisions
-from visualize import preview_comparison, plot_heatmaps
+from visualize import render_mesh_examples, plot_any_collision_heatmap
 
 # =============================================================================
-# Parameters — edit these
+# Parameters
 # =============================================================================
 
-MESH_PATH   = os.path.join(os.path.dirname(__file__), '..', 'STLs', 'bike_seat.stl')
-OUTPUT_DIR  = os.path.dirname(__file__)
+STL_DIR      = os.path.join(os.path.dirname(__file__), '..', 'STLs')
+OUTPUT_DIR   = os.path.dirname(__file__)
 
-PREVIEW     = True    # True → show toolpath preview on original mesh and exit
+N_TRIALS     = 5       # averages for stochastic (noise / combined) conditions
 
-# Toolpath sampling
-GRID_SPACING    = 3.0   # ΔL (mm) — spacing between toolpath points
-EDGE_MARGIN     = 5.0   # (mm) — erode this far from the mesh boundary
+GRID_SPACING    = 3.0
+EDGE_MARGIN     = 5.0
+HF_RESOLUTION   = 1.0
+HF_MARGIN       = 20.0
 
-# Height field (original mesh, computed once)
-HF_RESOLUTION   = 1.0   # (mm) — grid resolution; finer = more accurate, slower
-HF_MARGIN       = 20.0  # (mm) — extend height field beyond mesh bounds
+HSTAR_VALUES    = [0.5, 1, 2, 3, 5, 7, 10, 20, 30, 40, 50]
+NOISE_SIGMAS    = [0.5, 1.0, 2.0]
+SCALE_FACTORS   = [0.98, 0.95, 0.90, 0.80, 1.02, 1.05, 1.10, 1.20]
+COMBINED_NOISE_SIGMA = 2.0   # noise applied before scaling in combined condition
 
-# Experiment grid
-HSTAR_VALUES    = [0.5, 10, 20, 30, 40, 50]  # 0.5 ≈ traditional FFF (H=0.2mm layer height)
-NOISE_SIGMAS    = [0.5, 1.0, 2.0]                 # mm — normal-direction noise
-SCALE_FACTORS   = [0.98, 0.95, 0.90, 0.80, 1.02, 1.05, 1.10, 1.20]  # <1 = shrink, >1 = grow
+NOZZLE_DIAMETER  = 0.4
+DIE_SWELLING     = 1.0
+NOZZLE_LENGTH    = 4.5
+PRINT_HEAD_MIN   = (-40.0, -15.0)
+PRINT_HEAD_MAX   = ( 35.0,  70.0)
+SAFETY_CLEARANCE = 0.0
 
-# Printer parameters — match Printer.ts defaults
-NOZZLE_DIAMETER = 0.4           # mm
-DIE_SWELLING    = 1.0           # α (dimensionless)
-NOZZLE_LENGTH   = 4.5           # mm (nozzle tip to bottom of heat block/body)
-PRINT_HEAD_MIN  = (-40.0, -15.0)  # mm relative to nozzle, (x_min, y_min)
-PRINT_HEAD_MAX  = ( 35.0,  70.0)  # mm relative to nozzle, (x_max, y_max)
-SAFETY_CLEARANCE = 0.0          # mm — tip collision threshold (actual_H <= this)
-
-D_T = NOZZLE_DIAMETER * DIE_SWELLING  # thread diameter (mm)
+D_T = NOZZLE_DIAMETER * DIE_SWELLING
 
 # =============================================================================
-# Load mesh
+# Helper
 # =============================================================================
 
-print(f"Loading mesh: {MESH_PATH}")
-original: trimesh.Trimesh = trimesh.load(MESH_PATH, force='mesh')
-print(f"  {len(original.vertices):,} vertices  |  {len(original.faces):,} faces")
-print(f"  Bounds X [{original.bounds[0,0]:.1f}, {original.bounds[1,0]:.1f}] mm"
-      f"  Y [{original.bounds[0,1]:.1f}, {original.bounds[1,1]:.1f}] mm"
-      f"  Z [{original.bounds[0,2]:.1f}, {original.bounds[1,2]:.1f}] mm")
+def _collision_rates(surface_pts, H_intended, hf_xs, hf_ys, hf_Z):
+    if len(surface_pts) == 0:
+        return None
+    tp = make_toolpath(surface_pts, H_intended)
+    df = check_collisions(hf_xs, hf_ys, hf_Z, tp,
+                          NOZZLE_LENGTH, PRINT_HEAD_MIN, PRINT_HEAD_MAX,
+                          SAFETY_CLEARANCE)
+    n = len(df)
+    return (df['tip_collision'].sum()  / n * 100,
+            df['body_collision'].sum() / n * 100,
+            df['off_object'].sum()     / n * 100)
+
 
 # =============================================================================
-# Preview mode
+# Main loop over STL files
 # =============================================================================
 
-if PREVIEW:
-    print(f"\nPreview mode — sampling meshes (grid={GRID_SPACING} mm, edge_margin={EDGE_MARGIN} mm) ...")
+stl_paths = sorted(glob.glob(os.path.join(STL_DIR, '*.stl')))
+if not stl_paths:
+    print(f"No STL files found in {STL_DIR}")
+    sys.exit(1)
 
-    preview_cases = [
-        ('Original',      original),
-        ('Noise σ=0.5mm', corrupt_normal_noise(original, 0.5)),
-        ('Noise σ=2mm',   corrupt_normal_noise(original, 2.0)),
-        ('Scale 80%',     corrupt_scale(original, 0.80)),
-        ('Scale 90%',     corrupt_scale(original, 0.90)),
-        ('Scale 110%',    corrupt_scale(original, 1.10)),
-        ('Scale 120%',    corrupt_scale(original, 1.20)),
+for stl_path in stl_paths:
+    mesh_name = os.path.splitext(os.path.basename(stl_path))[0]
+    print(f"\n{'='*70}")
+    print(f"Mesh: {mesh_name}")
+    print('='*70)
+
+    original = trimesh.load(stl_path, force='mesh')
+    print(f"  {len(original.vertices):,} vertices  |  {len(original.faces):,} faces")
+    print(f"  Bounds X [{original.bounds[0,0]:.1f}, {original.bounds[1,0]:.1f}]  "
+          f"Y [{original.bounds[0,1]:.1f}, {original.bounds[1,1]:.1f}]  "
+          f"Z [{original.bounds[0,2]:.1f}, {original.bounds[1,2]:.1f}] mm")
+
+    # ── Mesh example renders ──────────────────────────────────────────────────
+    print("\nRendering mesh examples...")
+    np.random.seed(0)
+    example_cases = [
+        ('Original',       original),
+        ('Noise σ=0.5mm',  corrupt_normal_noise(original, 0.5)),
+        ('Noise σ=1mm',    corrupt_normal_noise(original, 1.0)),
+        ('Noise σ=2mm',    corrupt_normal_noise(original, 2.0)),
+        ('Scale 80%',      corrupt_scale(original, 0.80)),
+        ('Scale 90%',      corrupt_scale(original, 0.90)),
+        ('Scale 110%',     corrupt_scale(original, 1.10)),
+        ('Scale 120%',     corrupt_scale(original, 1.20)),
+        ('80% + σ=2mm',    corrupt_scale(corrupt_normal_noise(original, 2.0), 0.80)),
     ]
+    render_mesh_examples(
+        example_cases, original.bounds,
+        os.path.join(OUTPUT_DIR, f'{mesh_name}_mesh_examples.png'),
+    )
 
-    H_preview = 20 * D_T  # lift toolpath points by H* = 20 for visibility
+    # ── Height field ─────────────────────────────────────────────────────────
+    print(f"\nComputing height field (resolution={HF_RESOLUTION} mm) ...")
+    hf_xs, hf_ys, hf_Z = compute_heightfield(original, HF_RESOLUTION, HF_MARGIN)
+    print(f"  Shape: {hf_Z.shape}  ({np.isnan(hf_Z).mean()*100:.1f}% off-surface)")
 
-    panels = []
-    for title, mesh in preview_cases:
-        sp, ep, _, _, _, _ = sample_surface(mesh, GRID_SPACING, EDGE_MARGIN)
-        print(f"  {title:18s}  kept={len(sp):4d}  edge-discarded={len(ep):4d}")
-        # Lift points to commanded nozzle height so they float above the mesh
-        sp_lifted = sp.copy(); sp_lifted[:, 2] += H_preview
-        ep_lifted = ep.copy(); ep_lifted[:, 2] += H_preview
-        panels.append({'title': title, 'mesh': mesh, 'surface_pts': sp_lifted, 'edge_pts': ep_lifted})
+    # ── Pre-compute surface points (raycasting, done once per corrupted mesh) ─
+    print(f"\nPre-computing surface points ({N_TRIALS} trials for stochastic conditions)...")
 
-    preview_comparison(panels, n_cols=2)
-    sys.exit(0)
-
-# =============================================================================
-# Compute original mesh height field (done once)
-# =============================================================================
-
-print(f"\nComputing height field on original mesh "
-      f"(resolution={HF_RESOLUTION} mm, margin={HF_MARGIN} mm) ...")
-hf_xs, hf_ys, hf_Z = compute_heightfield(original, HF_RESOLUTION, HF_MARGIN)
-print(f"  Height field shape: {hf_Z.shape}  "
-      f"({hf_Z.shape[1]} × {hf_Z.shape[0]} cells, "
-      f"{np.isnan(hf_Z).mean()*100:.1f}% off-surface)")
-
-# =============================================================================
-# Simulation loop
-# =============================================================================
-
-print("\nRunning simulation...\n")
-all_results = []
-
-for Hstar in HSTAR_VALUES:
-    H_intended = Hstar * D_T
-    print(f"── H* = {Hstar:2d}  (H = {H_intended:.1f} mm) ──────────────────────")
-
-    # ── Normal-direction noise ────────────────────────────────────────────────
+    # Noise trials: N_TRIALS independent noise realizations per sigma
+    noise_pts = {sigma: [] for sigma in NOISE_SIGMAS}
     for sigma in NOISE_SIGMAS:
-        corrupted = corrupt_normal_noise(original, sigma)
-        surface_pts, _, _, _, _, _ = sample_surface(corrupted, GRID_SPACING, EDGE_MARGIN)
+        for t in range(N_TRIALS):
+            sp, *_ = sample_surface(corrupt_normal_noise(original, sigma),
+                                    GRID_SPACING, EDGE_MARGIN)
+            noise_pts[sigma].append(sp)
+        print(f"  Noise σ={sigma}mm — mean kept pts: "
+              f"{np.mean([len(p) for p in noise_pts[sigma]]):.0f}")
 
-        if len(surface_pts) == 0:
-            print(f"  noise σ={sigma:4.1f} mm  →  no toolpath points after erosion")
-            continue
-
-        toolpath = make_toolpath(surface_pts, H_intended)
-        df = check_collisions(
-            hf_xs, hf_ys, hf_Z, toolpath,
-            NOZZLE_LENGTH, PRINT_HEAD_MIN, PRINT_HEAD_MAX, SAFETY_CLEARANCE,
-        )
-
-        n          = len(df)
-        tip_rate   = df['tip_collision'].sum()  / n * 100
-        body_rate  = df['body_collision'].sum() / n * 100
-        off_rate   = df['off_object'].sum()     / n * 100
-
-        print(f"  noise σ={sigma:4.1f} mm  |  n={n:4d}  "
-              f"tip={tip_rate:5.1f}%  body={body_rate:5.1f}%  off={off_rate:5.1f}%")
-
-        all_results.append({
-            'corruption': 'noise',
-            'magnitude': sigma,
-            'Hstar': Hstar,
-            'H_mm': H_intended,
-            'n_points': n,
-            'tip_collision_rate': tip_rate,
-            'body_collision_rate': body_rate,
-            'off_object_rate': off_rate,
-        })
-
-    # ── Uniform scale ─────────────────────────────────────────────────────────
+    # Scale: deterministic (single sample)
+    scale_pts = {}
     for factor in SCALE_FACTORS:
-        corrupted = corrupt_scale(original, factor)
-        surface_pts, _, _, _, _, _ = sample_surface(corrupted, GRID_SPACING, EDGE_MARGIN)
+        sp, *_ = sample_surface(corrupt_scale(original, factor),
+                                GRID_SPACING, EDGE_MARGIN)
+        scale_pts[factor] = sp
+    print(f"  Scale: {len(SCALE_FACTORS)} factors sampled")
 
-        if len(surface_pts) == 0:
-            print(f"  scale {factor:.0%}  →  no toolpath points after erosion")
-            continue
+    # Combined: N_TRIALS, same noise realization for all scale factors per trial
+    combined_pts = {factor: [] for factor in SCALE_FACTORS}
+    for t in range(N_TRIALS):
+        noisy_base = corrupt_normal_noise(original, COMBINED_NOISE_SIGMA)
+        for factor in SCALE_FACTORS:
+            sp, *_ = sample_surface(corrupt_scale(noisy_base, factor),
+                                    GRID_SPACING, EDGE_MARGIN)
+            combined_pts[factor].append(sp)
+    print(f"  Combined: {N_TRIALS} trials × {len(SCALE_FACTORS)} scale factors sampled")
 
-        toolpath = make_toolpath(surface_pts, H_intended)
-        df = check_collisions(
-            hf_xs, hf_ys, hf_Z, toolpath,
-            NOZZLE_LENGTH, PRINT_HEAD_MIN, PRINT_HEAD_MAX, SAFETY_CLEARANCE,
-        )
+    # ── Simulation loop over H* ───────────────────────────────────────────────
+    print("\nRunning collision simulation...")
+    all_results = []
 
-        n          = len(df)
-        tip_rate   = df['tip_collision'].sum()  / n * 100
-        body_rate  = df['body_collision'].sum() / n * 100
-        off_rate   = df['off_object'].sum()     / n * 100
+    for Hstar in HSTAR_VALUES:
+        H_intended = Hstar * D_T
+        print(f"\n── H* = {Hstar}  (H = {H_intended:.2f} mm) ──")
 
-        print(f"  scale  {factor:.0%}     |  n={n:4d}  "
-              f"tip={tip_rate:5.1f}%  body={body_rate:5.1f}%  off={off_rate:5.1f}%")
+        # Noise-only (averaged over N_TRIALS)
+        for sigma in NOISE_SIGMAS:
+            tip_acc, body_acc, off_acc = [], [], []
+            for sp in noise_pts[sigma]:
+                r = _collision_rates(sp, H_intended, hf_xs, hf_ys, hf_Z)
+                if r:
+                    tip_acc.append(r[0]); body_acc.append(r[1]); off_acc.append(r[2])
+            if tip_acc:
+                tip_m, body_m, off_m = np.mean(tip_acc), np.mean(body_acc), np.mean(off_acc)
+                print(f"  noise σ={sigma:3.1f}mm  tip={tip_m:5.1f}%  body={body_m:5.1f}%  off={off_m:5.1f}%")
+                all_results.append({'corruption': 'noise', 'magnitude': sigma,
+                                    'Hstar': Hstar, 'H_mm': H_intended,
+                                    'tip_collision_rate': tip_m,
+                                    'body_collision_rate': body_m,
+                                    'off_object_rate': off_m})
 
-        all_results.append({
-            'corruption': 'scale',
-            'magnitude': factor,
-            'Hstar': Hstar,
-            'H_mm': H_intended,
-            'n_points': n,
-            'tip_collision_rate': tip_rate,
-            'body_collision_rate': body_rate,
-            'off_object_rate': off_rate,
-        })
+        # Scale-only (deterministic)
+        for factor in SCALE_FACTORS:
+            sp = scale_pts[factor]
+            r = _collision_rates(sp, H_intended, hf_xs, hf_ys, hf_Z)
+            if r:
+                tip_m, body_m, off_m = r
+                print(f"  scale  {factor:.0%}     tip={tip_m:5.1f}%  body={body_m:5.1f}%  off={off_m:5.1f}%")
+                all_results.append({'corruption': 'scale', 'magnitude': factor,
+                                    'Hstar': Hstar, 'H_mm': H_intended,
+                                    'tip_collision_rate': tip_m,
+                                    'body_collision_rate': body_m,
+                                    'off_object_rate': off_m})
 
-    print()
+        # Combined (averaged over N_TRIALS, same noise per trial for all scales)
+        for factor in SCALE_FACTORS:
+            tip_acc, body_acc, off_acc = [], [], []
+            for sp in combined_pts[factor]:
+                r = _collision_rates(sp, H_intended, hf_xs, hf_ys, hf_Z)
+                if r:
+                    tip_acc.append(r[0]); body_acc.append(r[1]); off_acc.append(r[2])
+            if tip_acc:
+                tip_m, body_m, off_m = np.mean(tip_acc), np.mean(body_acc), np.mean(off_acc)
+                print(f"  comb   {factor:.0%}+σ{COMBINED_NOISE_SIGMA}mm  "
+                      f"tip={tip_m:5.1f}%  body={body_m:5.1f}%  off={off_m:5.1f}%")
+                all_results.append({'corruption': 'combined', 'magnitude': factor,
+                                    'Hstar': Hstar, 'H_mm': H_intended,
+                                    'tip_collision_rate': tip_m,
+                                    'body_collision_rate': body_m,
+                                    'off_object_rate': off_m})
 
-# =============================================================================
-# Save and plot
-# =============================================================================
+    # ── Save results and plot ─────────────────────────────────────────────────
+    results_df = pd.DataFrame(all_results)
+    csv_path = os.path.join(OUTPUT_DIR, f'{mesh_name}_results.csv')
+    results_df.to_csv(csv_path, index=False)
+    print(f"\nResults saved to {csv_path}")
 
-results_df = pd.DataFrame(all_results)
-csv_path = os.path.join(OUTPUT_DIR, 'results.csv')
-results_df.to_csv(csv_path, index=False)
-print(f"Results saved to {csv_path}\n")
-print(results_df.to_string(index=False))
+    heatmap_path = os.path.join(OUTPUT_DIR, f'{mesh_name}_any_collision.svg')
+    plot_any_collision_heatmap(results_df, heatmap_path)
 
-plot_heatmaps(results_df, OUTPUT_DIR)
+print("\nAll meshes done.")
