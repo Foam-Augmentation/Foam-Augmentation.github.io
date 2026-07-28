@@ -2,12 +2,18 @@ import * as THREE from 'three';
 import ClipperLib from 'clipper-lib';
 import Delaunator from 'delaunator';
 import { ToolpathConfig, EverydayModel } from '../types/modelTypes';
+import { PathPoint } from '../toolpath/generateFoamToolpath';
 
 
 // Clipper scale is how scaled up the points are when passed to clipper. They are then scaled down when turned back.
 const CLIPPER_SCALE = 1000;
 // Min area is the minimum area when insetting contours that a contour needs
 const MIN_AREA = 3;
+// Contours are closed loops, so edges shorter than this are degenerate and get dropped when
+// turning a contour into line segments. Matches the connection tolerance in connectSegments.
+const MIN_SEGMENT_LENGTH = 0.00001;
+// The most line segments a leaf of a chunk BVH will hold before it gets split in two.
+const CHUNK_BVH_LEAF_SIZE = 4;
 
 
 // basic data structures for slicing
@@ -17,6 +23,12 @@ export interface SliceRegion {
     contour: THREE.Vector3[];
     holes: THREE.Vector3[][];
     bounds: { min: THREE.Vector3; max: THREE.Vector3 };
+    segments: LineSegment[]
+}
+
+export interface LineSegment {
+  start: THREE.Vector3; 
+  end: THREE.Vector3
 }
 
 export interface RegionNode {
@@ -32,6 +44,15 @@ export interface ChunkNode {
   children: ChunkNode[];
   parent: ChunkNode | null;
   modelObj?: EverydayModel;
+  BVH?: ChunkBVHNode;
+}
+
+export interface ChunkBVHNode{
+  min: THREE.Vector3;
+  max: THREE.Vector3;
+  left?: ChunkBVHNode;
+  right?: ChunkBVHNode
+  segments: LineSegment[] //4 per leaf node?
 }
 
 export interface PrintChunk {
@@ -55,12 +76,12 @@ export interface ContourNode {
  * 
  * @param {THREE.Mesh} mesh The mesh to slice into layers.
  * @param {number} deltaZ How far apart each layer should be.
- * @returns {{ z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[]} The list of layers.
+ * @returns {{ z: number, segments: LineSegment[] }[]} The list of layers.
  */
 export function sliceMeshIntoLayers(
   mesh: THREE.Mesh, 
   deltaZ: number
-): { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] {
+): { z: number, segments: LineSegment[] }[] {
     const geometry = mesh.geometry as THREE.BufferGeometry;
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox!;
@@ -68,7 +89,7 @@ export function sliceMeshIntoLayers(
     const minZ = bbox.min.z + 0.00001;
     console.log("Minz: " + minZ);
     const maxZ = bbox.max.z - 0.00001;
-    const layers: { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] = [];
+    const layers: { z: number, segments: LineSegment[] }[] = [];
     
     // go from bottom to top, slice every deltaZ
     for (let z = minZ; z <= maxZ; z += deltaZ) {
@@ -177,14 +198,48 @@ function getHolesAndOuters(
 
 
 /**
+ * Gets the line segments making up the entire boundary of a region: the edges of its outer
+ * contour followed by the edges of each of its holes. Each contour is treated as a closed loop,
+ * so an edge is added from its last point back to its first. Degenerate edges are skipped, which
+ * covers the repeated first/last point that connectSegments leaves on its contours.
+ *
+ * The segments reference the contour's points rather than copying them, so reordering a contour
+ * (as preparePaths does) is safe, but moving its points would move the segments with them.
+ *
+ * @param {THREE.Vector3[]} outer The outer contour of the region.
+ * @param {THREE.Vector3[][]} holes The hole contours of the region.
+ * @returns {LineSegment[]} The edges of the outer contour and of every hole.
+ */
+export function getBoundarySegments(
+  outer: THREE.Vector3[],
+  holes: THREE.Vector3[][],
+): LineSegment[] {
+  const segments: LineSegment[] = [];
+
+  for (const contour of [outer, ...holes]) {
+    for (let i = 0; i < contour.length; i++) {
+      const start = contour[i];
+      const end = contour[(i + 1) % contour.length];
+
+      if (start.distanceToSquared(end) < MIN_SEGMENT_LENGTH * MIN_SEGMENT_LENGTH) continue;
+
+      segments.push({ start, end });
+    }
+  }
+
+  return segments;
+}
+
+
+/**
  * Takes in a layer represented by a list of segments and finds separate regions in it.
  * Separate regions are parts of the layer that are not connected to each other by any segment.
- * 
+ *
  * @param z The z position of the layer
  * @param segments The list of segments to find the regions from.
- * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, bounds, an id, and a height.
+ * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, boundary segments, bounds, an id, and a height.
  */
-export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[]): SliceRegion[] {
+export function extractRegionsFromLayer(z: number, segments: LineSegment[]): SliceRegion[] {
     if (segments.length === 0) return [];
     
     const contours = connectSegments(segments);
@@ -203,7 +258,8 @@ export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vect
             height: z,
             contour: contour.outer,
             holes: contour.holes,
-            bounds: bounds
+            bounds: bounds,
+            segments: getBoundarySegments(contour.outer, contour.holes)
         });
     }
     
@@ -499,11 +555,113 @@ export function buildRegionTree(
 
 
 /**
+ * Gets the axis aligned bounding box of a list of line segments. An empty list gives an inverted
+ * box, so that nothing is ever found inside of it.
+ *
+ * @param {LineSegment[]} segments The segments to bound.
+ * @returns {{min: THREE.Vector3, max: THREE.Vector3}} The bounding box of the segments.
+ */
+function getSegmentBounds(
+  segments: LineSegment[],
+): { min: THREE.Vector3; max: THREE.Vector3 } {
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+
+  for (const segment of segments) {
+    min.min(segment.start).min(segment.end);
+    max.max(segment.start).max(segment.end);
+  }
+
+  return { min, max };
+}
+
+
+/**
+ * Builds a bounding volume hierarchy over a list of line segments, so that queries against a
+ * chunk's boundary only test the segments that are actually nearby instead of all of them.
+ * Leaves hold up to CHUNK_BVH_LEAF_SIZE segments, interior nodes hold a left and a right child
+ * and an empty segment list.
+ *
+ * @param {LineSegment[]} segments The segments to build the hierarchy over.
+ * @returns {ChunkBVHNode} The root node of the hierarchy.
+ */
+function buildSegmentBVH(
+  segments: LineSegment[],
+): ChunkBVHNode {
+  const bounds = getSegmentBounds(segments);
+
+  // few enough segments left that splitting further costs more than it saves
+  if (segments.length <= CHUNK_BVH_LEAF_SIZE) {
+    return {
+      min: bounds.min,
+      max: bounds.max,
+      segments: segments,
+    };
+  }
+
+  // Split along whichever axis the segments are most spread out on. A chunk spans several
+  // layers, so unlike a single region z is worth considering here.
+  const extents = {
+    x: bounds.max.x - bounds.min.x,
+    y: bounds.max.y - bounds.min.y,
+    z: bounds.max.z - bounds.min.z,
+  };
+  let axis: 'x' | 'y' | 'z' = 'x';
+  if (extents.y > extents[axis]) axis = 'y';
+  if (extents.z > extents[axis]) axis = 'z';
+
+  // Sort by midpoint along that axis and split at the median. Splitting at the centre of the
+  // bounds instead would leave every segment on one side whenever they are unevenly spread,
+  // which would never terminate.
+  const sorted = segments.slice().sort((a, b) =>
+    (a.start[axis] + a.end[axis]) - (b.start[axis] + b.end[axis])
+  );
+
+  const mid = Math.floor(sorted.length / 2);
+
+  return {
+    min: bounds.min,
+    max: bounds.max,
+    left: buildSegmentBVH(sorted.slice(0, mid)),
+    right: buildSegmentBVH(sorted.slice(mid)),
+    segments: [],
+  };
+}
+
+
+/**
+ * Builds a BVH for every chunk in a tree, over the boundary segments of all the regions in that
+ * chunk. Any BVH already on a node is replaced, since a chunk's regions change as the tree is
+ * split up.
+ *
+ * @param {ChunkNode[]} roots The roots of the chunk tree to build BVHs for.
+ */
+function assignChunkBVHs(
+  roots: ChunkNode[],
+): void {
+  for (const root of roots) {
+    const segments: LineSegment[] = [];
+    for (const region of root.regions) {
+      // pushed one at a time rather than spread, as a chunk can hold more segments than
+      // can be passed as arguments in one call
+      for (const segment of region.segments) {
+        segments.push(segment);
+      }
+    }
+
+    root.BVH = buildSegmentBVH(segments);
+
+    assignChunkBVHs(root.children);
+  }
+}
+
+
+/**
  * Builds a tree of printable chunks from a tree of regions by splitting the regions into
  * super nodes and splitting the supernodes when they overlap. Note, this does not group
  * nodes when they are closer than nozzle width/2, so there may be issues if regions are
  * very close to each other.
- * 
+ *
  * @param {RegionNode[]} roots The root nodes of the region tree.
  * @param {number} nozzleHeight The height of the nozzle.
  * @returns {ChunkNode[]} The root nodes of the printable chunk tree.
@@ -544,6 +702,9 @@ export function buildChunkTree(
     }
   }
   splitChunkTreeByOverlap(rootNodes);
+
+  assignChunkBVHs(rootNodes);
+
   return rootNodes;
 }
 
@@ -829,9 +990,10 @@ function spiralContours(
   isocontours: THREE.Vector3[][],
   indicesToSpiral: number[],
   initialStartIndex: number,
-  step: number
-): THREE.Vector3[] {
-  let path: THREE.Vector3[] = [];
+  step: number,
+  edot: number
+): PathPoint[] {
+  let path: PathPoint[] = [];
 
   let startIndex = initialStartIndex;
   let initialDist = 0;
@@ -854,18 +1016,17 @@ function spiralContours(
       totalDist += dist;
       lastPointIndex = endIndex;
     }
-
     let curIndex = startIndex;
     while(curIndex != endIndex) {
-      path.push(isocontours[i][curIndex]);
+      path.push({point: isocontours[i][curIndex], travel: false, edot});
       curIndex++;
       if (curIndex >= isocontours[i].length) {
         curIndex -= isocontours[i].length;
       }
     }
-    path.push(isocontours[i][endIndex]);
+    path.push({point: isocontours[i][endIndex], travel: false, edot});
 
-    path.push(endPoint);
+    path.push({point: endPoint, travel: false, edot});
 
     const checkContourIndex = i + 2;
     if (checkContourIndex < isocontours.length) {
@@ -888,7 +1049,7 @@ function spiralContours(
         lastPoint = point;
       }
       
-      path.push(closestPoint);
+      path.push({point: closestPoint, travel: false, edot});
       startIndex = closestIndex;
       initialDist = -isocontours[checkContourIndex][startIndex].distanceTo(closestPoint);
     }
@@ -912,8 +1073,9 @@ export function connectIsocontours(
   isocontoursRoot: ContourNode,
   step: number,
   lastLayerEndPoint: THREE.Vector3,
+  edot: number,
   reverse: boolean = false,
-): THREE.Vector3[] {
+): PathPoint[] {
   if (isocontoursRoot.contour.length === 0) {
     return [];
   }
@@ -964,11 +1126,11 @@ export function connectIsocontours(
   }
 
   // make inwards path
-  const path = spiralContours(isocontours, evenIndices, startIndex, step);
+  const path = spiralContours(isocontours, evenIndices, startIndex, step, edot);
 
   // make paths for children nodes before spiralling outwards only if the most inward contour is spiralled inwards
   if (isocontours.length % 2 === 1 && currentNode.children.length > 0) {
-    const childPaths: {path: THREE.Vector3[], index: number}[] = [];
+    const childPaths: {path: PathPoint[], index: number}[] = [];
     for (const child of currentNode.children) {
       lowestDist = Infinity;
       let closestIndexOuter = 0;
@@ -976,7 +1138,7 @@ export function connectIsocontours(
         const point = path[path.length - 1 - i];
         for (let j = 0; j < child.contour.length; j++) {
           const otherPoint = child.contour[j];
-          const dist = point.distanceTo(otherPoint);
+          const dist = point.point.distanceTo(otherPoint);
           if (dist < lowestDist) {
             lowestDist = dist;
             closestIndexOuter = path.length - 1 - i;
@@ -984,7 +1146,7 @@ export function connectIsocontours(
         }
       }
 
-      const childPath = connectIsocontours(child, step, path[closestIndexOuter], !reverse);
+      const childPath = connectIsocontours(child, step, path[closestIndexOuter].point, edot, !reverse);
       childPaths.push({path: childPath, index: closestIndexOuter});
     }
 
@@ -1036,10 +1198,10 @@ export function connectIsocontours(
 
     isocontours[1].splice(startIndex, 0, closestPoint);
 
-    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step);
+    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step, edot);
 
     if (isocontours.length % 2 === 0 && currentNode.children.length > 0) {
-      const childPaths: {path: THREE.Vector3[], index: number}[] = [];
+      const childPaths: {path: PathPoint[], index: number}[] = [];
       for (const child of currentNode.children) {
         lowestDist = Infinity;
         let closestIndexOuter = 0;
@@ -1047,7 +1209,7 @@ export function connectIsocontours(
           const point = inwardSpiralPath[inwardSpiralPath.length - 1 - i];
           for (let j = 0; j < child.contour.length; j++) {
             const otherPoint = child.contour[j];
-            const dist = point.distanceTo(otherPoint);
+            const dist = point.point.distanceTo(otherPoint);
             if (dist < lowestDist) {
               lowestDist = dist;
               closestIndexOuter = inwardSpiralPath.length - 1 - i;
@@ -1055,7 +1217,7 @@ export function connectIsocontours(
           }
         }
 
-        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter], reverse);
+        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter].point, edot, reverse);
         childPaths.push({path: childPath, index: closestIndexOuter});
       }
 
@@ -1067,7 +1229,7 @@ export function connectIsocontours(
     }
 
     path.push(...inwardSpiralPath.reverse());
-    path.push(endPoint);
+    path.push({point: endPoint,travel: false, edot});
   }
   return path
 }
@@ -1468,7 +1630,8 @@ export function extractRegionsFromPointCloud(
       bounds: {
         min: new THREE.Vector3(Math.min(...xs), Math.min(...ys), 0),
         max: new THREE.Vector3(Math.max(...xs), Math.max(...ys), 0),
-      }
+      },
+      segments: getBoundarySegments(holeContour.outer, holeContour.holes)
     };
   });
 

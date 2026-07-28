@@ -21,6 +21,7 @@ import {
     pointAlongLine,
     pointInPolygon,
     offsetContour,
+    getBoundarySegments,
 } from '../utils/TreeSlicer';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
@@ -470,8 +471,9 @@ function generateRectilinearInfill(
     deltaL: number,
     scanX: boolean,
     lastLayerPoint: THREE.Vector3,
-): THREE.Vector3[] {
-    const toolpath: THREE.Vector3[] = [];
+    edot?: number,
+): PathPoint[] {
+    const toolpath: PathPoint[] = [];
     const bounds = getBounds(contour, contour[0].z);
     const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
     new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
@@ -543,15 +545,21 @@ function generateRectilinearInfill(
         }
 
         if (intersections.length <= 1) {
-            toolpath.push(...intersections);
+            toolpath.push(...intersections.map(point => {
+                return{
+                    point,
+                    travel: false,
+                    edot
+                }
+            }));
             console.log("Num Intersections: " + intersections.length);
             continue;
         }
 
         intersections.sort((a, b) => scanX ? (atTop ? b.y - a.y : a.y - b.y) : (atTop ? b.x - a.x : a.x - b.x));
 
-        toolpath.push(intersections[0]);
-        toolpath.push(intersections[intersections.length - 1]);
+        toolpath.push({point: intersections[0],travel: false, edot});
+        toolpath.push({point: intersections[intersections.length - 1],travel: false, edot});
         atTop = !atTop;
     }
 
@@ -622,24 +630,25 @@ function makeChunkPath(
         console.log(`Region Layer: ${regionLayer}, Using DeltaL: ${currentDeltaL}`);
         // end mark
 
-        let path: THREE.Vector3[];
+        let path: PathPoint[];
         if (useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
                 region.holes,
                 //configToUse.deltaL 
-                currentDeltaL 
+                currentDeltaL,
             );
 
             //path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
-            path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint);  
+            path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint, useInitial ? initialConfig.edot : config.edot);  
         } else {
             path = generateRectilinearInfill(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour,
                 //configToUse.deltaL, 
                 currentDeltaL, 
                 scanX,
-                lastLayerEndPoint
+                lastLayerEndPoint,
+                useInitial ? initialConfig.edot : config.edot
             );
             scanX = !scanX;
         }
@@ -650,13 +659,14 @@ function makeChunkPath(
 
         const prevPathLen = chunkPath.length;
 
-        chunkPath.push(...path.map(point => {
+        chunkPath.push(...path);
+        /*path.map(point => {
             return {
                 point: point,
                 travel: false,
                 edot: useInitial ? initialConfig.edot : config.edot,
             }
-        }));
+        }) */
 
         if (chunkPath[prevPathLen]) {
             chunkPath[prevPathLen].travel = true;
@@ -1418,6 +1428,7 @@ export function generateFoamToolpath(
         startPoint,
     );
 
+    /*
     // comment out from here till end mark if dont want vertical gradient
     // vertical testing for vertical gradient 
     modelObjs.forEach(modelObj => {
@@ -1438,7 +1449,7 @@ export function generateFoamToolpath(
         }
     });
     // end mark
-
+    */
 
     toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
 
@@ -1631,7 +1642,7 @@ function addPurgeLine(
     path.reverse();
     path.forEach(point => {
         toolpath.unshift({
-            point: point,
+            point: point.point,
             regularSegment: true,
         });
     });
@@ -1868,7 +1879,7 @@ export function generateNonplanarFoamToolpath(
             const beforeLength = regionToolpath.length;
             regionToolpath.push(...infill.map(p => {
                 return {
-                    point: p.clone().add(modelObj.mesh.position),
+                    point: p.point.clone().add(modelObj.mesh.position),
                     travel: false,
                 }
             }));
@@ -1899,7 +1910,7 @@ export function generateNonplanarFoamToolpath(
                 point.setZ(pointHeight + pointZOffset);
             }
 
-            lastLayerEndPoint = infill[infill.length - 1];
+            lastLayerEndPoint = infill[infill.length - 1].point;
 
             toolpath.push(...regionToolpath);
         }
@@ -2158,6 +2169,7 @@ export function generateAugmentFoamToolpath(
                         holes: [],
                         height: bumpContour[0].z,
                         bounds: getBounds(bumpContour, bumpContour[0].z),
+                        segments: getBoundarySegments(bumpContour, []),
                     });
                     return false;
                 } else {
@@ -2241,12 +2253,18 @@ export function generateAugmentFoamToolpath(
                         (modelObj.toolpathConfig.curveAugment ? flatLayerNum : 0); i++) {
         const z = i * modelObj.toolpathConfig.deltaZ;
         sliceRegions.push(...cloudSliceRegions.map(region => {
+            // the contour is copied up to this layer's z, so the segments have to be rebuilt
+            // from the copies rather than reused from the region they came from
+            const contour = region.contour.map(p => new THREE.Vector3(p.x, p.y, z));
+            const holes = region.holes.map(hole => hole.map(p => new THREE.Vector3(p.x, p.y, z)));
+
             return {
                 id: region.id + ", " + z,
-                contour: region.contour.map(p => new THREE.Vector3(p.x, p.y, z)),
-                holes: region.holes.map(hole => hole.map(p => new THREE.Vector3(p.x, p.y, z))),
+                contour: contour,
+                holes: holes,
                 height: z,
                 bounds: region.bounds,
+                segments: getBoundarySegments(contour, holes),
             }
         }))
     }
