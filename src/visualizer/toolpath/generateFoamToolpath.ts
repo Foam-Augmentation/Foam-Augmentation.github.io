@@ -22,6 +22,7 @@ import {
     pointInPolygon,
     offsetContour,
     getBoundarySegments,
+    LineSegment,
 } from '../utils/TreeSlicer';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
@@ -566,6 +567,166 @@ function generateRectilinearInfill(
     return toolpath;
 }
 
+/**
+ * Slices a list of line segments along an X or Y axis-aligned line
+ * and returns the intersection points sorted along the perpendicular axis.
+ */
+export function sliceSegments(
+  segments: LineSegment[],
+  axis: 'x' | 'y',
+  sliceValue: number,
+  epsilon: number = 1e-6
+): THREE.Vector3[] {
+  const intersections: THREE.Vector3[] = [];
+  const crossAxis = axis === 'x' ? 'y' : 'x';
+
+  for (const segment of segments) {
+    const startVal = segment.start[axis];
+    const endVal = segment.end[axis];
+
+    const minVal = Math.min(startVal, endVal);
+    const maxVal = Math.max(startVal, endVal);
+
+    // 1. Skip segments completely on one side of the cutting line
+    if (sliceValue < minVal - epsilon || sliceValue > maxVal + epsilon) {
+      continue;
+    }
+
+    // 2. Handle collinear segments (segment lies flat ON the slice line)
+    // Prevents division by zero in the t-calculation below.
+    if (Math.abs(endVal - startVal) < epsilon) {
+      if (Math.abs(startVal - sliceValue) < epsilon) {
+        intersections.push(segment.start.clone(), segment.end.clone());
+      }
+      continue;
+    }
+
+    // 3. Calculate linear interpolation factor (t)
+    const t = (sliceValue - startVal) / (endVal - startVal);
+    const clampedT = Math.max(0, Math.min(1, t)); // Clamp to [0, 1] for safety
+
+    // Use Three.js lerp to compute the exact X, Y, and Z intersection
+    const intersectionPoint = segment.start.clone().lerp(segment.end, clampedT);
+    intersections.push(intersectionPoint);
+  }
+
+  // 4. Deduplicate points (crucial when slicing directly through a shared vertex)
+  const uniqueIntersections: THREE.Vector3[] = [];
+  for (const pt of intersections) {
+    const isDuplicate = uniqueIntersections.some(
+      (existing) => existing.distanceToSquared(pt) < epsilon * epsilon
+    );
+    if (!isDuplicate) {
+      uniqueIntersections.push(pt);
+    }
+  }
+
+  // 5. Sort points along the cross axis (e.g., if X-slice, sort from lowest to highest Y)
+  uniqueIntersections.sort((a, b) => a[crossAxis] - b[crossAxis]);
+
+  return uniqueIntersections;
+}
+
+function generateRectilinearInfillWithHoles(
+    lineSegments: LineSegment[],
+    outContour: THREE.Vector3[],
+    deltaL: number,
+    scanX: boolean,
+    lastLayerPoint: THREE.Vector3,
+    edot?: number,
+): PathPoint[] {
+    const axis = scanX ? 'x': 'y';
+    const bounds = getBounds(outContour, outContour[0].z);
+    const corners = [new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z), new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z), new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z)]
+
+    let lowestDist = Infinity;
+    let startPoint = new THREE.Vector3;
+    for (const corner of corners) {
+        const dist = corner.distanceTo(lastLayerPoint);
+        if (dist < lowestDist) {
+            lowestDist = dist;
+            startPoint = corner;
+        }
+    }
+
+    let atRight = false;
+    let atTop = false;
+
+    if (startPoint.x === bounds.min.x && scanX) {
+        atRight = false;
+    } else if (scanX) {
+        atRight = true;
+    } else if (startPoint.y === bounds.min.y) {
+        atRight = false;
+    } else {
+        atRight = true;
+    }
+
+    if (startPoint.x === bounds.min.x && !scanX) {
+        atTop = false;
+    } else if (!scanX) {
+        atTop = true;
+    } else if (startPoint.y === bounds.min.y) {
+        atTop = false;
+    } else {
+        atTop = true;
+    }
+    let scanLength = ((scanX ? bounds.max.x - bounds.min.x : bounds.max.y - bounds.min.y) / deltaL) + 1;
+    const remainder = scanLength - Math.floor(scanLength);
+    scanLength = Math.floor(scanLength);
+
+    if (scanX) {
+        startPoint.setX(startPoint.x + (atRight ? -1 : 1) * remainder / 2);
+    } else {
+        startPoint.setY(startPoint.y + (atRight ? -1 : 1) * remainder / 2)
+    }
+
+    const printLines: LineSegment[] = [];
+    let cutposition = startPoint[axis];
+
+    while(bounds.min[axis] <= cutposition && cutposition <=bounds.max[axis]){
+        const points = sliceSegments(lineSegments,axis,cutposition);
+        if(points.length % 2 != 0){
+            throw new Error("Mesh is not watertight");
+        }
+        for(let i = 0; i < points.length; i+=2){
+            printLines.push({start:points[i], end:points[i+1]})
+        }
+        cutposition += deltaL * (atRight ? -1 : 1);
+    }
+    if(!printLines.length){
+        return [];
+    }
+    const toolpath: PathPoint[] = [];
+    let printHead = printLines[0].start.distanceTo(startPoint) < printLines[0].end.distanceTo(startPoint) ? printLines[0].start: printLines[0].end;
+    //toolpath.push({point: printHead, travel: true}) //travel to start
+    while(printLines.length){
+        //find closest point to printhead
+        let start = false;
+        let bestIndex = -1;
+        let bestDist = 999;
+        for(let i = 0; i < printLines.length; i++){
+            const distToStart = printHead.distanceTo(printLines[i].start);
+            const distToEnd = printHead.distanceTo(printLines[i].end);
+            const chosenDist = Math.min(distToStart,distToEnd);
+            if(bestIndex == -1 || chosenDist < bestDist){
+                bestIndex = i;
+                bestDist = chosenDist;
+                start = chosenDist == distToStart;
+            }
+        }
+        //travel to segment
+        toolpath.push({point: printLines[bestIndex][start ? 'start': 'end'], travel: true});
+        //move to other
+        toolpath.push({point: printLines[bestIndex][!start ? 'start': 'end'], travel: false, edot});
+        printHead = printLines[bestIndex][!start ? 'start': 'end'];
+        //remove line
+        printLines.splice(bestIndex, 1);
+    }
+
+    return toolpath;
+}
 
 /**
  * Generates the toolpath for a single chunk.
@@ -642,7 +803,8 @@ function makeChunkPath(
             //path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
             path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint, useInitial ? initialConfig.edot : config.edot);  
         } else {
-            path = generateRectilinearInfill(
+            path = generateRectilinearInfillWithHoles(
+                region.segments,
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour,
                 //configToUse.deltaL, 
                 currentDeltaL, 

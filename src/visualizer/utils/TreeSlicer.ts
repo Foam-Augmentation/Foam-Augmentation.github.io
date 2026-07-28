@@ -44,16 +44,16 @@ export interface ChunkNode {
   children: ChunkNode[];
   parent: ChunkNode | null;
   modelObj?: EverydayModel;
-  BVH?: ChunkBVHNode;
+  //BVH?: ChunkBVHNode;
 }
-
+/*
 export interface ChunkBVHNode{
   min: THREE.Vector3;
   max: THREE.Vector3;
   left?: ChunkBVHNode;
   right?: ChunkBVHNode
   segments: LineSegment[] //4 per leaf node?
-}
+}*/
 
 export interface PrintChunk {
     id: string;
@@ -576,15 +576,7 @@ function getSegmentBounds(
 }
 
 
-/**
- * Builds a bounding volume hierarchy over a list of line segments, so that queries against a
- * chunk's boundary only test the segments that are actually nearby instead of all of them.
- * Leaves hold up to CHUNK_BVH_LEAF_SIZE segments, interior nodes hold a left and a right child
- * and an empty segment list.
- *
- * @param {LineSegment[]} segments The segments to build the hierarchy over.
- * @returns {ChunkBVHNode} The root node of the hierarchy.
- */
+/*
 function buildSegmentBVH(
   segments: LineSegment[],
 ): ChunkBVHNode {
@@ -627,15 +619,6 @@ function buildSegmentBVH(
     segments: [],
   };
 }
-
-
-/**
- * Builds a BVH for every chunk in a tree, over the boundary segments of all the regions in that
- * chunk. Any BVH already on a node is replaced, since a chunk's regions change as the tree is
- * split up.
- *
- * @param {ChunkNode[]} roots The roots of the chunk tree to build BVHs for.
- */
 function assignChunkBVHs(
   roots: ChunkNode[],
 ): void {
@@ -654,7 +637,7 @@ function assignChunkBVHs(
     assignChunkBVHs(root.children);
   }
 }
-
+*/
 
 /**
  * Builds a tree of printable chunks from a tree of regions by splitting the regions into
@@ -703,7 +686,7 @@ export function buildChunkTree(
   }
   splitChunkTreeByOverlap(rootNodes);
 
-  assignChunkBVHs(rootNodes);
+  //assignChunkBVHs(rootNodes);
 
   return rootNodes;
 }
