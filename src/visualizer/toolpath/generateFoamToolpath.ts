@@ -22,7 +22,9 @@ import {
     pointInPolygon,
     offsetContour,
     getBoundarySegments,
+    buildSliceRegionBVH,
     LineSegment,
+    SliceRegionBVHNode,
 } from '../utils/TreeSlicer';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
@@ -568,11 +570,22 @@ function generateRectilinearInfill(
 }
 
 /**
- * Slices a list of line segments along an X or Y axis-aligned line
+ * Slices a region's boundary along an X or Y axis-aligned line
  * and returns the intersection points sorted along the perpendicular axis.
+ *
+ * Walks the region's BVH rather than its whole segment list: a node whose bounds don't reach the
+ * slice line can't hold a segment that crosses it, so the entire subtree underneath is skipped.
+ * A scan line only crosses the boundary a handful of times, so this visits far fewer segments
+ * than there are in the region.
+ *
+ * @param {SliceRegionBVHNode} bvh The root of the BVH over the boundary segments to slice.
+ * @param {'x' | 'y'} axis The axis the slice line is perpendicular to.
+ * @param {number} sliceValue Where along that axis to slice.
+ * @param {number} epsilon Tolerance for a segment counting as touching or lying on the slice line.
+ * @returns {THREE.Vector3[]} The deduplicated intersection points, sorted along the other axis.
  */
 export function sliceSegments(
-  segments: LineSegment[],
+  bvh: SliceRegionBVHNode,
   axis: 'x' | 'y',
   sliceValue: number,
   epsilon: number = 1e-6
@@ -580,37 +593,55 @@ export function sliceSegments(
   const intersections: THREE.Vector3[] = [];
   const crossAxis = axis === 'x' ? 'y' : 'x';
 
-  for (const segment of segments) {
-    const startVal = segment.start[axis];
-    const endVal = segment.end[axis];
+  // Iterative rather than recursive so that a deep tree can't overflow the stack. A node with no
+  // children is a leaf and holds segments; an internal node's leafSegments is empty, so the
+  // segment loop below is a no-op for it.
+  const stack: SliceRegionBVHNode[] = [bvh];
 
-    const minVal = Math.min(startVal, endVal);
-    const maxVal = Math.max(startVal, endVal);
+  while (stack.length) {
+    const node = stack.pop()!;
 
-    // 1. Skip segments completely on one side of the cutting line
-    if (sliceValue < minVal - epsilon || sliceValue > maxVal + epsilon) {
+    // 1. Skip nodes completely on one side of the cutting line, along with everything below them
+    if (sliceValue < node.min[axis] - epsilon || sliceValue > node.max[axis] + epsilon) {
       continue;
     }
 
-    // 2. Handle collinear segments (segment lies flat ON the slice line)
-    // Prevents division by zero in the t-calculation below.
-    if (Math.abs(endVal - startVal) < epsilon) {
-      if (Math.abs(startVal - sliceValue) < epsilon) {
-        intersections.push(segment.start.clone(), segment.end.clone());
+    if (node.left) stack.push(node.left);
+    if (node.right) stack.push(node.right);
+
+    for (const segment of node.leafSegments) {
+      const startVal = segment.start[axis];
+      const endVal = segment.end[axis];
+
+      const minVal = Math.min(startVal, endVal);
+      const maxVal = Math.max(startVal, endVal);
+
+      // 2. Skip segments completely on one side of the cutting line. A leaf's bounds are looser
+      // than its individual segments, so this still has to be checked per segment.
+      if (sliceValue < minVal - epsilon || sliceValue > maxVal + epsilon) {
+        continue;
       }
-      continue;
+
+      // 3. Handle collinear segments (segment lies flat ON the slice line)
+      // Prevents division by zero in the t-calculation below.
+      if (Math.abs(endVal - startVal) < epsilon) {
+        if (Math.abs(startVal - sliceValue) < epsilon) {
+          intersections.push(segment.start.clone(), segment.end.clone());
+        }
+        continue;
+      }
+
+      // 4. Calculate linear interpolation factor (t)
+      const t = (sliceValue - startVal) / (endVal - startVal);
+      const clampedT = Math.max(0, Math.min(1, t)); // Clamp to [0, 1] for safety
+
+      // Use Three.js lerp to compute the exact X, Y, and Z intersection
+      const intersectionPoint = segment.start.clone().lerp(segment.end, clampedT);
+      intersections.push(intersectionPoint);
     }
-
-    // 3. Calculate linear interpolation factor (t)
-    const t = (sliceValue - startVal) / (endVal - startVal);
-    const clampedT = Math.max(0, Math.min(1, t)); // Clamp to [0, 1] for safety
-
-    // Use Three.js lerp to compute the exact X, Y, and Z intersection
-    const intersectionPoint = segment.start.clone().lerp(segment.end, clampedT);
-    intersections.push(intersectionPoint);
   }
 
-  // 4. Deduplicate points (crucial when slicing directly through a shared vertex)
+  // 5. Deduplicate points (crucial when slicing directly through a shared vertex)
   const uniqueIntersections: THREE.Vector3[] = [];
   for (const pt of intersections) {
     const isDuplicate = uniqueIntersections.some(
@@ -628,7 +659,7 @@ export function sliceSegments(
 }
 
 function generateRectilinearInfillWithHoles(
-    lineSegments: LineSegment[],
+    boundaryBVH: SliceRegionBVHNode,
     outContour: THREE.Vector3[],
     deltaL: number,
     scanX: boolean,
@@ -686,7 +717,7 @@ function generateRectilinearInfillWithHoles(
     let cutposition = startPoint[axis];
 
     while(bounds.min[axis] <= cutposition && cutposition <=bounds.max[axis]){
-        const points = sliceSegments(lineSegments,axis,cutposition);
+        const points = sliceSegments(boundaryBVH,axis,cutposition);
         if(points.length % 2 != 0){
             throw new Error("Mesh is not watertight");
         }
@@ -804,7 +835,7 @@ function makeChunkPath(
             path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint, useInitial ? initialConfig.edot : config.edot);  
         } else {
             path = generateRectilinearInfillWithHoles(
-                region.segments,
+                region.BVH,
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour,
                 //configToUse.deltaL, 
                 currentDeltaL, 
@@ -2325,13 +2356,15 @@ export function generateAugmentFoamToolpath(
                     p => cloudSliceRegions.some(region => pointInPolygon(p, region.contour)));
                 
                 if (bumpContour.length > 2) {
+                    const segments = getBoundarySegments(bumpContour, []);
                     bumpRegions.push({
                         id: p.x + ", " + p.y + ", " + bumpContour[0].x + ", " + bumpContour[0].y + ", " + bumpContour[0].z,
                         contour: bumpContour,
                         holes: [],
                         height: bumpContour[0].z,
                         bounds: getBounds(bumpContour, bumpContour[0].z),
-                        segments: getBoundarySegments(bumpContour, []),
+                        segments: segments,
+                        BVH: buildSliceRegionBVH(segments),
                     });
                     return false;
                 } else {
@@ -2419,6 +2452,7 @@ export function generateAugmentFoamToolpath(
             // from the copies rather than reused from the region they came from
             const contour = region.contour.map(p => new THREE.Vector3(p.x, p.y, z));
             const holes = region.holes.map(hole => hole.map(p => new THREE.Vector3(p.x, p.y, z)));
+            const segments = getBoundarySegments(contour, holes);
 
             return {
                 id: region.id + ", " + z,
@@ -2426,7 +2460,8 @@ export function generateAugmentFoamToolpath(
                 holes: holes,
                 height: z,
                 bounds: region.bounds,
-                segments: getBoundarySegments(contour, holes),
+                segments: segments,
+                BVH: buildSliceRegionBVH(segments),
             }
         }))
     }

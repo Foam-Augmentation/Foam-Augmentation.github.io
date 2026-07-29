@@ -23,7 +23,16 @@ export interface SliceRegion {
     contour: THREE.Vector3[];
     holes: THREE.Vector3[][];
     bounds: { min: THREE.Vector3; max: THREE.Vector3 };
-    segments: LineSegment[]
+    segments: LineSegment[];
+    BVH: SliceRegionBVHNode;
+}
+
+export interface SliceRegionBVHNode{
+  min: THREE.Vector3;
+  max: THREE.Vector3;
+  left?: SliceRegionBVHNode;
+  right?: SliceRegionBVHNode
+  leafSegments: LineSegment[]; //CHUNK_BVH_LEAF_SIZE in max length
 }
 
 export interface LineSegment {
@@ -44,16 +53,7 @@ export interface ChunkNode {
   children: ChunkNode[];
   parent: ChunkNode | null;
   modelObj?: EverydayModel;
-  //BVH?: ChunkBVHNode;
 }
-/*
-export interface ChunkBVHNode{
-  min: THREE.Vector3;
-  max: THREE.Vector3;
-  left?: ChunkBVHNode;
-  right?: ChunkBVHNode
-  segments: LineSegment[] //4 per leaf node?
-}*/
 
 export interface PrintChunk {
     id: string;
@@ -252,14 +252,16 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[]): Sli
     for (let i = 0; i < holeContours.length; i++) {
         const contour = holeContours[i];
         const bounds = getBounds(contour.outer, z);
-        
+        const segments = getBoundarySegments(contour.outer, contour.holes);
+
         regions.push({
             id: `region_${z.toFixed(3)}_${i}`,
             height: z,
             contour: contour.outer,
             holes: contour.holes,
             bounds: bounds,
-            segments: getBoundarySegments(contour.outer, contour.holes)
+            segments: segments,
+            BVH: buildSliceRegionBVH(segments)
         });
     }
     
@@ -576,10 +578,20 @@ function getSegmentBounds(
 }
 
 
-/*
-function buildSegmentBVH(
+/**
+ * Builds a BVH over the boundary segments of a single region, so that queries against the region's
+ * boundary don't have to walk every segment. A region is planar, so unlike a chunk BVH this only
+ * ever splits along x or y.
+ *
+ * The leaves hold references to the same segments that were passed in, so the tree goes stale if
+ * the region's contours are moved after it is built.
+ *
+ * @param {LineSegment[]} segments The boundary segments of the region.
+ * @returns {SliceRegionBVHNode} The root node of the region's BVH.
+ */
+export function buildSliceRegionBVH(
   segments: LineSegment[],
-): ChunkBVHNode {
+): SliceRegionBVHNode {
   const bounds = getSegmentBounds(segments);
 
   // few enough segments left that splitting further costs more than it saves
@@ -587,20 +599,13 @@ function buildSegmentBVH(
     return {
       min: bounds.min,
       max: bounds.max,
-      segments: segments,
+      leafSegments: segments,
     };
   }
 
-  // Split along whichever axis the segments are most spread out on. A chunk spans several
-  // layers, so unlike a single region z is worth considering here.
-  const extents = {
-    x: bounds.max.x - bounds.min.x,
-    y: bounds.max.y - bounds.min.y,
-    z: bounds.max.z - bounds.min.z,
-  };
-  let axis: 'x' | 'y' | 'z' = 'x';
-  if (extents.y > extents[axis]) axis = 'y';
-  if (extents.z > extents[axis]) axis = 'z';
+  // split along whichever of x and y the segments are most spread out on
+  const axis: 'x' | 'y' =
+    bounds.max.y - bounds.min.y > bounds.max.x - bounds.min.x ? 'y' : 'x';
 
   // Sort by midpoint along that axis and split at the median. Splitting at the centre of the
   // bounds instead would leave every segment on one side whenever they are unevenly spread,
@@ -614,30 +619,11 @@ function buildSegmentBVH(
   return {
     min: bounds.min,
     max: bounds.max,
-    left: buildSegmentBVH(sorted.slice(0, mid)),
-    right: buildSegmentBVH(sorted.slice(mid)),
-    segments: [],
+    left: buildSliceRegionBVH(sorted.slice(0, mid)),
+    right: buildSliceRegionBVH(sorted.slice(mid)),
+    leafSegments: [],
   };
 }
-function assignChunkBVHs(
-  roots: ChunkNode[],
-): void {
-  for (const root of roots) {
-    const segments: LineSegment[] = [];
-    for (const region of root.regions) {
-      // pushed one at a time rather than spread, as a chunk can hold more segments than
-      // can be passed as arguments in one call
-      for (const segment of region.segments) {
-        segments.push(segment);
-      }
-    }
-
-    root.BVH = buildSegmentBVH(segments);
-
-    assignChunkBVHs(root.children);
-  }
-}
-*/
 
 /**
  * Builds a tree of printable chunks from a tree of regions by splitting the regions into
@@ -1605,6 +1591,7 @@ export function extractRegionsFromPointCloud(
   // build SliceRegion for each contour
   const regions: SliceRegion[] = holeContours.map((holeContour, i) => {
     const xs = holeContour.outer.map(p => p.x), ys = holeContour.outer.map(p => p.y);
+    const segments = getBoundarySegments(holeContour.outer, holeContour.holes);
     return {
       id:      `region-${i}`,
       height: height,
@@ -1614,7 +1601,8 @@ export function extractRegionsFromPointCloud(
         min: new THREE.Vector3(Math.min(...xs), Math.min(...ys), 0),
         max: new THREE.Vector3(Math.max(...xs), Math.max(...ys), 0),
       },
-      segments: getBoundarySegments(holeContour.outer, holeContour.holes)
+      segments: segments,
+      BVH: buildSliceRegionBVH(segments)
     };
   });
 
