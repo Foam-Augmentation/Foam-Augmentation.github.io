@@ -23,8 +23,8 @@ export interface SliceRegion {
     contour: THREE.Vector3[];
     holes: THREE.Vector3[][];
     bounds: { min: THREE.Vector3; max: THREE.Vector3 };
-    segments: LineSegment[];
     BVH: SliceRegionBVHNode;
+    extruder: number; // 0 for left, 1 for right. We can add more extruders later if we want to support more than 2.
 }
 
 export interface SliceRegionBVHNode{
@@ -252,7 +252,7 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[]): Sli
     for (let i = 0; i < holeContours.length; i++) {
         const contour = holeContours[i];
         const bounds = getBounds(contour.outer, z);
-        const segments = getBoundarySegments(contour.outer, contour.holes);
+        const otherSegments = getBoundarySegments(contour.outer, contour.holes);
 
         regions.push({
             id: `region_${z.toFixed(3)}_${i}`,
@@ -260,8 +260,8 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[]): Sli
             contour: contour.outer,
             holes: contour.holes,
             bounds: bounds,
-            segments: segments,
-            BVH: buildSliceRegionBVH(segments)
+            extruder: 0, // Default to left extruder
+            BVH: buildSliceRegionBVH(otherSegments)
         });
     }
     
@@ -1602,7 +1602,8 @@ export function extractRegionsFromPointCloud(
         max: new THREE.Vector3(Math.max(...xs), Math.max(...ys), 0),
       },
       segments: segments,
-      BVH: buildSliceRegionBVH(segments)
+      BVH: buildSliceRegionBVH(segments),
+      extruder: 0
     };
   });
 

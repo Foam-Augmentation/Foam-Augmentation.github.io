@@ -4,6 +4,30 @@ import { ToolpathConfig } from "../visualizer/types/modelTypes";
 import { PathPoint } from "../visualizer/toolpath/generateFoamToolpath";
 import Visualizer from "../visualizer/Visualizer";
 
+export interface Extruder {
+  /** Nozzle diameter (in mm) */
+  nozzleDiameter: number;
+  /** Nozzle length (in mm) */
+  nozzleLength: number;
+  /** Die swelling factor */
+  dieSwelling: number;
+  /** Print head speed during free movement */
+  printHead_speed_when_free_move: number;
+  /** Extruder temperature (in °C) */
+  print_temp_extruder: number;
+}
+
+export interface VTPSettings {
+  V_Star: number;
+  //vStarEnd?: number; // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  Edot: number;
+  deltaZ: number; // deltaZ (thickness of a single foam layer)
+  //deltaLEnd?: number;  // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
+  H_star: number; // H_star (height of the foam layer)
+  //hStarEnd?: number; // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  useFermatSpirals: boolean;
+}
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
@@ -12,19 +36,8 @@ import Visualizer from "../visualizer/Visualizer";
 export default class Printer {
   /** Current cumulative extruded amount */
   public extrudedAmount: number;
-  /** Nozzle diameter (in mm) */
-  public nozzleDiameter: number;
-  public nozzleLength: number;
-  /** Die swelling factor */
-  public dieSwelling: number;
-  /** Print head speed during free movement */
-  public printHead_speed_when_free_move: number;
-  /** Material bed temperature */
   public material_bed_temperature: number;
-  /** Left extruder temperature (for TPU) */
-  public print_temp_left_extruder: number;
-  /** Right extruder temperature (for PLA) */
-  public print_temp_right_extruder: number;
+  public extruders: Extruder[];
   /** Machine depth (maximum x/y axis length) */
   public machine_depth: number;
   // Machine depth (maximum y axis lenght)
@@ -39,18 +52,8 @@ export default class Printer {
   public end_gcode: string;
 
   public diameter_filament: number;
+  public globalVTPSettings: VTPSettings;
 
-  public V_Star: number;
-  public vStarEnd: number;
-
-  public Edot: number;
-
-  public deltaZ: number; // deltaZ (thickness of a single foam layer)
-  public deltaLEnd: number;  
-  public ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
-  public H_star: number; // H_star (height of the foam layer)
-  public hStarEnd: number;
-  public useFermatSpirals: boolean;
   public generateBoundary: boolean;
   public purgeLine: boolean;
   public checkCollisions: boolean;
@@ -65,29 +68,38 @@ export default class Printer {
    */
   constructor() {
     this.extrudedAmount = 0;
-    this.nozzleDiameter = 0.4; // nozzle diameter
-    this.nozzleLength = 4.5;
-    this.dieSwelling = 1.0; // die swelling factor
-    this.printHead_speed_when_free_move = 1000; // free move speed
     this.material_bed_temperature = 60; // bed temperature
-    this.print_temp_left_extruder = 230; // left extruder temperature (TPU)
-    this.print_temp_right_extruder = 260; // right extruder temperature (PLA)
+    this.extruders = [
+      {// TPU extruder
+        nozzleDiameter: 0.4,
+        nozzleLength: 4.5,
+        dieSwelling: 1.0,
+        printHead_speed_when_free_move: 1000,
+        print_temp_extruder: 230
+      },
+      {//conductive TPU extruder
+        nozzleDiameter: 0.4,
+        nozzleLength: 4.5,
+        dieSwelling: 1.0,
+        printHead_speed_when_free_move: 1000,
+        print_temp_extruder: 240
+      }
+    ];
+    
     this.machine_depth = 250; // machine depth (max x)
     this.machine_depth_y = 210; // machine y axis length
     this.machine_height = 220; // machine height (max z)
     // this.boundaryGcode = ""; // initialize boundary G-code
     // this.toolpathGcode = ""; // initialize toolpath G-code
     this.diameter_filament = 1.75;
-    this.V_Star = 0.15;
-    this.vStarEnd = 0.15;
-
-    this.Edot = 50;
-    this.deltaZ = 1.7; // deltaZ (thickness of a single foam layer)
-    this.ZOffset = 3.38
-    this.H_star = 6.0
-    this.hStarEnd = 6.0;
-    this.deltaLEnd = 1.7;
-    this.useFermatSpirals = false;
+    this.globalVTPSettings = {
+      V_Star: 0.15,
+      Edot: 50,
+      deltaZ: 1.7,
+      ZOffset: 3.38,
+      H_star: 6.0,
+      useFermatSpirals: false
+    };
     this.generateBoundary = false;
     this.purgeLine = true;
     this.checkCollisions = false;
@@ -119,12 +131,12 @@ M73 P100 R0 ; progress to 100%`
   public updateParameters(
     toolpathConfig: ToolpathConfig
   ): void {
-    this.deltaZ = toolpathConfig.deltaZ;
-    this.V_Star = toolpathConfig.vStar;
-    this.H_star = toolpathConfig.hStar;
-    this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+    this.globalVTPSettings.deltaZ = toolpathConfig.deltaZ;
+    this.globalVTPSettings.V_Star = toolpathConfig.vStar;
+    this.globalVTPSettings.H_star = toolpathConfig.hStar;
+    this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
 
-    this.Edot = toolpathConfig.edot;
+    this.globalVTPSettings.Edot = toolpathConfig.edot;
   }
 
 
@@ -206,14 +218,14 @@ M73 P100 R0 ; progress to 100%`
 
       // matching jupyter notebook
       return `; Parameters:
-; V* = ${this.V_Star}
-; H* = ${this.H_star}
-; Edot (mm/min) = ${this.Edot}
-; deltaZ (mm) = ${this.deltaZ}
+; V* = ${this.globalVTPSettings.V_Star}
+; H* = ${this.globalVTPSettings.H_star}
+; Edot (mm/min) = ${this.globalVTPSettings.Edot}
+; deltaZ (mm) = ${this.globalVTPSettings.deltaZ}
 
 ; Calculated Parameters:
-; ZOffset (mm) = ${this.ZOffset.toFixed(6)}
-; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(6)}
+; ZOffset (mm) = ${this.globalVTPSettings.ZOffset.toFixed(6)}
+; printHeadSpeed (mm/min) = ${(this.globalVTPSettings.Edot * this.globalVTPSettings.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling, 2))).toFixed(6)}
 
 
 M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
@@ -222,11 +234,11 @@ M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), 
 M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
 M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
 M107 ; turns off fan
-M862.1 P${this.nozzleDiameter} ; nozzle diameter check 
+M862.1 P${this.extruders[0].nozzleDiameter} ; nozzle diameter check 
 
-M104 S${this.testSweep ? 20 : this.print_temp_left_extruder} ; set extruder temp 
+M104 S${this.testSweep ? 20 : this.extruders[0].print_temp_extruder} ; set extruder temp 
 M190 S${this.testSweep ? 20 : this.material_bed_temperature} ; set bed temp and wait to reach it
-M109 S${this.testSweep ? 20 : this.print_temp_left_extruder} ; wait for extruder temp 
+M109 S${this.testSweep ? 20 : this.extruders[0].print_temp_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check
 
 G28 ; home axes
@@ -246,14 +258,14 @@ M204 S1000
 `;
     } else {
       return `; Parameters:
-; V* = ${this.V_Star}
-; H* = ${this.H_star}
-; Edot (mm/min) = ${this.Edot}
-; deltaZ (mm) = ${this.deltaZ}
+; V* = ${this.globalVTPSettings.V_Star}
+; H* = ${this.globalVTPSettings.H_star}
+; Edot (mm/min) = ${this.globalVTPSettings.Edot}
+; deltaZ (mm) = ${this.globalVTPSettings.deltaZ}
 
 ; Calculated Parameters:
-; ZOffset (mm) = ${this.ZOffset.toFixed(6)}
-; printHeadSpeed (mm/min) = ${(this.Edot * this.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.nozzleDiameter * this.dieSwelling, 2))).toFixed(6)}
+; ZOffset (mm) = ${this.globalVTPSettings.ZOffset.toFixed(6)}
+; printHeadSpeed (mm/min) = ${(this.globalVTPSettings.Edot * this.globalVTPSettings.V_Star * (Math.pow(this.diameter_filament, 2) / Math.pow(this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling, 2))).toFixed(6)}
 
 M201 X9000 Y9000 Z500 E10000 ; sets maximum accelerations, mm/sec^2,
 M203 X500 Y500 Z12 E120 ; sets maximum feedrates, mm/sec,
@@ -261,10 +273,10 @@ M204 P2000 R1500 T2000 ; sets acceleration (P, T) and retract acceleration (R), 
 M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec 
 M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec 
 M107 ; turns off fan
-M862.1 P${this.nozzleDiameter} ; nozzle diameter check
+M862.1 P${this.extruders[0].nozzleDiameter} ; nozzle diameter check
 
-M104 S${this.print_temp_left_extruder} ; set extruder temp 
-M109 S${this.print_temp_left_extruder} ; wait for extruder temp 
+M104 S${this.extruders[0].print_temp_extruder} ; set extruder temp 
+M109 S${this.extruders[0].print_temp_extruder} ; wait for extruder temp 
 M862.3 P "MK3S" ; printer model check 
 
 G28 ; home axes
@@ -293,7 +305,7 @@ M204 S1000
    * @returns {string} The G-code command for moving to the target position.
    */
   public moveToPosition(target: THREE.Vector3): string {
-    return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.printHead_speed_when_free_move}`;
+    return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.extruders[0].printHead_speed_when_free_move}`;
   }
 
   /**
@@ -317,12 +329,12 @@ M204 S1000
 
     const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
     //console.log("beta", beta);
-    const gamma = (Math.PI / 4) * Math.pow(this.dieSwelling * this.nozzleDiameter, 2);
+    const gamma = (Math.PI / 4) * Math.pow(this.extruders[0].dieSwelling * this.extruders[0].nozzleDiameter, 2);
    // console.log("gamnma ",gamma);
 
-    const S = gamma / (beta * this.V_Star);
+    const S = gamma / (beta * this.globalVTPSettings.V_Star);
     //console.log("S ", S);
-    const F = this.Edot / S;
+    const F = this.globalVTPSettings.Edot / S;
     //console.log("F ", F);
 
 
@@ -356,11 +368,11 @@ M204 S1000
     p1: THREE.Vector3,
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
-    const beadArea = this.dieSwelling * Math.pow(this.nozzleDiameter, 2) / 2;
+    const beadArea = this.extruders[0].dieSwelling * Math.pow(this.extruders[0].nozzleDiameter, 2) / 2;
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
     const filamentPerMM = (beadArea / crossSection) * 2;
     const dist = this.norm(p0, p1);
-    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.printHead_speed_when_free_move}`;
+    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${this.extruders[0].printHead_speed_when_free_move}`;
     return gcode;
   }
 
@@ -480,10 +492,10 @@ M109 S${230} ; wait for extruder temp\n\n`
           this.moveToPosition(currentPoint)
         );
       } else {
-        this.V_Star = point.vStar!;
-        this.H_star = point.hStar!;
-        this.Edot = point.edot!;
-        this.ZOffset = this.H_star * (this.nozzleDiameter * this.dieSwelling);
+        this.globalVTPSettings.V_Star = point.vStar!;
+        this.globalVTPSettings.H_star = point.hStar!;
+        this.globalVTPSettings.Edot = point.edot!;
+        this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
         body_gcode.push(
           this.extrudeSingleSegment(
             lastTarget,

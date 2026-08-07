@@ -251,7 +251,7 @@ export function visualize_All_Layers(visualizer: Visualizer, modelObj: EverydayM
         modelObj.toolpathVisualizationObject = undefined;
     }
 
-    const zOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+    const zOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling);
 
     let visualizationGroup: THREE.Group | undefined;
     if (modelObj.toolpathSamplePoints && modelObj.toolpathSamplePoints.every((item: any) => item.type === 'foam')) {
@@ -1573,7 +1573,7 @@ export function generateFoamToolpath(
             }
         });
 
-        const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
+        const chunkTree = buildChunkTree(regionTree, visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset);
 
         chunkTree.forEach(chunkNode => {
             chunkNode.modelObj = modelObj;
@@ -1616,8 +1616,8 @@ export function generateFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const toolpath = makeChunkTreePath(
         chunkRoots,
-        visualizer.printer.nozzleLength + visualizer.printer.ZOffset,
-        visualizer.printer.useFermatSpirals,
+        visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset,
+        visualizer.printer.globalVTPSettings.useFermatSpirals,
         startPoint,
     );
 
@@ -1644,7 +1644,7 @@ export function generateFoamToolpath(
     // end mark
     */
 
-    toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling)));
+    toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling)));
 
     boundaryPath.reverse();
     boundaryPath.forEach(point => toolpath.unshift(point));
@@ -2096,7 +2096,7 @@ export function generateNonplanarFoamToolpath(
             for (let i = 0; i < regionToolpath.length; i++) {
                 const point = regionToolpath[i].point;
 
-                const pointZOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+                const pointZOffset = modelObj.toolpathConfig.hStar * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling);
 
                 const pointHeight = getPointHeight(samplePointMatrix, point.clone().sub(modelObj.mesh.position))
 
@@ -2363,8 +2363,8 @@ export function generateAugmentFoamToolpath(
                         holes: [],
                         height: bumpContour[0].z,
                         bounds: getBounds(bumpContour, bumpContour[0].z),
-                        segments: segments,
                         BVH: buildSliceRegionBVH(segments),
+                        extruder: 0
                     });
                     return false;
                 } else {
@@ -2462,13 +2462,14 @@ export function generateAugmentFoamToolpath(
                 bounds: region.bounds,
                 segments: segments,
                 BVH: buildSliceRegionBVH(segments),
+                extruder: 0
             }
         }))
     }
 
 
     const regionTree = buildRegionTree(sliceRegions, modelObj.toolpathConfig.deltaZ);
-    const chunkTree = buildChunkTree(regionTree, visualizer.printer.nozzleLength + visualizer.printer.ZOffset);
+    const chunkTree = buildChunkTree(regionTree, visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset);
     chunkTree.forEach(chunkNode => {
         chunkNode.modelObj = modelObj;
     });
@@ -2483,8 +2484,8 @@ export function generateAugmentFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
     const toolpath = makeChunkTreePath(
         chunkTree,
-        visualizer.printer.nozzleLength + visualizer.printer.ZOffset, 
-        visualizer.printer.useFermatSpirals,
+        visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset, 
+        visualizer.printer.globalVTPSettings.useFermatSpirals,
         startPoint,
         modelHeight,
     );
@@ -2513,7 +2514,7 @@ export function generateAugmentFoamToolpath(
         
         // Can comment out from here until the end of the section mark if this is not wanted
         // slightly flatten everything until the top is a flat plane
-        const pointZOffset = toolpath[i].hStar! * (visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling);
+        const pointZOffset = toolpath[i].hStar! * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling);
         // // new trying
         if (modelObj.toolpathConfig.curveAugment) {
             const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount;
@@ -2675,12 +2676,12 @@ export function generateAugmentFoamToolpath(
     const checkLayer = toolpath.slice(0, toolpath.length / (modelObj.toolpathConfig.initialFoamLayerCount 
         + modelObj.initialConfig.initialFoamLayerCount - 1)).map(p => p.point);
     transformedMesh.position.set(modelObj.mesh.position.x, modelObj.mesh.position.y, modelObj.mesh.position.z);
-    const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.nozzleLength, visualizer.printer.printHeadDims, 0.02);
+    const requiredZOffsetAdditional = getRequiredZOffset(transformedMesh, checkLayer, visualizer.printer.extruders[0].nozzleLength, visualizer.printer.printHeadDims, 0.02);
 
     console.log("Print head dims ", visualizer.printer.printHeadDims);
 
     console.log("Required additional offset: " + requiredZOffsetAdditional);
-    const recommendedHStar = visualizer.printer.H_star + requiredZOffsetAdditional / visualizer.printer.nozzleDiameter;
+    const recommendedHStar = visualizer.printer.globalVTPSettings.H_star + requiredZOffsetAdditional / visualizer.printer.extruders[0].nozzleDiameter;
     console.log("Recommended H*: " + recommendedHStar);
     if (requiredZOffsetAdditional > 0) {
         alert("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
