@@ -17,6 +17,22 @@ export interface Extruder {
   print_temp_extruder: number;
 }
 
+/**
+ * Creates an extruder with the default parameters.
+ * Used when adding a new extruder from the visualizer.
+ *
+ * @returns {Extruder} A new extruder with default settings.
+ */
+export function createDefaultExtruder(): Extruder {
+  return {
+    nozzleDiameter: 0.4,
+    nozzleLength: 4.5,
+    dieSwelling: 1.0,
+    printHead_speed_when_free_move: 1000,
+    print_temp_extruder: 230
+  };
+}
+
 export interface VTPSettings {
   V_Star: number;
   //vStarEnd?: number; // Unused. Used by ToolpathConfig but not needed for VTPSettings.

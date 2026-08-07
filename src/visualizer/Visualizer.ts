@@ -15,7 +15,7 @@ import { updateSelectedMeshBoundingBox } from './toolpath/updateSelectedMeshBoun
 import { createSelectedMeshFromHighlight } from './interactions/createSelectedMeshFromHighlight';
 import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
-import Printer from '../printer/Printer';
+import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
 import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
 import {ViewCube} from './gui/ViewCube';
 
@@ -72,8 +72,8 @@ export default class Visualizer {
         objectBoundingBox: boolean;
         selectBoundingBox: boolean;
         bedTemp: number;
-        nozzleLeftTemp: number;
-        nozzleRightTemp: number;
+        /** Per-extruder parameters. Mirrors Printer.extruders. */
+        extruders: Extruder[];
         machineDepth: number;
         machineDepthY: number;
         machineHeight: number;
@@ -82,9 +82,6 @@ export default class Visualizer {
         //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
         // foamLayers: number;
         // extrusion_speed_when_foam: number;
-        nozzleDiameter: number;
-        nozzleLength: number;
-        dieSwelling: number;
         // VStar: number;
         // HStar: number;
         // Edot: number;
@@ -188,8 +185,8 @@ export default class Visualizer {
             objectBoundingBox: false,
             selectBoundingBox: false,
             bedTemp: 60,
-            nozzleLeftTemp: 230,
-            nozzleRightTemp: 230,
+            // Seeded from the printer so the GUI always reflects the printer's actual extruders.
+            extruders: printer.extruders.map(extruder => ({ ...extruder })),
             machineDepth: 250,
             machineDepthY: 210,
             machineHeight: 220,
@@ -199,9 +196,6 @@ export default class Visualizer {
             // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
             // foamLayers: 3,
             // extrusion_speed_when_foam: 758.17,
-            nozzleDiameter: 0.4,
-            nozzleLength: 4.5,
-            dieSwelling: 1.0,
             // VStar: 0.15,
             // HStar: 9,
             // Edot: 35,
@@ -340,21 +334,62 @@ export default class Visualizer {
      */
     public syncConfigToPrinter(): void {
         this.printer.material_bed_temperature = this.config.bedTemp;
-        this.printer.print_temp_left_extruder = this.config.nozzleLeftTemp;
-        this.printer.print_temp_right_extruder = this.config.nozzleRightTemp;
         this.printer.machine_depth = this.config.machineDepth;
+        this.printer.machine_depth_y = this.config.machineDepthY;
         this.printer.machine_height = this.config.machineHeight;
-        this.printer.dieSwelling = this.config.dieSwelling;
-        this.printer.nozzleDiameter = this.config.nozzleDiameter;
         this.printer.diameter_filament = this.config.filamentDiameter;
-        this.printer.nozzleLength = this.config.nozzleLength;
         this.printer.printHeadDims.min.setX(this.config.printHeadMinX);
         this.printer.printHeadDims.min.setY(this.config.printHeadMinY);
         this.printer.printHeadDims.max.setX(this.config.printHeadMaxX);
         this.printer.printHeadDims.max.setY(this.config.printHeadMaxY);
-        this.printer.useFermatSpirals = this.config.useFermatSpirals;
+        this.printer.globalVTPSettings.useFermatSpirals = this.config.useFermatSpirals;
         this.printer.generateBoundary = this.config.generateBoundary;
         this.printer.purgeLine = this.config.purgeLine;
         this.printer.checkCollisions = this.config.checkCollisions;
-      }
+        this.printer.bedLeveling = this.config.bedLeveling;
+        this.printer.testSweep = this.config.testSweep;
+        this.syncExtrudersToPrinter();
+    }
+
+    /**
+     * Copies the per-extruder config onto the printer.
+     * The printer gets its own copies so later GUI edits only take effect through this method.
+     */
+    public syncExtrudersToPrinter(): void {
+        this.printer.extruders = this.config.extruders.map(extruder => ({ ...extruder }));
+    }
+
+    /**
+     * Appends a new extruder to the config (and the printer).
+     * The new extruder is cloned from the last existing one so it starts from something sensible.
+     *
+     * @returns {number} The index of the newly added extruder.
+     */
+    public addExtruder(): number {
+        const last = this.config.extruders[this.config.extruders.length - 1];
+        this.config.extruders.push(last ? { ...last } : createDefaultExtruder());
+        this.syncExtrudersToPrinter();
+        return this.config.extruders.length - 1;
+    }
+
+    /**
+     * Removes the extruder at the given index. The last remaining extruder cannot be removed
+     * because the printer always needs at least one.
+     *
+     * @param {number} index - The index of the extruder to remove.
+     * @returns {boolean} True if the extruder was removed.
+     */
+    public removeExtruder(index: number): boolean {
+        if (this.config.extruders.length <= 1) {
+            console.warn("Cannot remove the last extruder.");
+            return false;
+        }
+        if (index < 0 || index >= this.config.extruders.length) {
+            console.warn(`No extruder at index ${index}.`);
+            return false;
+        }
+        this.config.extruders.splice(index, 1);
+        this.syncExtrudersToPrinter();
+        return true;
+    }
 }

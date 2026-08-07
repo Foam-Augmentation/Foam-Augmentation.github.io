@@ -9,6 +9,7 @@ import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolp
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import {EverydayModel} from '../types/modelTypes';
+import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -109,6 +110,10 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   //   });
   // displayFolder.close();
 
+  // Assigned further down, once the printer settings folder exists. Importing a preset can change
+  // the extruder count, so the import handler needs to be able to rebuild these folders.
+  let extrudersFolder: GUI | undefined;
+
   const presetFolder = gui.addFolder('Presets');
   presetFolder.add({ exportPreset: () => {
     if (!visualizer.currentSelectedModel) {
@@ -128,6 +133,10 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       }
 
       const filename = await importPresetFromFile(visualizer);
+      // The preset may have added or removed extruders, so rebuild those folders before refreshing.
+      if (extrudersFolder) {
+        refreshExtruderFolders(visualizer, extrudersFolder);
+      }
       gui.controllersRecursive().forEach(controller => {
         controller.updateDisplay();
       });
@@ -154,10 +163,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const printerFolder = settingFolder.addFolder('printer settings');
   printerFolder.add(visualizer.config, 'bedTemp', 0, 110, 1)
     .onChange((v: number) => { visualizer.printer.material_bed_temperature = v; });
-  printerFolder.add(visualizer.config, 'nozzleLeftTemp', 0, 260, 1)
-    .onChange((v: number) => { visualizer.printer.print_temp_left_extruder = v; });
-  printerFolder.add(visualizer.config, 'nozzleRightTemp', 0, 260, 1)
-    .onChange((v: number) => { visualizer.printer.print_temp_right_extruder = v; });
   printerFolder.add(visualizer.config, 'machineDepth', 0, 1000, 1)
     .onChange((v: number) => {
       visualizer.printer.machine_depth = v;
@@ -175,14 +180,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       visualizer.printer.machine_height = v;
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
-  printerFolder.add(visualizer.config, 'dieSwelling', 0, 2, 0.01)
-    .onChange((v: number) => { visualizer.printer.dieSwelling = v; });
-  printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.01)
-    .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
   printerFolder.add(visualizer.config, 'filamentDiameter', 0, 5, 0.01)
     .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
-  printerFolder.add(visualizer.config, 'nozzleLength', 0, 100, 0.01)
-    .onChange((v: number) => { visualizer.printer.nozzleLength = v; });
   printerFolder.add(visualizer.config, 'printHeadMinX', -100, 0, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.min.setX(v); });
   printerFolder.add(visualizer.config, 'printHeadMinY', -100, 0, 0.01)
@@ -192,10 +191,13 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
 
+  // Per-extruder parameters, plus the button to add another extruder.
+  extrudersFolder = addExtrudersFolder(visualizer, printerFolder);
+
   printerFolder.close();
 
   const slicerFolder = settingFolder.addFolder('slicer settings');
-  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
+  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.globalVTPSettings.useFermatSpirals = v});
   slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
   slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});

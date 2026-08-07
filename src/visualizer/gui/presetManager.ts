@@ -2,6 +2,83 @@
 import Visualizer from '../Visualizer';
 import initScene from '../renderer/initScene';
 import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
+import { Extruder, createDefaultExtruder } from '../../printer/Printer';
+
+/** Extruder fields written out by the preset, one line each. */
+const EXTRUDER_KEYS: (keyof Extruder)[] = [
+  'nozzleDiameter',
+  'nozzleLength',
+  'dieSwelling',
+  'printHead_speed_when_free_move',
+  'print_temp_extruder',
+];
+
+/**
+ * Serializes every extruder as `extruder<i>.<field> <value>` lines, preceded by the count
+ * so the importer knows how many extruders to create.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @returns The preset lines describing the extruders.
+ */
+function serializeExtruders(visualizer: Visualizer): string[] {
+  const lines = [`extruderCount ${visualizer.config.extruders.length}`];
+  visualizer.config.extruders.forEach((extruder, index) => {
+    EXTRUDER_KEYS.forEach(key => {
+      lines.push(`extruder${index}.${key} ${extruder[key]}`);
+    });
+  });
+  return lines;
+}
+
+/**
+ * Applies an extruder-related preset line.
+ * Handles both `extruderCount` (which resizes the extruder list) and
+ * `extruder<i>.<field>` (which sets a single field).
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param key - The preset key.
+ * @param rawValue - The raw string value from the preset file.
+ * @returns True if the key was an extruder key and was handled.
+ */
+function applyExtruderParameter(visualizer: Visualizer, key: string, rawValue: string): boolean {
+  if (key === 'extruderCount') {
+    const count = Number(rawValue);
+    if (!isFinite(count) || count < 1) {
+      console.warn(`Invalid extruderCount "${rawValue}"`);
+      return true;
+    }
+    const extruders = visualizer.config.extruders;
+    while (extruders.length > count) extruders.pop();
+    while (extruders.length < count) {
+      const last = extruders[extruders.length - 1];
+      extruders.push(last ? { ...last } : createDefaultExtruder());
+    }
+    return true;
+  }
+
+  const match = key.match(/^extruder(\d+)\.(.+)$/);
+  if (!match) return false;
+
+  const index = Number(match[1]);
+  const field = match[2] as keyof Extruder;
+  if (EXTRUDER_KEYS.indexOf(field) === -1) {
+    console.warn(`Unknown extruder field "${field}"`);
+    return true;
+  }
+  // extruderCount is written before the per-extruder lines, so the slot should already exist.
+  if (index >= visualizer.config.extruders.length) {
+    console.warn(`Preset references extruder ${index} but only ${visualizer.config.extruders.length} exist`);
+    return true;
+  }
+
+  const value = Number(rawValue);
+  if (!isFinite(value)) {
+    console.warn(`Invalid value "${rawValue}" for ${key}`);
+    return true;
+  }
+  visualizer.config.extruders[index][field] = value;
+  return true;
+}
 
 // can add more params
 /**
@@ -14,14 +91,10 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
   const config = visualizer.currentSelectedModel!.toolpathConfig;
   const lines = [
     `bedTemp ${visualizer.config.bedTemp}`,
-    `nozzleLeftTemp ${visualizer.config.nozzleLeftTemp}`,
-    `nozzleRightTemp ${visualizer.config.nozzleRightTemp}`,
     `machineDepth ${visualizer.config.machineDepth}`,
+    `machineDepthY ${visualizer.config.machineDepthY}`,
     `machineHeight ${visualizer.config.machineHeight}`,
-    `dieSwelling ${visualizer.config.dieSwelling}`,
-    `nozzleDiameter ${visualizer.config.nozzleDiameter}`,
     `filamentDiameter ${visualizer.config.filamentDiameter}`,
-    `nozzleLength ${visualizer.config.nozzleLength}`,
     `printHeadMinX ${visualizer.config.printHeadMinX}`,
     `printHeadMinY ${visualizer.config.printHeadMinY}`,
     `printHeadMaxX ${visualizer.config.printHeadMaxX}`,
@@ -30,6 +103,9 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
     `generateBoundary ${visualizer.config.generateBoundary}`,
     `purgeLine ${visualizer.config.purgeLine}`,
     `checkCollisions ${visualizer.config.checkCollisions}`,
+    `bedLeveling ${visualizer.config.bedLeveling}`,
+    `testSweep ${visualizer.config.testSweep}`,
+    ...serializeExtruders(visualizer),
     `startHStarTest ${visualizer.config.startHStarTest}`,
     `endHStarTest ${visualizer.config.endHStarTest}`,
     `startVStarTest ${visualizer.config.startVStarTest}`,
@@ -132,7 +208,9 @@ function parseAndApplyPreset(visualizer: Visualizer, content: string): void {
     const key = parts[0];
     const value = parts.slice(1).join(' '); 
     
-    if (isVisualizerKey(visualizer, key)) {
+    if (applyExtruderParameter(visualizer, key, value)) {
+      continue;
+    } else if (isVisualizerKey(visualizer, key)) {
       applyVisualizerParameter(visualizer, key, value);
     } else if (isModelKey(modelObj.toolpathConfig, key)) {
       applyModelParameter(modelObj.toolpathConfig, key, value);
