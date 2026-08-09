@@ -11,6 +11,7 @@ const EXTRUDER_KEYS: (keyof Extruder)[] = [
   'dieSwelling',
   'printHead_speed_when_free_move',
   'print_temp_extruder',
+  'color'
 ];
 
 /**

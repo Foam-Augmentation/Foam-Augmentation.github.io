@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
-import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
+import { EverydayModel, PointCloudPoint, ToolpathConfig } from '../types/modelTypes';
 import { Gradient, RGBA } from '../loaders/modelLoader';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import {
@@ -31,6 +31,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 export interface PathPoint {
     point: THREE.Vector3;
     travel?: boolean;
+    extruder?: number
     switchFilament?: boolean;
     pause?: boolean;
     regularSegment?: boolean;
@@ -46,17 +47,17 @@ export interface PathPoint {
      * The function groups points into rows (based on a y-tolerance), then further splits each row into
      * segments if points are too far apart. It then connects segments from consecutive rows to form continuous paths.
      *
-     * @param filteredPoints - An array of sample points with structure { point: THREE.Vector3, type: string }.
+     * @param filteredPoints - An array of sample points with structure PointCloudPoint.
      * @returns An array of continuous segments, where each segment is an array of sample points.
      */
-function _generatePath(filteredPoints: { point: THREE.Vector3, type: string }[], modelObj: EverydayModel): { point: THREE.Vector3, type: string }[][] {
+function _generatePath(filteredPoints: PointCloudPoint[], modelObj: EverydayModel): PointCloudPoint[][] {
     const maxConnectDist = modelObj.toolpathConfig.gridSize * 3;  // Maximum distance allowed to connect points in the same row.
     const rowTol = modelObj.toolpathConfig.gridSize * 0.5;        // Tolerance in the y-direction to group points into one row.
 
     // Sort the sample points by their y coordinate.
     let sortedPoints = filteredPoints.slice().sort((a, b) => a.point.y - b.point.y);
-    let rows: { point: THREE.Vector3, type: string }[][] = [];
-    let currentRow: { point: THREE.Vector3, type: string }[] = [sortedPoints[0]];
+    let rows: PointCloudPoint[][] = [];
+    let currentRow: PointCloudPoint[] = [sortedPoints[0]];
     for (let i = 1; i < sortedPoints.length; i++) {
         const prev = sortedPoints[i - 1];
         const cur = sortedPoints[i];
@@ -70,11 +71,11 @@ function _generatePath(filteredPoints: { point: THREE.Vector3, type: string }[],
     rows.push(currentRow);
 
     // For each row, sort by x coordinate and split the row into segments if necessary.
-    let rowSegments: { points: { point: THREE.Vector3, type: string }[]; connected: boolean }[][] = [];
+    let rowSegments: { points: PointCloudPoint[]; connected: boolean }[][] = [];
     rows.forEach((row, rowIndex) => {
         rowSegments[rowIndex] = [];
         row.sort((a, b) => a.point.x - b.point.x);
-        let segs: { point: THREE.Vector3, type: string }[][] = [];
+        let segs: PointCloudPoint[][] = [];
         let currentSeg = [row[0]];
         for (let i = 1; i < row.length; i++) {
             const prev = row[i - 1];
@@ -100,7 +101,7 @@ function _generatePath(filteredPoints: { point: THREE.Vector3, type: string }[],
     const maxRow = rows.length;
 
     // Build the global segments by connecting segments from each row.
-    const globalSegments: { point: THREE.Vector3, type: string }[][] = [];
+    const globalSegments: PointCloudPoint[][] = [];
     function existUnconnected(): boolean {
         for (let r = 0; r < maxRow; r++) {
             if (rowSegments[r].some(seg => seg.connected === false)) return true;
@@ -203,7 +204,7 @@ function _generatePath(filteredPoints: { point: THREE.Vector3, type: string }[],
      * @param zOffset - The z-axis offset to be applied.
      * @returns A THREE.Object3D representing the visualized segments, or null if no segments exist.
      */
-function _visualizeSegments(globalSegments: { point: THREE.Vector3, type: string }[][], type: 'sensing' | 'regular', zOffset: number): THREE.Object3D | null {
+function _visualizeSegments(globalSegments: PointCloudPoint[][], type: 'sensing' | 'regular', zOffset: number): THREE.Object3D | null {
     if (globalSegments.length === 0) return null;
     let obj: THREE.Object3D;
     if (globalSegments.length === 1) {
@@ -946,6 +947,7 @@ function makeChunkTreePath(
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
     modelHeight?: number,
     scanX: boolean = false,
+    currentExtruder?: number
 ): PathPoint[] {
     let lowestHeight = Infinity;
     for (const root of roots) {
@@ -972,17 +974,24 @@ function makeChunkTreePath(
         }
     }
 
+    const sameExtruderIndices = printableChunkIndices.filter(
+        i => roots[i].regions[0].extruder === currentExtruder
+    );
+    const candidateIndices = sameExtruderIndices.length ? sameExtruderIndices : printableChunkIndices;
+
     // for now it just prints the closest one. In the future can make hamiltonian path to find the most efficient path.
-    let printIndex = 0;
+    let printIndex = candidateIndices[0];
     let lowestDist = Infinity;
-    for (const i of printableChunkIndices) {
+    for (const i of candidateIndices) {
         const dist = contourDistToPoint(lastLayerPoint.clone().sub(roots[i].modelObj!.mesh.position), roots[i].regions[0].contour);
         if (dist < lowestDist) {
             lowestDist = dist;
             printIndex = i;
         }
     }
+    const printExtruder = roots[printIndex].regions[0].extruder;
     const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, useFermatSpirals, modelHeight, scanX);
+    chunkPath.forEach(p => p.extruder = printExtruder);
 
     if (roots[printIndex].regions.length % 2 === 1) {
         scanX = !scanX;
@@ -1026,7 +1035,8 @@ function makeChunkTreePath(
             useFermatSpirals,
             chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, 
             modelHeight, 
-            scanX
+            scanX,
+            printExtruder
         );
     }
 
@@ -1653,7 +1663,7 @@ export function generateFoamToolpath(
         addPurgeLine(toolpath, visualizer.printer.machine_depth, 2, 2);
     }
 
-    visualizeToolpath(toolpath, visualizationGroup, 0x00ff00, 0x0000ff);
+    visualizeToolpath(toolpath, visualizationGroup, visualizer.printer.extruders.map(e => e.color), 0x0000ff);
 
     visualizer.scene.add(visualizationGroup);
     modelObjs[0].toolpathVisualizationObject = visualizationGroup;
@@ -2128,13 +2138,13 @@ export function generateNonplanarFoamToolpath(
  * 
  * @param toolpath The toolpath to visualize
  * @param visualizationGroup The visualization group to add the visualization to.
- * @param printColor The color the visualization should be for print movements.
+ * @param printColors The colors for print extrusions, indexed by extruder.
  * @param travelColor The color the visualization should be for travel movements.
  */
 function visualizeToolpath(
     toolpath: PathPoint[],
     visualizationGroup: THREE.Group,
-    printColor: number,
+    printColors: number[],
     travelColor: number
 ): void {
     let allVertices: number[] = [];
@@ -2149,6 +2159,9 @@ function visualizeToolpath(
                 new THREE.Float32BufferAttribute(new Float32Array(allVertices), 3)
             );
 
+            // Print moves are colored per extruder so material changes are visible.
+            // Anything past the end of the palette falls back to the first color.
+            const printColor = printColors[lastPoint.extruder ?? 0] ?? printColors[0];
             const material = new THREE.LineBasicMaterial({
                 color: lastPoint.travel ? travelColor : printColor,
                 linewidth: 2,
@@ -2188,7 +2201,7 @@ function visualizeToolpath(
  *
  * @param visualizer - The Visualizer instance, providing access to the scene and sampleStep.
  * @param modelObj - The model object, which must include:
- *                   - toolpathSamplePoints: Array<{ point: THREE.Vector3, type: string }>
+ *                   - toolpathSamplePoints: Array<PointCloudPoint>
  *                   - mesh: THREE.Mesh (for positioning)
  *                   - foamToolpathLine: (optional) previous toolpath visualization.
  * @returns An object with properties 'all', 'foam', and 'sense' containing the generated segments.
@@ -2239,29 +2252,29 @@ export function generateAugmentFoamToolpath(
 
     const visualizationGroup = new THREE.Group();
 
-    const samplePointMatrix: THREE.Vector3[][] = [[]];
+    const samplePointMatrix: PointCloudPoint[][] = [[]];
     let lastX = modelObj.toolpathSamplePoints[0].point.x;
     for (const point of modelObj.toolpathSamplePoints) {
         if (Math.abs(point.point.x - lastX) <= 0.0001) {
-            samplePointMatrix[samplePointMatrix.length - 1].push(point.point);
+            samplePointMatrix[samplePointMatrix.length - 1].push(point);
         } else {
-            samplePointMatrix.push([point.point]);
+            samplePointMatrix.push([point]);
             lastX = point.point.x;
         }
     }
     for (const column of samplePointMatrix) {
-        column.sort((a, b) => a.y - b.y);
+        column.sort((a, b) => a.point.y - b.point.y);
     }
 
     const samplePointMatrixCopy: THREE.Vector3[][] = [];
     samplePointMatrix.forEach(column => {
         samplePointMatrixCopy.push([]);
         column.forEach(point => {
-            samplePointMatrixCopy[samplePointMatrixCopy.length - 1].push(point.clone());
+            samplePointMatrixCopy[samplePointMatrixCopy.length - 1].push(point.point.clone());
         });
     });
 
-    const gradientMatrix = makeGradientMatrix(samplePointMatrix);
+    const gradientMatrix = makeGradientMatrix(samplePointMatrixCopy);
     const indicesToRemove: { col: number, row: number }[] = [];
 
     const gradientThresholdDegrees = modelObj.toolpathConfig.steepnessThreshold;
@@ -2288,13 +2301,18 @@ export function generateAugmentFoamToolpath(
         samplePointMatrix[col].splice(row, 1);
     }
 
-    const samplePoints: THREE.Vector3[] = [];
-    samplePointMatrix.forEach(col => samplePoints.push(...col));
+    const regularPoints: THREE.Vector3[] = [];
+    const sensePoints: THREE.Vector3[] = [];
+    samplePointMatrix.forEach(col => col.forEach(p =>
+        (p.type === 'sense' ? sensePoints : regularPoints).push(p.point)));
 
     console.log("Bump Mesh: " + modelObj.bumpMesh);
 
     const bumpRegions: SliceRegion[] = [];
-    const cloudSliceRegions: SliceRegion[] = extractRegionsFromPointCloud(samplePoints, 5);
+    const cloudSliceRegions: SliceRegion[] = [
+        ...extractRegionsFromPointCloud(regularPoints, 5,0),
+        ...extractRegionsFromPointCloud(sensePoints, 5, 1)
+    ];
 
     const flatLayerNum = modelObj.toolpathConfig.additionalCurveLayers;
 
@@ -2462,7 +2480,7 @@ export function generateAugmentFoamToolpath(
                 bounds: region.bounds,
                 segments: segments,
                 BVH: buildSliceRegionBVH(segments),
-                extruder: 0
+                extruder: region.extruder
             }
         }))
     }
@@ -2693,7 +2711,7 @@ export function generateAugmentFoamToolpath(
     for (let i = 0; i < samplePointMatrix.length; i++) {
         const column = samplePointMatrix[i];
         for (let j = 0; j < column.length; j++) {
-            const point = column[j].clone().add(modelObj.mesh.position);
+            const point = column[j].point.clone().add(modelObj.mesh.position);
             point.setZ(point.z + 0.001);
             if (!point) {
                 continue;
@@ -2768,7 +2786,7 @@ export function generateAugmentFoamToolpath(
             visualizationGroup.add(line);
         }
     } else {
-        visualizeToolpath(pathToVisualize, visualizationGroup, 0x00ff00, 0x0000ff);
+        visualizeToolpath(pathToVisualize, visualizationGroup, visualizer.printer.extruders.map(e => e.color), 0x0000ff);
     }
 
     // console.log(`Total visualization objects: ${visualizationGroup.children.length}`);

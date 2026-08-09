@@ -651,13 +651,17 @@ export function buildChunkTree(
     }
     let currentNode = root;
     let regions: SliceRegion[] = [currentNode.region];
+    // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
+    const chunkExtruder = root.region.extruder;
     while (true) {
       if (currentNode.children.length === 0) {
         currentChunkNode.regions = regions;
         rootNodes.push(currentChunkNode);
         break;
       }
-      if (currentNode.children.length > 1 || currentNode.children[0].region.height - root.region.height > nozzleHeight) {
+      if (currentNode.children.length > 1
+          || currentNode.children[0].region.height - root.region.height > nozzleHeight
+          || currentNode.children[0].region.extruder !== chunkExtruder) {
         currentChunkNode.regions = regions;
         currentChunkNode.children = buildChunkTree(currentNode.children, nozzleHeight);
         for (const child of currentChunkNode.children) {
@@ -1498,7 +1502,8 @@ export function getWindingOrder(
  */
 export function extractRegionsFromPointCloud(
   points: THREE.Vector3[],
-  alpha: number = Infinity
+  alpha: number = Infinity,
+  extruder: number = 0
 ): SliceRegion[] {
   if (points.length === 0) return [];
 
@@ -1593,7 +1598,7 @@ export function extractRegionsFromPointCloud(
     const xs = holeContour.outer.map(p => p.x), ys = holeContour.outer.map(p => p.y);
     const segments = getBoundarySegments(holeContour.outer, holeContour.holes);
     return {
-      id:      `region-${i}`,
+      id:      `region-${extruder}-${i}`,
       height: height,
       contour: holeContour.outer,
       holes:   holeContour.holes,
@@ -1603,7 +1608,7 @@ export function extractRegionsFromPointCloud(
       },
       segments: segments,
       BVH: buildSliceRegionBVH(segments),
-      extruder: 0
+      extruder: extruder
     };
   });
 

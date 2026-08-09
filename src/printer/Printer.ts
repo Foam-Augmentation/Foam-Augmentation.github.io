@@ -15,6 +15,7 @@ export interface Extruder {
   printHead_speed_when_free_move: number;
   /** Extruder temperature (in °C) */
   print_temp_extruder: number;
+  color: number;
 }
 
 /**
@@ -29,7 +30,8 @@ export function createDefaultExtruder(): Extruder {
     nozzleLength: 4.5,
     dieSwelling: 1.0,
     printHead_speed_when_free_move: 1000,
-    print_temp_extruder: 230
+    print_temp_extruder: 230,
+    color: 0x00ff00
   };
 }
 
@@ -91,14 +93,16 @@ export default class Printer {
         nozzleLength: 4.5,
         dieSwelling: 1.0,
         printHead_speed_when_free_move: 1000,
-        print_temp_extruder: 230
+        print_temp_extruder: 230,
+        color: 0x00FF00
       },
       {//conductive TPU extruder
         nozzleDiameter: 0.4,
         nozzleLength: 4.5,
         dieSwelling: 1.0,
         printHead_speed_when_free_move: 1000,
-        print_temp_extruder: 240
+        print_temp_extruder: 240,
+        color: 0xFF0000
       }
     ];
     
