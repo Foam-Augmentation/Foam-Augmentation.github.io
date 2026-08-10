@@ -3,6 +3,7 @@ import ClipperLib from 'clipper-lib';
 import Delaunator from 'delaunator';
 import { ToolpathConfig, EverydayModel } from '../types/modelTypes';
 import { PathPoint } from '../toolpath/generateFoamToolpath';
+import Printer, { VTPSettings } from '../../printer/Printer';
 
 
 // Clipper scale is how scaled up the points are when passed to clipper. They are then scaled down when turned back.
@@ -53,6 +54,7 @@ export interface ChunkNode {
   children: ChunkNode[];
   parent: ChunkNode | null;
   modelObj?: EverydayModel;
+  VTPSettings: VTPSettings
 }
 
 export interface PrintChunk {
@@ -632,24 +634,27 @@ export function buildSliceRegionBVH(
  * very close to each other.
  *
  * @param {RegionNode[]} roots The root nodes of the region tree.
- * @param {number} nozzleHeight The height of the nozzle.
+ * @param {printer} Printer settings
  * @returns {ChunkNode[]} The root nodes of the printable chunk tree.
  */
 export function buildChunkTree(
   roots: RegionNode[],
-  nozzleHeight: number,
+  printer: Printer,
 ): ChunkNode[] {
   if (roots.length === 0) {
     return [];
   }
   const rootNodes: ChunkNode[] = [];
   for (const root of roots) {
+    let currentNode = root;
+    const extruder = currentNode.region.extruder
     let currentChunkNode: ChunkNode = {
       regions: [],
       children: [],
       parent: null,
+      VTPSettings: extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings
     }
-    let currentNode = root;
+    const nozzleHeight = printer.extruders[extruder].nozzleLength + currentChunkNode.VTPSettings.ZOffset
     let regions: SliceRegion[] = [currentNode.region];
     // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
     const chunkExtruder = root.region.extruder;
@@ -663,7 +668,7 @@ export function buildChunkTree(
           || currentNode.children[0].region.height - root.region.height > nozzleHeight
           || currentNode.children[0].region.extruder !== chunkExtruder) {
         currentChunkNode.regions = regions;
-        currentChunkNode.children = buildChunkTree(currentNode.children, nozzleHeight);
+        currentChunkNode.children = buildChunkTree(currentNode.children, printer);
         for (const child of currentChunkNode.children) {
           child.parent = currentChunkNode;
         }
@@ -674,7 +679,7 @@ export function buildChunkTree(
       regions.push(currentNode.region);
     }
   }
-  splitChunkTreeByOverlap(rootNodes);
+  splitChunkTreeByOverlap(rootNodes,printer);
 
   //assignChunkBVHs(rootNodes);
 
@@ -717,6 +722,7 @@ function findHeightSiblings(
  */
 function splitChunkTreeByOverlap(
   roots: ChunkNode[],
+  printer: Printer,
 ): void {
   if (roots.length === 0) return;
 
@@ -731,10 +737,12 @@ function splitChunkTreeByOverlap(
       for (let j = 1; j < sibling.regions.length; j++) {
         for (let k = 0; k < root.regions.length; k++) {
           if (checkOverlap(sibling.regions[j], root.regions[k])) {
+            const newNodeRegions = sibling.regions.slice(j);
             const newNodeSibling: ChunkNode = {
-              regions: sibling.regions.slice(j),
+              regions: newNodeRegions,
               children: sibling.children,
               parent: sibling,
+              VTPSettings: newNodeRegions[0].extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings
             }
             sibling.children = [newNodeSibling];
             sibling.regions = sibling.regions.slice(0, j);
@@ -750,7 +758,7 @@ function splitChunkTreeByOverlap(
     allChildren.push(...root.children);
   }
   
-  splitChunkTreeByOverlap(allChildren);
+  splitChunkTreeByOverlap(allChildren,printer);
 }
 
 

@@ -64,11 +64,19 @@ export interface ToolpathConfig {
     vStar: number;
     vStarEnd: number;
     deltaLEnd: number;
+
+    senseDeltaLEnd: number;
+    senseDeltaZ: number;
+    senseHStar: number;
+    senseHStarEnd: number;
+    senseVStar: number;
+    SenseVStarEnd: number;
     /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
     // zOffset: number;
     /** grid size */
     gridSize: number;
     deltaL: number;
+    senseDeltaL: number;
     /** die swell */
     // dieSwell: number;
     // sandwiched structure
@@ -79,6 +87,7 @@ export interface ToolpathConfig {
     /** final Foam layer count */
     finalFoamLayerCount: number;
     edot: number;
+    senseEdot: number;
     bumpSpacingX: number;
     bumpSpacingY: number;
     bumpScale: number;

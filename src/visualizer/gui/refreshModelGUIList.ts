@@ -412,8 +412,23 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
 
+    const paramsFolderSense = modelGUIitem.addFolder('sense params');
+    paramsFolderSense.domElement.classList.add('params-folder-sense');
+
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
+        visualize_All_Layers(visualizer, modelObj);
+    });
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseVStar', 0.01, 5, 0.01).name('V*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'SenseVStarEnd', 0.01, 5, 0.01).name('End V*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStar', 0.01, 100, 0.01).name('H*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStarEnd', 0.01, 100, 0.01).name('End H*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseEdot', 0.01, 1000, 0.01).name('Edot');
+    
     paramsFolder.close();
     paramsFolderInitial.close();
+    paramsFolderSense.close();
 }
 
 

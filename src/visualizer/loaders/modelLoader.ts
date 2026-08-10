@@ -116,6 +116,14 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
                         additionalCurveLayers: 3,
+                        senseDeltaLEnd: 1.7,
+                        senseDeltaZ: 1.16,
+                        senseHStar: 9,
+                        senseHStarEnd: 9,
+                        senseVStar: 0.16,
+                        SenseVStarEnd: 0.15,
+                        senseDeltaL: 1.7,
+                        senseEdot: 35
                     },
                     initialConfig: {
                         deltaZ: 1.16,
@@ -138,6 +146,14 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
                         steepnessThreshold: 75,
                         flatLayerZOffset: 5,
                         additionalCurveLayers: 3,
+                        senseDeltaLEnd: 0,
+                        senseDeltaZ: 0,
+                        senseHStar: 0,
+                        senseHStarEnd: 0,
+                        senseVStar: 0,
+                        SenseVStarEnd: 0,
+                        senseDeltaL: 0,
+                        senseEdot: 0
                     },
                     initialOffset: 0,
                     gradient: {

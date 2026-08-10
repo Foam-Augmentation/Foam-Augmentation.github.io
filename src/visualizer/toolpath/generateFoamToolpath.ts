@@ -777,7 +777,6 @@ function generateRectilinearInfillWithHoles(
 function makeChunkPath(
     chunk: ChunkNode,
     lastLayerPoint: THREE.Vector3,
-    useFermatSpirals: boolean,
     height?: number,
     initialScanX: boolean = false,
     fillDist: number = 0.5,
@@ -787,20 +786,20 @@ function makeChunkPath(
     let scanX = initialScanX;
     let lastUseInitial = false;
     const initialConfig = chunk.modelObj!.initialConfig;
-    const config = chunk.modelObj!.toolpathConfig;
+    const VTPSettings = chunk.VTPSettings;
     chunk.modelObj!.geometry.computeBoundingBox();
     const modelHeight = height ?? chunk.modelObj!.geometry.boundingBox!.min.z;
     const initialOffset = chunk.modelObj!.initialOffset;
     const gradient = chunk.modelObj!.gradient;
     let count = 0;
     for (const region of chunk.regions) {
-        let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / config.deltaZ);
+        let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / VTPSettings.deltaZ);
         const useInitial = regionLayer < initialConfig.initialFoamLayerCount;
         if (count === 0 && useInitial) {
             lastUseInitial = true;
         }
 
-        const configToUse = useInitial ? initialConfig : config;
+        const configToUse = useInitial ? initialConfig : VTPSettings;
        
 
         // does vertical gradient for deltaL only right now
@@ -817,14 +816,13 @@ function makeChunkPath(
         }
         
         // bottom = deltaL, top = deltaLEnd
-        const currentDeltaL = config.deltaL + heightPercent * (config.deltaLEnd - config.deltaL);
+        const currentDeltaL = configToUse.deltaL + heightPercent * (configToUse.deltaLEnd - configToUse.deltaL);
     
 
         console.log(`Region Layer: ${regionLayer}, Using DeltaL: ${currentDeltaL}`);
         // end mark
-
         let path: PathPoint[];
-        if (useFermatSpirals) {
+        if (VTPSettings.useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
                 region.holes,
@@ -833,7 +831,7 @@ function makeChunkPath(
             );
 
             //path = connectIsocontours(insetContoursRoot, configToUse.deltaL, lastLayerEndPoint);
-            path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint, useInitial ? initialConfig.edot : config.edot);  
+            path = connectIsocontours(insetContoursRoot, currentDeltaL, lastLayerEndPoint, useInitial ? initialConfig.edot : VTPSettings.Edot);  
         } else {
             path = generateRectilinearInfillWithHoles(
                 region.BVH,
@@ -842,7 +840,7 @@ function makeChunkPath(
                 currentDeltaL, 
                 scanX,
                 lastLayerEndPoint,
-                useInitial ? initialConfig.edot : config.edot
+                useInitial ? initialConfig.edot : VTPSettings.Edot
             );
             scanX = !scanX;
         }
@@ -907,18 +905,20 @@ function makeChunkPath(
 
     // Apply gradient
     chunkPath.forEach(point => {
-        let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / config.deltaZ);
+        let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / VTPSettings.deltaZ);
 
-        const configToUse = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig : config;
+        const configToUse = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig : VTPSettings;
+        const hStar = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig.hStar : VTPSettings.H_star
+        const vStar = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig.vStar : VTPSettings.V_Star
 
         const scaledX = ((point.point.x - bounds.min.x) / (bounds.max.x - bounds.min.x)) * gradient.width;
         const scaledY = ((point.point.y - bounds.min.y) / (bounds.max.y - bounds.min.y)) * gradient.height;
         const sampledColor = gradient.sampleColor(scaledX, scaledY);
         // Black is 1 white is 0
         const percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
-        point.hStar = configToUse.hStar + percent * (configToUse.hStarEnd - configToUse.hStar);
-        point.vStar = configToUse.vStar + percent * (configToUse.vStarEnd - configToUse.vStar);
-        point.edot = configToUse.edot;
+        point.hStar = hStar + percent * (configToUse.hStarEnd - hStar);
+        point.vStar = vStar + percent * (configToUse.vStarEnd - vStar);
+        point.edot = VTPSettings.Edot;
         point.point.add(chunk.modelObj!.mesh.position);
     });
 
@@ -942,8 +942,6 @@ function makeChunkPath(
  */
 function makeChunkTreePath(
     roots: ChunkNode[],
-    nozzleHeight: number,
-    useFermatSpirals: boolean,
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
     modelHeight?: number,
     scanX: boolean = false,
@@ -990,7 +988,7 @@ function makeChunkTreePath(
         }
     }
     const printExtruder = roots[printIndex].regions[0].extruder;
-    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, useFermatSpirals, modelHeight, scanX);
+    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, modelHeight, scanX);
     chunkPath.forEach(p => p.extruder = printExtruder);
 
     if (roots[printIndex].regions.length % 2 === 1) {
@@ -1031,8 +1029,6 @@ function makeChunkTreePath(
     if (roots.length) {
         restOfPath = makeChunkTreePath(
             roots,
-            nozzleHeight, 
-            useFermatSpirals,
             chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, 
             modelHeight, 
             scanX,
@@ -1583,7 +1579,7 @@ export function generateFoamToolpath(
             }
         });
 
-        const chunkTree = buildChunkTree(regionTree, visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset);
+        const chunkTree = buildChunkTree(regionTree, visualizer.printer);
 
         chunkTree.forEach(chunkNode => {
             chunkNode.modelObj = modelObj;
@@ -1626,8 +1622,6 @@ export function generateFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const toolpath = makeChunkTreePath(
         chunkRoots,
-        visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset,
-        visualizer.printer.globalVTPSettings.useFermatSpirals,
         startPoint,
     );
 
@@ -2483,7 +2477,7 @@ export function generateAugmentFoamToolpath(
 
 
     const regionTree = buildRegionTree(sliceRegions, modelObj.toolpathConfig.deltaZ);
-    const chunkTree = buildChunkTree(regionTree, visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset);
+    const chunkTree = buildChunkTree(regionTree, visualizer.printer);
     chunkTree.forEach(chunkNode => {
         chunkNode.modelObj = modelObj;
     });
@@ -2498,8 +2492,6 @@ export function generateAugmentFoamToolpath(
     const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
     const toolpath = makeChunkTreePath(
         chunkTree,
-        visualizer.printer.extruders[0].nozzleLength + visualizer.printer.globalVTPSettings.ZOffset, 
-        visualizer.printer.globalVTPSettings.useFermatSpirals,
         startPoint,
         modelHeight,
     );

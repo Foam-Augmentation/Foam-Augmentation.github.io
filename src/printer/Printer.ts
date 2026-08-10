@@ -40,14 +40,15 @@ export function createDefaultExtruder(): Extruder {
 
 export interface VTPSettings {
   V_Star: number;
-  //vStarEnd?: number; // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  vStarEnd: number; 
   Edot: number;
   deltaZ: number; // deltaZ (thickness of a single foam layer)
-  //deltaLEnd?: number;  // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  deltaLEnd: number; 
   ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
   H_star: number; // H_star (height of the foam layer)
-  //hStarEnd?: number; // Unused. Used by ToolpathConfig but not needed for VTPSettings.
+  hStarEnd: number; 
   useFermatSpirals: boolean;
+  deltaL: number,
 }
 
 /**
@@ -72,6 +73,7 @@ export default class Printer {
 
   public diameter_filament: number;
   public globalVTPSettings: VTPSettings;
+  public senseVTPSettings: VTPSettings
 
   public generateBoundary: boolean;
   public purgeLine: boolean;
@@ -131,7 +133,23 @@ export default class Printer {
       deltaZ: 1.7,
       ZOffset: 3.38,
       H_star: 6.0,
-      useFermatSpirals: false
+      useFermatSpirals: false,
+      deltaL:1.7,
+      deltaLEnd: 1.7,
+      hStarEnd: 6.0,
+      vStarEnd: 0.15
+    };
+    this.senseVTPSettings = {
+      V_Star: 0.15,
+      Edot: 50,
+      deltaZ: 1.7,
+      ZOffset: 3.38,
+      H_star: 6.0,
+      useFermatSpirals: false,
+      deltaL:1.7,
+      deltaLEnd: 1.7,
+      hStarEnd: 6.0,
+      vStarEnd: 0.15
     };
     this.generateBoundary = false;
     this.purgeLine = true;
@@ -156,9 +174,22 @@ export default class Printer {
     this.globalVTPSettings.deltaZ = toolpathConfig.deltaZ;
     this.globalVTPSettings.V_Star = toolpathConfig.vStar;
     this.globalVTPSettings.H_star = toolpathConfig.hStar;
+    this.globalVTPSettings.deltaL = toolpathConfig.deltaL;
+    this.globalVTPSettings.deltaLEnd = toolpathConfig.deltaLEnd;
     this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
-
+    this.globalVTPSettings.hStarEnd = toolpathConfig.hStarEnd;
+    this.globalVTPSettings.vStarEnd = toolpathConfig.vStarEnd;
     this.globalVTPSettings.Edot = toolpathConfig.edot;
+
+    this.senseVTPSettings.deltaZ = toolpathConfig.senseDeltaZ;
+    this.senseVTPSettings.V_Star = toolpathConfig.senseVStar;
+    this.senseVTPSettings.H_star = toolpathConfig.senseHStar;
+    this.senseVTPSettings.deltaL = toolpathConfig.senseDeltaL;
+    this.senseVTPSettings.deltaLEnd = toolpathConfig.senseDeltaLEnd;
+    this.senseVTPSettings.ZOffset = this.senseVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
+    this.senseVTPSettings.hStarEnd = toolpathConfig.senseHStarEnd;
+    this.senseVTPSettings.vStarEnd = toolpathConfig.SenseVStarEnd;
+    this.senseVTPSettings.Edot = toolpathConfig.senseEdot;
   }
 
   /**
