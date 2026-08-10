@@ -64,6 +64,7 @@ export function refreshExtruderFolders(visualizer: Visualizer, extrudersFolder: 
     extruderFolder.add(extruder, 'nozzleLength', 0, 100, 0.01).name('Nozzle Length').onChange(sync);
     extruderFolder.add(extruder, 'dieSwelling', 0, 2, 0.01).name('Die Swelling').onChange(sync);
     extruderFolder.add(extruder, 'print_temp_extruder', 0, 300, 1).name('Nozzle Temp').onChange(sync);
+    extruderFolder.add(extruder, 'idle_temp_extruder', 0, 300, 1).name('Idle Temp').onChange(sync);
     extruderFolder.add(extruder, 'printHead_speed_when_free_move', 0, 10000, 1)
       .name('Free Move Speed').onChange(sync);
 

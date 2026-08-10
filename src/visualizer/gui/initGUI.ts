@@ -190,6 +190,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
   printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
+  // Off means the single toolhead swaps materials with an M600 instead of parking/picking tools.
+  printerFolder.add(visualizer.config, 'multipleToolheads').name('Multiple Toolheads')
+    .onChange((v: boolean) => { visualizer.printer.multipleToolheads = v; });
 
   // Per-extruder parameters, plus the button to add another extruder.
   extrudersFolder = addExtrudersFolder(visualizer, printerFolder);
@@ -285,10 +288,30 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
   const saveFolder = gui.addFolder('Saving');
   // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
-  saveFolder.add({ saveGcode: () => {
-    const gcode = visualizer.printer.build_start_gcode(1) + 
+    saveFolder.add({ saveGcode: () => {
+    const usedExtruders: number[] = []
+    let firstExtruder = null;
+    for(const model of visualizer.everydayModelList){
+      if(!model.extruders) continue;
+      for(const n of model.extruders){
+        if(usedExtruders.indexOf(n) == -1){
+          usedExtruders.push(n)
+        }
+      }
+      if(firstExtruder === null || firstExtruder === undefined){
+        firstExtruder = model.firstExtruder
+      }
+    }
+    if(!visualizer.everydayModelList || firstExtruder === null){
+      console.warn("no gcode to save")
+      return;
+    }
+    console.log("Using Extruders", usedExtruders);
+    console.log("first extruder",firstExtruder)
+    console.log("Extruders:",visualizer.printer.extruders);
+    const gcode = visualizer.printer.build_start_gcode(firstExtruder!,usedExtruders) + 
                   visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
-                  visualizer.printer.end_gcode;
+                  visualizer.printer.build_end_gcode(usedExtruders);
 
     visualizer.saveGcodeToFile(gcode, "toolpath")
   } }, 'saveGcode').name('Save Toolpath G-Code');
@@ -316,16 +339,21 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     const toolpath = generateFoamToolpath(visualizer, models);
     console.log('Generated toolpath:', toolpath);
     
-    if (!toolpath || !toolpath.foam) {
+    if (!toolpath) {
         console.warn('Failed to generate toolpath. Please try again.');
         return;
     }
-    
+    const usedExtruders: number[] = []
+    for(const point of toolpath){
+      if(point.extruder !== undefined && usedExtruders.indexOf(point.extruder) == -1){
+        usedExtruders.push(point.extruder)
+      }
+    }
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.build_start_gcode(1) + 
-                  visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode + 
-                  visualizer.printer.end_gcode; //TODO: Why is printer end_gcode added twice? This might be a mistake.
+    const gcode = visualizer.printer.build_start_gcode(toolpath[0].extruder !== undefined ? toolpath[0].extruder: 0,usedExtruders) + 
+                  visualizer.printer.generate_foam_gcode(toolpath) + 
+                  visualizer.printer.build_end_gcode(usedExtruders); //TODO: Why is printer end_gcode added twice? This might be a mistake.
     console.log('Generated G-code:', gcode);
     
     // Save G-code file

@@ -101,6 +101,7 @@ export default class Visualizer {
         printHeadMaxY: number;
         bedLeveling: boolean;
         testSweep: boolean;
+        multipleToolheads: boolean;
 
         startHStarTest: number;
         endHStarTest: number;
@@ -214,6 +215,7 @@ export default class Visualizer {
             printHeadMaxY: 70,
             bedLeveling: false,
             testSweep: false,
+            multipleToolheads: false,
 
             startHStarTest: 5,
             endHStarTest: 10,
@@ -348,6 +350,7 @@ export default class Visualizer {
         this.printer.checkCollisions = this.config.checkCollisions;
         this.printer.bedLeveling = this.config.bedLeveling;
         this.printer.testSweep = this.config.testSweep;
+        this.printer.multipleToolheads = this.config.multipleToolheads;
         this.syncExtrudersToPrinter();
     }
 

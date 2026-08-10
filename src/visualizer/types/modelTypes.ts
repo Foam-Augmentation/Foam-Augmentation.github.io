@@ -155,4 +155,7 @@ export interface EverydayModel extends BasicModel {
     regular_area_segments?: PointCloudPoint[][];
     /** segments of sensing area */
     sense_area_segments?: PointCloudPoint[][];
+
+    extruders?: number[]
+    firstExtruder?: number
 }

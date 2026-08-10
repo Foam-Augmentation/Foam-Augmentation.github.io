@@ -11,6 +11,7 @@ const EXTRUDER_KEYS: (keyof Extruder)[] = [
   'dieSwelling',
   'printHead_speed_when_free_move',
   'print_temp_extruder',
+  'idle_temp_extruder',
   'color'
 ];
 
@@ -106,6 +107,7 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
     `checkCollisions ${visualizer.config.checkCollisions}`,
     `bedLeveling ${visualizer.config.bedLeveling}`,
     `testSweep ${visualizer.config.testSweep}`,
+    `multipleToolheads ${visualizer.config.multipleToolheads}`,
     ...serializeExtruders(visualizer),
     `startHStarTest ${visualizer.config.startHStarTest}`,
     `endHStarTest ${visualizer.config.endHStarTest}`,

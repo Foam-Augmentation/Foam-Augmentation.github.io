@@ -1516,7 +1516,7 @@ function applyVerticalGradient(
 export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObjs: EverydayModel[],
-): { all: PathPoint[]; foam: PathPoint[]; sense: PathPoint[] } {
+): PathPoint[] {
     console.log('generating foam toolpath');
     const chunkRoots: ChunkNode[] = [];
     let highestStartHeight = -Infinity;
@@ -1667,11 +1667,7 @@ export function generateFoamToolpath(
 
     visualizer.scene.add(visualizationGroup);
     modelObjs[0].toolpathVisualizationObject = visualizationGroup;
-    return {
-        all: toolpath,
-        foam: toolpath,
-        sense: []
-    };
+    return toolpath;
 }
 
 
@@ -2209,7 +2205,7 @@ function visualizeToolpath(
 export function generateAugmentFoamToolpath(
     visualizer: Visualizer,
     modelObj: EverydayModel,
-): { all: any; foam: any; sense: any } {
+): PathPoint[] | null{
     // --- 1. Remove the previous foam toolpath visualization, if it exists.
     if (modelObj.toolpathVisualizationObject) {
         visualizer.scene.remove(modelObj.toolpathVisualizationObject);
@@ -2247,7 +2243,7 @@ export function generateAugmentFoamToolpath(
     // --- 2. Check if there are sample points available.
     if (!modelObj.toolpathSamplePoints || modelObj.toolpathSamplePoints.length === 0) {
         console.warn("No sample points available. Cannot generate toolpath.");
-        return { all: null, foam: null, sense: null };
+        return null;
     }
 
     const visualizationGroup = new THREE.Group();
@@ -2763,11 +2759,7 @@ export function generateAugmentFoamToolpath(
     // --- 5. Visualize the chosen path
     if (pathToVisualize.length === 0 && gcodePathToVisualize.length === 0) {
         console.warn("No path to visualize");
-        return {
-            all: toolpath,
-            foam: toolpath,
-            sense: []
-        };
+        return toolpath
     }
 
     if (visualizer.config.showGcodeVisualization) {
@@ -2801,11 +2793,7 @@ export function generateAugmentFoamToolpath(
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;
 
-    return {
-        all: toolpath,
-        foam: toolpath,
-        sense: []
-    };
+    return toolpath;
 }
 
 
