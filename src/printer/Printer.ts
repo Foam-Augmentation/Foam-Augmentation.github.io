@@ -94,6 +94,8 @@ export default class Printer {
   /** Filament retracted before parking a tool and pushed back after picking one (in mm) */
   public toolchangeRetract: number;
 
+  public purgeTower: boolean;
+
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
    */
@@ -120,7 +122,7 @@ export default class Printer {
         color: 0xFF0000
       }
     ];
-    
+    this.purgeTower = true;
     this.machine_depth = 250; // machine depth (max x)
     this.machine_depth_y = 210; // machine y axis length
     this.machine_height = 220; // machine height (max z)

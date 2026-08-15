@@ -761,17 +761,47 @@ function generateRectilinearInfillWithHoles(
 }
 
 /**
+ * How a chunk's z values get finished off once every point's hStar is known. Every point is raised
+ * by its own ZOffset; when a surface is given the layers are also draped over it rather than being
+ * left level with the bed.
+ */
+interface LayerHeights {
+    /** Nozzle diameter times die swelling, which turns a point's hStar into its ZOffset. */
+    threadDiameter: number;
+    /** The surface to drape the layers over. Leave it out for flat layers. */
+    surface?: {
+        /** The surface itself, as columns of sampled points. */
+        samplePointMatrix: THREE.Vector3[][];
+        /** The top of the model's bounding box, the plane the layers flatten out towards. */
+        modelMaxZ: number;
+    };
+}
+
+function addPurgeTowerToolpathAtZ(extruder: number, z: number): PathPoint[]{
+    //TEMPORARY!!
+    //TODO: Curved toolpath (for better acceleration), maybe nearest position
+    const points = [new THREE.Vector3(240,200,z), new THREE.Vector3(240,190,z), new THREE.Vector3(230,190,z),new THREE.Vector3(240,200,z)]
+    const toolpath: PathPoint[] = [];
+    toolpath.push({point: points[0], extruder: extruder, travel: true})
+    for(const p of points){
+        toolpath.push({point: points[0], extruder: extruder, regularSegment: true})
+    }
+    return toolpath
+}
+
+/**
  * Generates the toolpath for a single chunk.
- * 
- * @param {ChunkNode} chunk The chunk to print the toolpath for. This should have a modelObj with the 
+ *
+ * @param {ChunkNode} chunk The chunk to print the toolpath for. This should have a modelObj with the
  *                          config to print this chunk with.
  * @param {THREE.Vector3} lastLayerPoint The last point printed so far.
- * @param {boolean} useFermatSpirals If true, will generate infill with fermat spirals instead of a rectilinear path.
  * @param {number} height The distance between the base of the model object and the print bed.
- * @param {boolean} initialScanX If true, the first layer scans the x direction, alternating every layer. 
+ * @param {boolean} initialScanX If true, the first layer scans the x direction, alternating every layer.
  *                               Only applicable for rectilinear infill.
  * @param {number} fillDist Controls the maximum distance points can be from the last in the toolpath. Lowering this
  *                          means more points are generated in the same space, leading to higher accuracy with gradients.
+ * @param {LayerHeights} layerHeights How to finish off each point's z. Leave it out only if the caller applies the
+ *                                    ZOffset to the finished path itself.
  * @returns {PathPoint[]} The generated toolpath. All points will have an hStar, vStar, and edot parameter.
  */
 function makeChunkPath(
@@ -780,6 +810,7 @@ function makeChunkPath(
     height?: number,
     initialScanX: boolean = false,
     fillDist: number = 0.5,
+    layerHeights?: LayerHeights,
 ): PathPoint[] {
     let lastLayerEndPoint = lastLayerPoint;
     let chunkPath: PathPoint[] = [];
@@ -920,9 +951,73 @@ function makeChunkPath(
         point.vStar = vStar + percent * (configToUse.vStarEnd - vStar);
         point.edot = VTPSettings.Edot;
         point.point.add(chunk.modelObj!.mesh.position);
+
+        if (layerHeights) {
+            applyLayerHeight(point, chunk, layerHeights);
+        }
     });
 
     return chunkPath;
+}
+
+
+/**
+ * Finishes off a single point's z, raising it by its own ZOffset and, if a surface was given,
+ * lifting it out of its flat slice plane and onto that surface first.
+ *
+ * With curveAugment on, the layers start out following the curve of the surface and are flattened a
+ * little more each layer until the top one is a flat plane; every layer above that stack is spaced a
+ * plain deltaZ apart. With it off, the whole stack just follows the surface.
+ *
+ * @param {PathPoint} point The point to raise. Its position must already be in model-placed
+ *                          coordinates, and its hStar must already be resolved.
+ * @param {ChunkNode} chunk The chunk the point belongs to, for its model's config and placement.
+ * @param {LayerHeights} layerHeights The ZOffset scale, and the surface to drape over if there is one.
+ */
+function applyLayerHeight(
+    point: PathPoint,
+    chunk: ChunkNode,
+    layerHeights: LayerHeights,
+): void {
+    const modelObj = chunk.modelObj!;
+    const config = modelObj.toolpathConfig;
+    const position = point.point;
+
+    const pointZOffset = point.hStar! * layerHeights.threadDiameter;
+    const surface = layerHeights.surface;
+
+    if (!surface) {
+        position.setZ(position.z + pointZOffset);
+        return;
+    }
+
+    const localPosition = position.clone().sub(modelObj.mesh.position);
+
+    // Height of the surface directly under this point, which the bottom layer sits on.
+    const curvedBottomHeight = getPointHeight(surface.samplePointMatrix, localPosition);
+
+    if (!config.curveAugment) {
+        position.setZ(position.z + curvedBottomHeight + pointZOffset);
+        return;
+    }
+
+    const totalLayers = config.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount;
+
+    // The plane the stack flattens out to: either the augment surface or a fixed clearance above the model.
+    const flatTopHeight = modelObj.augmentSamplePoints
+        ? getPointHeight(modelObj.augmentSamplePoints, localPosition) + surface.modelMaxZ
+        : surface.modelMaxZ + config.flatLayerZOffset;
+
+    // Split the gap between the two surfaces evenly over the stack, so each layer is a little
+    // flatter than the one below it and the last one lands on the flat plane.
+    const incrementPerLayer = (flatTopHeight - curvedBottomHeight) / (totalLayers - 1);
+    const layerNumber = Math.round(localPosition.z / config.deltaZ);
+
+    const heightIncrement = layerNumber < totalLayers
+        ? incrementPerLayer * layerNumber
+        : incrementPerLayer * (totalLayers - 1) + config.deltaZ * (layerNumber - totalLayers + 1);
+
+    position.setZ(modelObj.mesh.position.z + curvedBottomHeight + heightIncrement + pointZOffset);
 }
 
 
@@ -931,13 +1026,12 @@ function makeChunkPath(
  * Expects the roots to have a modelObj object.
  * 
  * @param {ChunkNode[]} roots The root nodes of the chunk tree.
- * @param {number} nozzleHeight The height of the printer's nozzle.
- * @param {boolean} useFermatSpirals Whether it should make infill with fermat spirals. If false will use a rectilinear path.
- * @param {THREE.Vector3} modelPosition The position of the model object.
  * @param {THREE.Vector3} lastLayerPoint It will try to start the print as close to this point as possible.
  *                                       It's mostly here for recursive calls and defaults to (0, 0, 0).
  * @param {number} modelHeight The distance from the base of the model to the print bed.
  * @param {boolean} scanX Whether the initial layer in the toolpath scans the x or y axis. Only applies to rectilinear paths.
+ * @param {number} currentExtruder The extruder that is currently picked, so chunks that need it are preferred over ones that would force a tool change. It's mostly here for recursive calls.
+ * @param {LayerHeights} layerHeights Passed straight through to makeChunkPath, so that each chunk's points carry their real heights by the time the travel moves between chunks are worked out.
  * @returns {THREE.Vector3[]} The toolpath that minimizes travel movements as a list of points.
  */
 function makeChunkTreePath(
@@ -945,7 +1039,9 @@ function makeChunkTreePath(
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
     modelHeight?: number,
     scanX: boolean = false,
-    currentExtruder?: number
+    currentExtruder?: number,
+    layerHeights?: LayerHeights,
+    purgeTowerHeight?: number
 ): PathPoint[] {
     let lowestHeight = Infinity;
     for (const root of roots) {
@@ -988,7 +1084,7 @@ function makeChunkTreePath(
         }
     }
     const printExtruder = roots[printIndex].regions[0].extruder;
-    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, modelHeight, scanX);
+    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, modelHeight, scanX, undefined, layerHeights);
     chunkPath.forEach(p => p.extruder = printExtruder);
 
     if (roots[printIndex].regions.length % 2 === 1) {
@@ -1030,9 +1126,11 @@ function makeChunkTreePath(
         restOfPath = makeChunkTreePath(
             roots,
             chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, 
-            modelHeight, 
+            modelHeight,
             scanX,
-            printExtruder
+            printExtruder,
+            layerHeights,
+            purgeTowerHeight
         );
     }
 
@@ -1619,10 +1717,15 @@ export function generateFoamToolpath(
 
     visualizer.scene.add(visualizationGroup);
 
+    const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const toolpath = makeChunkTreePath(
         chunkRoots,
         startPoint,
+        undefined,
+        false,
+        undefined,
+        { threadDiameter: firstExtruder.nozzleDiameter * firstExtruder.dieSwelling },
     );
 
     /*
@@ -1648,7 +1751,8 @@ export function generateFoamToolpath(
     // end mark
     */
 
-    toolpath.forEach(point => point.point.setZ(point.point.z + point.hStar! * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling)));
+    // Each point's ZOffset was applied back in makeChunkPath, where its hStar was resolved. The
+    // boundary and purge line are added below on purpose: neither has an hStar to offset by.
 
     boundaryPath.reverse();
     boundaryPath.forEach(point => toolpath.unshift(point));
@@ -2489,15 +2593,26 @@ export function generateAugmentFoamToolpath(
         }
     });
 
+    transformedMesh.geometry.computeBoundingBox();
+    const bbox = transformedMesh.geometry.boundingBox!;
+
+    const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
     const toolpath = makeChunkTreePath(
         chunkTree,
         startPoint,
         modelHeight,
+        false,
+        undefined,
+        {
+            threadDiameter: firstExtruder.nozzleDiameter * firstExtruder.dieSwelling,
+            surface: {
+                samplePointMatrix: samplePointMatrixCopy,
+                modelMaxZ: bbox.max.z,
+            },
+        },
+        (visualizer.printer.purgeTower ? 0 : undefined)
     );
-
-    transformedMesh.geometry.computeBoundingBox();
-    const bbox = transformedMesh.geometry.boundingBox!;
 
     // comment out from here if no vertical gradient wanted till end mark
     // Apply vertical gradient if no SVG gradient is loaded
@@ -2513,54 +2628,7 @@ export function generateAugmentFoamToolpath(
     }
     // end mark
 
-    
-
-    for (let i = 0; i < toolpath.length; i++) {
-        const point = toolpath[i].point;
-        
-        // Can comment out from here until the end of the section mark if this is not wanted
-        // slightly flatten everything until the top is a flat plane
-        const pointZOffset = toolpath[i].hStar! * (visualizer.printer.extruders[0].nozzleDiameter * visualizer.printer.extruders[0].dieSwelling);
-        // // new trying
-        if (modelObj.toolpathConfig.curveAugment) {
-            const totalLayers = modelObj.toolpathConfig.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount;
-
-            // // // Calculate flat top plane height (highest Z in the model + some clearance)
-            const flatTopHeight = modelObj.augmentSamplePoints ? 
-                getPointHeight(modelObj.augmentSamplePoints, point.clone().sub(modelObj.mesh.position)) + bbox.max.z: 
-                (bbox.max.z + modelObj.toolpathConfig.flatLayerZOffset);
-
-            // 2. Get curved bottom height at this XY position
-            let curvedBottomHeight = getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position));
-
-            // 5 increment by the amt
-            const currentLayerZ = point.z - modelObj.mesh.position.z;
-            const layerNumber = Math.round(currentLayerZ / modelObj.toolpathConfig.deltaZ);
-
-            // 3. Calculate distance between the thet two
-            const distanceBetweenSurfaces = flatTopHeight - curvedBottomHeight;
-
-            // 4. get increment per layer by dividing
-            const incrementPerLayer = distanceBetweenSurfaces / (totalLayers - 1);
-
-            const heightIncrement = layerNumber < totalLayers ? incrementPerLayer * layerNumber : 
-                                    incrementPerLayer * (totalLayers - 1) + modelObj.toolpathConfig.deltaZ * (layerNumber - totalLayers + 1);
-            const targetHeight = curvedBottomHeight + heightIncrement;
-
-            point.setZ(modelObj.mesh.position.z + targetHeight + pointZOffset);
-        } else {
-            point.setZ(point.z + getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position)) + pointZOffset);
-            // const rawHeight = getPointHeight(samplePointMatrixCopy, point.clone().sub(modelObj.mesh.position));
-            // const previousHeight = i > 0 ? (toolpath[i-1].point.z - modelObj.mesh.position.z) : rawHeight;
-            // const maxStep = 0.5; // Maximum Z change per point
-
-            // const clampedHeight = Math.max(previousHeight - maxStep, 
-            //                             Math.min(previousHeight + maxStep, rawHeight));
-
-            // point.setZ(point.z + clampedHeight + pointZOffset);
-        }
-    }
-
+    // The points were lifted onto the sampled surface back in makeChunkPath, layer by layer.
 
     //flat layers on top if needed
     const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
