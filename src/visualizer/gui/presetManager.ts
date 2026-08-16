@@ -108,6 +108,7 @@ export function exportPresetToFile(visualizer: Visualizer, filename: string = 'f
     `bedLeveling ${visualizer.config.bedLeveling}`,
     `testSweep ${visualizer.config.testSweep}`,
     `multipleToolheads ${visualizer.config.multipleToolheads}`,
+    `purgeTower ${visualizer.config.purgeTower}`,
     ...serializeExtruders(visualizer),
     `startHStarTest ${visualizer.config.startHStarTest}`,
     `endHStarTest ${visualizer.config.endHStarTest}`,

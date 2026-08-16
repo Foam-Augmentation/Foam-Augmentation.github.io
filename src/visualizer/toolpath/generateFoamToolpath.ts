@@ -414,8 +414,10 @@ function fillToolpath(
         if (dist > fillDist) {
             for (let i = 1; i < Math.floor(dist / fillDist); i++) {
                 newPath.push({
-                    point: pointAlongLine(point.point, nextPoint.point, i * fillDist), 
+                    point: pointAlongLine(point.point, nextPoint.point, i * fillDist),
                     travel: nextPoint.travel,
+                    regularSegment: nextPoint.regularSegment,
+                    extruder: point.extruder,
                     hStar: point.hStar,
                     vStar: point.vStar,
                     edot: point.edot,
@@ -780,14 +782,73 @@ interface LayerHeights {
 function addPurgeTowerToolpathAtZ(extruder: number, z: number): PathPoint[]{
     //TEMPORARY!!
     //TODO: Curved toolpath (for better acceleration), maybe nearest position
+    console.log("WEEEE");
     const points = [new THREE.Vector3(240,200,z), new THREE.Vector3(240,190,z), new THREE.Vector3(230,190,z),new THREE.Vector3(240,200,z)]
     const toolpath: PathPoint[] = [];
     toolpath.push({point: points[0], extruder: extruder, travel: true})
     for(const p of points){
-        toolpath.push({point: points[0], extruder: extruder, regularSegment: true})
+        toolpath.push({point: p, extruder: extruder, regularSegment: true})
     }
     return toolpath
 }
+
+/**
+ * Builds the intermediate travel point that gets the print head from one place to another without
+ * dragging it through anything on the way. If the head is above its destination it crosses in x and
+ * y first and drops afterwards; otherwise it climbs to the destination's height before crossing.
+ *
+ * @param {THREE.Vector3} from Where the print head currently is.
+ * @param {PathPoint} to The first point of the path being approached.
+ * @returns {PathPoint} The travel point to insert before `to`.
+ */
+function approachTravelPoint(from: THREE.Vector3, to: PathPoint): PathPoint {
+    return {
+        point: from.z >= to.point.z
+            ? new THREE.Vector3(to.point.x, to.point.y, from.z)
+            : new THREE.Vector3(from.x, from.y, to.point.z),
+        travel: true,
+        hStar: to.hStar,
+        vStar: to.vStar,
+        edot: to.edot,
+    };
+}
+
+
+/**
+ * Stacks purge tower layers from the height the tower has already reached up to a target height.
+ *
+ * The tower keeps its own running height instead of following the model's, because it cannot do
+ * anything else: chunks are printed one whole chunk at a time and each one covers its own band of z,
+ * so the height the print is at when a tool change comes up moves both up and down, while a tower
+ * can only ever grow. Where the model is instead gets handled by the travel move in and out.
+ *
+ * @param {number} extruder The extruder the tower is being printed with.
+ * @param {number} fromHeight How much tower has already been laid down (in mm).
+ * @param {number} toHeight The height to bring the tower up to (in mm). Below fromHeight prints nothing.
+ * @param {THREE.Vector3} lastPoint Where the print head is coming from.
+ * @returns {{ path: PathPoint[], height: number }} The layers' toolpath, and the tower's new height.
+ */
+function makePurgeTowerBlock(
+    extruder: number,
+    fromHeight: number,
+    toHeight: number,
+    lastPoint: THREE.Vector3,
+    purgeTowerLayerHeight: number
+): { path: PathPoint[], height: number } {
+    const layerCount = Math.max(0, Math.ceil((toHeight - fromHeight) / purgeTowerLayerHeight));
+    const path: PathPoint[] = [];
+
+    for (let i = 1; i <= layerCount; i++) {
+        path.push(...addPurgeTowerToolpathAtZ(extruder, fromHeight + i * purgeTowerLayerHeight));
+    }
+
+    if (path.length) {
+        path.unshift(approachTravelPoint(lastPoint, path[0]));
+    }
+
+    return { path: path, height: fromHeight + layerCount * purgeTowerLayerHeight };
+}
+
 
 /**
  * Generates the toolpath for a single chunk.
@@ -1041,7 +1102,8 @@ function makeChunkTreePath(
     scanX: boolean = false,
     currentExtruder?: number,
     layerHeights?: LayerHeights,
-    purgeTowerHeight?: number
+    purgeTowerHeight?: number,
+    purgeTowerLayerHeight?: number,
 ): PathPoint[] {
     let lowestHeight = Infinity;
     for (const root of roots) {
@@ -1091,27 +1153,40 @@ function makeChunkTreePath(
         scanX = !scanX;
     }
 
-    // avoid collissions by only moving to the x and y first if current point is above next point, 
-    // otherwise move in the z first then x and y.
-    let toolpath: PathPoint[] = [];
-    if (chunkPath.length) {
-        if (lastLayerPoint.z >= chunkPath[0].point.z) {
-            toolpath.push({
-                point: new THREE.Vector3(chunkPath[0].point.x, chunkPath[0].point.y, lastLayerPoint.z),
-                travel: true,
-                hStar: chunkPath[0].hStar,
-                vStar: chunkPath[0].vStar,
-                edot: chunkPath[0].edot,
-            });
-        } else {
-            toolpath.push({
-                point: new THREE.Vector3(lastLayerPoint.x, lastLayerPoint.y, chunkPath[0].point.z),
-                travel: true,
-                hStar: chunkPath[0].hStar,
-                vStar: chunkPath[0].vStar,
-                edot: chunkPath[0].edot,
-            });
+    let towerPath: PathPoint[] = [];
+    let nextPurgeTowerHeight = purgeTowerHeight;
+    if (purgeTowerHeight !== undefined && chunkPath.length) {
+        let chunkTopZ = -Infinity;
+        for (const point of chunkPath) {
+            if (point.point.z > chunkTopZ) {
+                chunkTopZ = point.point.z;
+            }
         }
+
+        const levelHeight = Math.max(purgeTowerHeight, chunkTopZ); //go at least as far as the top of the chunk
+        const toolChanging = currentExtruder !== undefined && printExtruder !== currentExtruder;
+
+        const block = makePurgeTowerBlock(
+            printExtruder,
+            purgeTowerHeight,
+            toolChanging ? Math.max(levelHeight, purgeTowerHeight + purgeTowerLayerHeight!) : levelHeight,
+            lastLayerPoint,
+            purgeTowerLayerHeight!
+        );
+
+        towerPath = block.path;
+        nextPurgeTowerHeight = block.height;
+    }
+
+    let toolpath: PathPoint[] = [];
+    for (const point of towerPath) {
+        toolpath.push(point);
+    }
+    if (chunkPath.length) {
+        toolpath.push(approachTravelPoint( //to avoid collissions due to the relatively rapid change in z
+            towerPath.length ? towerPath[towerPath.length - 1].point : lastLayerPoint,
+            chunkPath[0],
+        ));
     }
 
 
@@ -1123,14 +1198,19 @@ function makeChunkTreePath(
 
     let restOfPath: PathPoint[] = [];
     if (roots.length) {
+        const restStartPoint = chunkPath.length
+            ? chunkPath[chunkPath.length - 1].point
+            : (towerPath.length ? towerPath[towerPath.length - 1].point : lastLayerPoint);
+
         restOfPath = makeChunkTreePath(
             roots,
-            chunkPath.length === 0 ? lastLayerPoint : chunkPath[chunkPath.length - 1].point, 
+            restStartPoint,
             modelHeight,
             scanX,
             printExtruder,
             layerHeights,
-            purgeTowerHeight
+            nextPurgeTowerHeight,
+            purgeTowerLayerHeight
         );
     }
 
@@ -2611,32 +2691,38 @@ export function generateAugmentFoamToolpath(
                 modelMaxZ: bbox.max.z,
             },
         },
-        (visualizer.printer.purgeTower ? 0 : undefined)
+        (visualizer.printer.purgeTower ? 0 : undefined),
+        (visualizer.printer.purgeTower ? config.deltaZ : undefined)
     );
+
+    // The purge tower is in the same toolpath but is not part of the model, and it can end up taller
+    // than the model is, so the passes below that measure the print's height have to leave it out.
+    // It is the only thing here printed as regular segments, which is what tells the two apart.
+    const modelPoints = toolpath.filter(tp => !tp.regularSegment);
 
     // comment out from here if no vertical gradient wanted till end mark
     // Apply vertical gradient if no SVG gradient is loaded
     if (!hasValidGradient && hasGradientVariation) {
         // Calculate bounds from the toolpath itself
-        const zValues = toolpath.map(tp => tp.point.z);
+        const zValues = modelPoints.map(tp => tp.point.z);
         const minZ = Math.min(...zValues);
         const maxZ = Math.max(...zValues);
         console.log("applying vertical gradiet  to model from", modelHeight, "to", maxZ);
 
         // Apply vertical gradient using the toolpath config
-        applyVerticalGradient(toolpath, minZ, maxZ, modelObj.toolpathConfig);
+        applyVerticalGradient(modelPoints, minZ, maxZ, modelObj.toolpathConfig);
     }
     // end mark
 
     // The points were lifted onto the sampled surface back in makeChunkPath, layer by layer.
 
     //flat layers on top if needed
-    const maxZ = Math.max(...toolpath.map(tp => tp.point.z));
+    const maxZ = Math.max(...modelPoints.map(tp => tp.point.z));
 
- 
+
     if (modelObj.toolpathConfig.curveAugment) {
         const additionalFlatLayers = 3;
-        const topLayerPoints = toolpath.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
+        const topLayerPoints = modelPoints.filter(tp => Math.abs(tp.point.z - maxZ) < 0.01);
 
         for (let layer = 1; layer <= additionalFlatLayers; layer++) {
             topLayerPoints.forEach(point => {

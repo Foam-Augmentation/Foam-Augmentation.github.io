@@ -190,9 +190,10 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
   printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
-  // Off means the single toolhead swaps materials with an M600 instead of parking/picking tools.
   printerFolder.add(visualizer.config, 'multipleToolheads').name('Multiple Toolheads')
     .onChange((v: boolean) => { visualizer.printer.multipleToolheads = v; });
+  printerFolder.add(visualizer.config, 'purgeTower').name('Purge Tower')
+    .onChange((v: boolean) => { visualizer.printer.purgeTower = v; });
 
   // Per-extruder parameters, plus the button to add another extruder.
   extrudersFolder = addExtrudersFolder(visualizer, printerFolder);

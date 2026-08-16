@@ -159,7 +159,7 @@ export default class Printer {
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
     this.bedLeveling = false;
     this.testSweep = false;
-    this.multipleToolheads = false;
+    this.multipleToolheads = true;
     this.activeExtruder = 0;
     this.toolchangeRetract = 3.0;
   }

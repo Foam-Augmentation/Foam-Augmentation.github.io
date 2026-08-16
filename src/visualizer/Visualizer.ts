@@ -102,6 +102,7 @@ export default class Visualizer {
         bedLeveling: boolean;
         testSweep: boolean;
         multipleToolheads: boolean;
+        purgeTower: boolean;
 
         startHStarTest: number;
         endHStarTest: number;
@@ -215,7 +216,8 @@ export default class Visualizer {
             printHeadMaxY: 70,
             bedLeveling: false,
             testSweep: false,
-            multipleToolheads: false,
+            multipleToolheads: true,
+            purgeTower: true,
 
             startHStarTest: 5,
             endHStarTest: 10,
@@ -351,6 +353,7 @@ export default class Visualizer {
         this.printer.bedLeveling = this.config.bedLeveling;
         this.printer.testSweep = this.config.testSweep;
         this.printer.multipleToolheads = this.config.multipleToolheads;
+        this.printer.purgeTower = this.config.purgeTower;
         this.syncExtrudersToPrinter();
     }
 
