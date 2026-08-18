@@ -779,17 +779,55 @@ interface LayerHeights {
     };
 }
 
-function addPurgeTowerToolpathAtZ(extruder: number, z: number): PathPoint[]{
-    //TEMPORARY!!
-    //TODO: Curved toolpath (for better acceleration), maybe nearest position
-    console.log("WEEEE");
-    const points = [new THREE.Vector3(240,200,z), new THREE.Vector3(240,190,z), new THREE.Vector3(230,190,z),new THREE.Vector3(240,200,z)]
+
+/**
+ * Generates one layer of the purge tower, as a single Archimedean spiral winding from the rim in to
+ * the centre. Being one unbroken curve with no corners in it, there is nowhere the firmware has to
+ * decelerate, so the head holds its speed across the whole layer and lays an even bead. It is filled
+ * rather than just walled so the tower can hold itself up once it gets tall.
+ *
+ * @param {number} extruder The extruder printing this layer. Set on every point, so that a tool
+ *                          change lands on the tower rather than on the model.
+ * @param {number} z The height to print the layer at.
+ * @param {THREE.Vector2} center center of purge tower. Defaults to (235,195)
+ * @param {number} tower_radius radius of purge tower in mm. Defaults to 5
+ * @param {number} line_spacing How far apart turns of the spiral are (mm). Around extrusion width, default 0.4
+ * @param {number} point_spacing Roughly how long each straight chord of the spiral is (in mm). Default 0.5
+ * @returns {PathPoint[]} The layer's toolpath. Its first point is a travel out to the spiral's start.
+ */
+function addPurgeTowerToolpathAtZ(extruder: number, z: number, center: THREE.Vector2 = new THREE.Vector2(235, 195), tower_radius: number = 5, line_spacing: number = 0.4, point_spacing = 0.5): PathPoint[] {
     const toolpath: PathPoint[] = [];
-    toolpath.push({point: points[0], extruder: extruder, travel: true})
-    for(const p of points){
-        toolpath.push({point: p, extruder: extruder, regularSegment: true})
+
+    // The radius loses one line spacing per full turn, which is what leaves the windings sitting a
+    // bead apart. Runs until the spiral has wound all the way in to the middle.
+    let theta = 0;
+    let radius = tower_radius;
+
+    while (radius > 0) {
+        toolpath.push({
+            point: new THREE.Vector3(
+                center.x + radius * Math.cos(theta),
+                center.y + radius * Math.sin(theta),
+                z,
+            ),
+            extruder: extruder,
+            regularSegment: true,
+        });
+
+        // Stepped along the curve rather than by a fixed angle, so the chords stay about the same
+        // length the whole way in instead of becoming vanishingly short near the centre. The floor on
+        // the radius keeps that step from blowing up as the spiral closes.
+        theta += point_spacing / Math.max(radius, line_spacing);
+        radius = tower_radius - (line_spacing * theta) / (Math.PI * 2);
     }
-    return toolpath
+
+    // The first point is only how the head gets out to the rim, so nothing is extruded reaching it.
+    if (toolpath.length) {
+        toolpath[0].travel = true;
+        toolpath[0].regularSegment = false;
+    }
+
+    return toolpath;
 }
 
 /**
