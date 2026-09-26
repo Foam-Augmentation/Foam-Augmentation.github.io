@@ -2730,7 +2730,7 @@ export function generateAugmentFoamToolpath(
             },
         },
         (visualizer.printer.purgeTower ? 0 : undefined),
-        (visualizer.printer.purgeTower ? config.deltaZ : undefined)
+        (visualizer.printer.purgeTower ? 0.2 : undefined) //TODO: unhardcode this value. 
     );
 
     // The purge tower is in the same toolpath but is not part of the model, and it can end up taller
