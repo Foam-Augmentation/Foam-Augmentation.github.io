@@ -262,18 +262,21 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[], nozz
     for (let i = 0; i < holeContours.length; i++) {
         const contour = holeContours[i];
         let outer = contour.outer;
+        let holes = contour.holes;
         if(shellLayers != 0){
-          outer = offsetContour(outer, -(nozzleDiameter * shellLayers + 0.0001));
+          const shellOffset = nozzleDiameter * shellLayers + 0.0001;
+          outer = offsetContour(outer, -shellOffset);
           if (outer.length < 3) continue;
+          holes = holes.map(hole => offsetContour(hole, shellOffset)).filter(hole => hole.length >= 3);
         }
         const bounds = getBounds(contour.outer, z);
-        const otherSegments = getBoundarySegments(contour.outer, contour.holes);
+        const otherSegments = getBoundarySegments(outer, holes);
 
         regions.push({
             id: `region_${z.toFixed(3)}_${i}`,
             height: z,
             contour: outer,
-            holes: contour.holes,
+            holes: holes,
             bounds: bounds,
             extruder: 0, // Default to left extruder
             BVH: buildSliceRegionBVH(otherSegments),
@@ -313,6 +316,15 @@ export function extractShellRegionsFromLayer(z: number, segments: LineSegment[],
           const aCounter = offsetContour(contour.outer, -(nozzleDiameter * i));
           if (aCounter.length < 3) continue;
           contours.push(aCounter);
+        }
+        //Put shell contours around holes (the hole itself, then rings growing outwards)
+        for (const hole of contour.holes) {
+          contours.push(hole);
+          for (let n = 1; n < shellLayers; n++) {
+            const ring = offsetContour(hole, nozzleDiameter * n);
+            if (ring.length < 3) continue;
+            contours.push(ring);
+          }
         }
         const segments = getBoundarySegments(contour.outer, contours);
         //push shell
