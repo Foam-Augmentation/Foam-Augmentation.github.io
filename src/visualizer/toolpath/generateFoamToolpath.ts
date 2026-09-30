@@ -25,6 +25,7 @@ import {
     buildSliceRegionBVH,
     LineSegment,
     SliceRegionBVHNode,
+    extractShellRegionsFromLayer,
 } from '../utils/TreeSlicer';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 
@@ -35,10 +36,11 @@ export interface PathPoint {
     switchFilament?: boolean;
     pause?: boolean;
     regularSegment?: boolean;
+    debug?: string;
     hStar?: number;
     vStar?: number;
     edot?: number;
-    deltaL?: number; // added this
+    deltaL?: number;
 }
 
 /**
@@ -851,6 +853,22 @@ function approachTravelPoint(from: THREE.Vector3, to: PathPoint): PathPoint {
     };
 }
 
+/**
+ * Path for a shell region: the outer contour, then each inner contour (stored in holes), each
+ * printed as a closed loop. Points are cloned because makeChunkPath moves them afterwards, and
+ * the region's contours are shared with its BVH.
+ */
+function makeShellPath(region: SliceRegion): PathPoint[] {
+    const path: PathPoint[] = [];
+    for (const contour of [region.contour, ...region.holes]) {
+        if (contour.length < 2) continue;
+        [...contour, contour[0]].forEach((p, i) => {
+            // the first point of each loop is a travel, the rest are standard (non-VTP) extrusion
+            path.push({ point: p.clone(), travel: i === 0, regularSegment: i !== 0 });
+        });
+    }
+    return path;
+}
 
 /**
  * Stacks purge tower layers from the height the tower has already reached up to a target height.
@@ -906,6 +924,7 @@ function makePurgeTowerBlock(
 function makeChunkPath(
     chunk: ChunkNode,
     lastLayerPoint: THREE.Vector3,
+    printedRegions: Set<string>,
     height?: number,
     initialScanX: boolean = false,
     fillDist: number = 0.5,
@@ -923,8 +942,9 @@ function makeChunkPath(
     const gradient = chunk.modelObj!.gradient;
     let count = 0;
     for (const region of chunk.regions) {
+        printedRegions.add(region.id);
         let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / VTPSettings.deltaZ);
-        const useInitial = regionLayer < initialConfig.initialFoamLayerCount;
+        const useInitial = !region.shell && regionLayer < initialConfig.initialFoamLayerCount;
         if (count === 0 && useInitial) {
             lastUseInitial = true;
         }
@@ -952,7 +972,9 @@ function makeChunkPath(
         console.log(`Region Layer: ${regionLayer}, Using DeltaL: ${currentDeltaL}`);
         // end mark
         let path: PathPoint[];
-        if (VTPSettings.useFermatSpirals) {
+        if (region.shell) {
+            path = makeShellPath(region);
+        }else if (VTPSettings.useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
                 region.holes,
@@ -1035,6 +1057,10 @@ function makeChunkPath(
 
     // Apply gradient
     chunkPath.forEach(point => {
+        if (chunk.shell) {
+            point.point.add(chunk.modelObj!.mesh.position);
+            return;
+        }
         let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / VTPSettings.deltaZ);
 
         const configToUse = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig : VTPSettings;
@@ -1136,6 +1162,7 @@ function applyLayerHeight(
 function makeChunkTreePath(
     roots: ChunkNode[],
     lastLayerPoint: THREE.Vector3 = new THREE.Vector3,
+    printedRegions: Set<string>,
     modelHeight?: number,
     scanX: boolean = false,
     currentExtruder?: number,
@@ -1143,15 +1170,21 @@ function makeChunkTreePath(
     purgeTowerHeight?: number,
     purgeTowerLayerHeight?: number,
 ): PathPoint[] {
+    const isBlocked = (chunk: ChunkNode) => chunk.shell && [...(chunk.dependentRegions ?? [])].some(id => !printedRegions.has(id));
+    const unblockedIndices = roots.map((_, i) => i).filter(i => !isBlocked(roots[i]));
+    const eligibleIndices = unblockedIndices.length ? unblockedIndices : roots.map((_, i) => i);
+
     let lowestHeight = Infinity;
-    for (const root of roots) {
-        const height = root.regions[0].height;
+    for (const i of eligibleIndices) {
+        const height = roots[i].regions[0].height;
         if (height < lowestHeight) {
             lowestHeight = height;
         }
     }
 
-    const printableChunkIndices: number[] = [];
+    const printableChunkIndices = eligibleIndices.filter(
+        i => roots[i].regions[0].height <= lowestHeight 
+    );
 
     // This could be more efficient, but then we would have to figure out a different way to deal with overlap.
     // for (let i = 0; i < roots.length; i++) {
@@ -1161,17 +1194,13 @@ function makeChunkTreePath(
     //     }
     // }
 
-    for (let i = 0; i < roots.length; i++) {
-        const root = roots[i];
-        if (root.regions[0].height <= lowestHeight + 0.001) {
-            printableChunkIndices.push(i);
-        }
-    }
+    const shellIndices = printableChunkIndices.filter(i => roots[i].shell);
+    const pool = shellIndices.length ? shellIndices : printableChunkIndices;
 
-    const sameExtruderIndices = printableChunkIndices.filter(
+    const sameExtruderIndices = pool.filter(
         i => roots[i].regions[0].extruder === currentExtruder
     );
-    const candidateIndices = sameExtruderIndices.length ? sameExtruderIndices : printableChunkIndices;
+    const candidateIndices = sameExtruderIndices.length ? sameExtruderIndices : pool;
 
     // for now it just prints the closest one. In the future can make hamiltonian path to find the most efficient path.
     let printIndex = candidateIndices[0];
@@ -1184,8 +1213,9 @@ function makeChunkTreePath(
         }
     }
     const printExtruder = roots[printIndex].regions[0].extruder;
-    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, modelHeight, scanX, undefined, layerHeights);
+    const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, printedRegions, modelHeight, scanX, undefined, layerHeights);
     chunkPath.forEach(p => p.extruder = printExtruder);
+    chunkPath[0].debug = `NEW CHUNK. Min: ${roots[printIndex].regions[0].height}, MAX: ${roots[printIndex].regions[roots[printIndex].regions.length-1].height}`;
 
     if (roots[printIndex].regions.length % 2 === 1) {
         scanX = !scanX;
@@ -1243,6 +1273,7 @@ function makeChunkTreePath(
         restOfPath = makeChunkTreePath(
             roots,
             restStartPoint,
+            printedRegions,
             modelHeight,
             scanX,
             printExtruder,
@@ -1778,13 +1809,20 @@ export function generateFoamToolpath(
         let allRegions: SliceRegion[] = [];
         let lowestHeight = Infinity;
         for (const { z, segments } of layers) {
-            const regions = extractRegionsFromLayer(z, segments);
+            const regions = extractRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 3 : 0); //TODO: Unhardcode, based on shell
             regions.forEach(region => {
                 if (region.height < lowestHeight) {
                     lowestHeight = region.height;
                 }
+                allRegions.push(region);
             })
-            allRegions.push(...regions);
+        }
+        if(true){ //TODO: Shell
+            const shellLayers = sliceMeshIntoLayers(transformedMesh, 0.2); //TODO: unhardcode
+            for (const { z, segments } of shellLayers) {
+                const regions = extractShellRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 3 : 0); //TODO: Unhardcode, based on shell
+                allRegions.push(...regions);
+            }
         }
         
         const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
@@ -1794,6 +1832,7 @@ export function generateFoamToolpath(
                 highestStartHeight = height;
             }
         });
+        
 
         const chunkTree = buildChunkTree(regionTree, visualizer.printer);
 
@@ -1837,9 +1876,11 @@ export function generateFoamToolpath(
 
     const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
+    const printedRegions = new Set<string>();
     const toolpath = makeChunkTreePath(
         chunkRoots,
         startPoint,
+        printedRegions,
         undefined,
         false,
         undefined,
@@ -2536,7 +2577,7 @@ export function generateAugmentFoamToolpath(
         const bumpLayers = sliceMeshIntoLayers(transformedBumpMesh, modelObj.toolpathConfig.deltaZ);
         let bumpContours: THREE.Vector3[][] = [];
         for (const { z, segments } of bumpLayers) {
-            const regions = extractRegionsFromLayer(z, segments);
+            const regions = extractRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter,0);
             bumpContours.push(...regions.map(region => region.contour));
         }
 
@@ -2594,7 +2635,8 @@ export function generateAugmentFoamToolpath(
                         height: bumpContour[0].z,
                         bounds: getBounds(bumpContour, bumpContour[0].z),
                         BVH: buildSliceRegionBVH(segments),
-                        extruder: 0
+                        extruder: 0,
+                        shell: false,
                     });
                     return false;
                 } else {
@@ -2692,7 +2734,8 @@ export function generateAugmentFoamToolpath(
                 bounds: region.bounds,
                 segments: segments,
                 BVH: buildSliceRegionBVH(segments),
-                extruder: region.extruder
+                extruder: region.extruder,
+                shell: false,
             }
         }))
     }
@@ -2716,9 +2759,11 @@ export function generateAugmentFoamToolpath(
 
     const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
+    const printedRegions = new Set<string>();
     const toolpath = makeChunkTreePath(
         chunkTree,
         startPoint,
+        printedRegions,
         modelHeight,
         false,
         undefined,
@@ -2730,7 +2775,7 @@ export function generateAugmentFoamToolpath(
             },
         },
         (visualizer.printer.purgeTower ? 0 : undefined),
-        (visualizer.printer.purgeTower ? 0.2 : undefined) //TODO: unhardcode this value. 
+        (visualizer.printer.purgeTower ? 0.2 : undefined) //TODO: unhardcode this value.
     );
 
     // The purge tower is in the same toolpath but is not part of the model, and it can end up taller

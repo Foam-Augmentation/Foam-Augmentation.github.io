@@ -580,6 +580,9 @@ M204 S1000
       const point = toolpath[i];
       const currentPoint = point.point.clone();
       // Note the !== undefined: extruder 0 is falsy, so a truthiness check would never pick tool 0.
+      if(point.debug !== undefined){
+        body_gcode.push("; DEBUG: " + point.debug);
+      }
       if (point.extruder !== undefined && point.extruder !== extruder) {
         body_gcode.push(this.switchExtruder(point.extruder, extruder));
         extruder = point.extruder;
