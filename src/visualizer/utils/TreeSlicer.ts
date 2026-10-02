@@ -832,7 +832,7 @@ export function buildChunkTree(
         ? new Map([[root.region.id, new Set(root.shellDependentRegions)]])
         : undefined,
     }
-    const nozzleHeight = printer.extruders[extruder].nozzleLength + currentChunkNode.VTPSettings.ZOffset
+
     let regions: SliceRegion[] = [currentNode.region];
     // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
     const chunkExtruder = root.region.extruder;
@@ -842,6 +842,7 @@ export function buildChunkTree(
         rootNodes.push(currentChunkNode);
         break;
       }
+      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? 0.2 : currentChunkNode.VTPSettings.ZOffset);
       if (currentNode.children.length > 1
           || currentNode.children[0].region.height - root.region.height > nozzleHeight
           || currentNode.children[0].region.extruder !== chunkExtruder

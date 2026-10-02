@@ -1215,7 +1215,7 @@ function makeChunkTreePath(
     const printExtruder = roots[printIndex].regions[0].extruder;
     const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, printedRegions, modelHeight, scanX, undefined, layerHeights);
     chunkPath.forEach(p => p.extruder = printExtruder);
-    chunkPath[0].debug = `NEW CHUNK. Min: ${roots[printIndex].regions[0].height}, MAX: ${roots[printIndex].regions[roots[printIndex].regions.length-1].height}`;
+    chunkPath[0].debug = `NEW CHUNK. Min: ${roots[printIndex].regions[0].height}, MAX: ${roots[printIndex].regions[roots[printIndex].regions.length-1].height}, shell ${roots[printIndex].shell}, extruder ${printExtruder}, scanX ${scanX}`;
 
     if (roots[printIndex].regions.length % 2 === 1) {
         scanX = !scanX;
