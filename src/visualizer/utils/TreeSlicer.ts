@@ -264,7 +264,7 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[], nozz
         let outer = contour.outer;
         let holes = contour.holes;
         if(shellLayers != 0){
-          const shellOffset = nozzleDiameter * shellLayers + 0.0001;
+          const shellOffset = nozzleDiameter * (shellLayers+1) + 0.0001; //TODO: Unhardcode. 
           outer = offsetContour(outer, -shellOffset);
           if (outer.length < 3) continue;
           holes = holes.map(hole => offsetContour(hole, shellOffset)).filter(hole => hole.length >= 3);
