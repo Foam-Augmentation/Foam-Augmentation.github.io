@@ -925,90 +925,105 @@ function splitChunkTreeByOverlap(
 
   for (let i = 0; i < roots.length; i++) {
     const root = roots[i];
-    const siblings = findHeightSiblings(roots.filter((root, idx) => idx != i), root);
+    const siblings = findHeightSiblings(
+      roots.filter((root, idx) => idx != i),
+      root
+    );
+
     for (const sibling of siblings) {
       let foundOverlap = false;
-      for (let j = 1; j < sibling.regions.length; j++) {
+
+      for (let j = 1; j < sibling.regions.length && !foundOverlap; j++) {
         for (let k = 0; k < root.regions.length; k++) {
           if (checkOverlap(sibling.regions[j], root.regions[k])) {
-            const newNodeRegions = sibling.regions.slice(j);
-            const lowerRegions = sibling.regions.slice(0, j);
-            const upperDeps = dependenciesFor(sibling, newNodeRegions);
-            const lowerDeps = dependenciesFor(sibling, lowerRegions);
-            const newNodeSibling: ChunkNode = {
-              regions: newNodeRegions,
-              children: sibling.children,
-              parent: sibling,
-              VTPSettings: newNodeRegions[0].extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings,
-              shell: sibling.shell,
-              dependentRegions: upperDeps.union,
-              regionDependencies: upperDeps.map,
-            }
-            sibling.children = [newNodeSibling];
-            sibling.regions = lowerRegions;
-            sibling.dependentRegions = lowerDeps.union;
-            sibling.regionDependencies = lowerDeps.map;
             foundOverlap = true;
             break;
           }
         }
       }
-      if (foundOverlap) { //cut root's base
-        const tip = (c: ChunkNode) => (c.shell ? 0.2 : c.VTPSettings.ZOffset);
+
+      if (foundOverlap) {
+        const tip = (c: ChunkNode) =>
+          c.shell ? 0.2 : c.VTPSettings.ZOffset;
+
+        const rootMax = root.regions[root.regions.length - 1].height;
+
+        const j = sibling.regions.findIndex(
+          r => r.height > rootMax + 0.0001
+        );
+
+        if (j > 0) {
+          const newNodeRegions = sibling.regions.slice(j);
+          const lowerRegions = sibling.regions.slice(0, j);
+          const upperDeps = dependenciesFor(sibling, newNodeRegions);
+          const lowerDeps = dependenciesFor(sibling, lowerRegions);
+
+          const newNodeSibling: ChunkNode = {
+            regions: newNodeRegions,
+            children: sibling.children,
+            parent: sibling,
+            VTPSettings:
+              newNodeRegions[0].extruder == 0
+                ? printer.globalVTPSettings
+                : printer.senseVTPSettings,
+            shell: sibling.shell,
+            dependentRegions: upperDeps.union,
+            regionDependencies: upperDeps.map,
+          };
+
+          newNodeSibling.children.forEach(c => (c.parent = newNodeSibling));
+          sibling.children = [newNodeSibling];
+          sibling.regions = lowerRegions;
+          sibling.dependentRegions = lowerDeps.union;
+          sibling.regionDependencies = lowerDeps.map;
+        }
+
         const siblingBase = sibling.regions[0].height;
-        if (root.regions[0].height + tip(root) < siblingBase + tip(sibling) - 0.0001 && siblingBase + tip(sibling) + 0.0001 <= root.regions[root.regions.length-1].height) {
-          const k = root.regions.findIndex(r => r.height > siblingBase + tip(sibling) + 0.0001);
+
+        if (
+          root.regions[0].height + tip(root)
+            < siblingBase + tip(sibling) - 0.0001
+          &&
+          siblingBase + tip(sibling) + 0.0001
+            <= root.regions[root.regions.length - 1].height
+        ) {
+          const k = root.regions.findIndex(
+            r => r.height > siblingBase + tip(sibling) + 0.0001
+          );
+
           if (k > 0) {
             const upperRegions = root.regions.slice(k);
             const lowerRegions = root.regions.slice(0, k);
             const upperDeps = dependenciesFor(root, upperRegions);
             const lowerDeps = dependenciesFor(root, lowerRegions);
+
             const upperNode: ChunkNode = {
               regions: upperRegions,
               children: root.children,
               parent: root,
-              VTPSettings: upperRegions[0].extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings,
+              VTPSettings:
+                upperRegions[0].extruder == 0
+                  ? printer.globalVTPSettings
+                  : printer.senseVTPSettings,
               shell: root.shell,
               dependentRegions: upperDeps.union,
               regionDependencies: upperDeps.map,
             };
+
             upperNode.children.forEach(c => (c.parent = upperNode));
             root.children = [upperNode];
             root.regions = lowerRegions;
             root.dependentRegions = lowerDeps.union;
             root.regionDependencies = lowerDeps.map;
           }
-        }else if (root.regions[0].height + tip(root) > siblingBase + tip(sibling) + 0.0001 && root.regions[0].height + tip(root) + 0.0001 <= sibling.regions[sibling.regions.length-1].height) { //Cut sibling's base
-          const k = sibling.regions.findIndex(r => r.height > root.regions[0].height + tip(root) + 0.0001);
-          if (k > 0) {
-            const upperRegions = sibling.regions.slice(k);
-            const lowerRegions = sibling.regions.slice(0, k);
-            const upperDeps = dependenciesFor(sibling, upperRegions);
-            const lowerDeps = dependenciesFor(sibling, lowerRegions);
-            const upperNode: ChunkNode = {
-              regions: upperRegions,
-              children: sibling.children,
-              parent: sibling,
-              VTPSettings: upperRegions[0].extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings,
-              shell: sibling.shell,
-              dependentRegions: upperDeps.union,
-              regionDependencies: upperDeps.map,
-            };
-            upperNode.children.forEach(c => (c.parent = upperNode));
-            sibling.children = [upperNode];
-            sibling.regions = lowerRegions;
-            sibling.dependentRegions = lowerDeps.union;
-            sibling.regionDependencies = lowerDeps.map;
-          }
         }
         break;
       }
     }
   }
-  
-  for (const r of roots) allChildren.push(...r.children);
 
-  splitChunkTreeByOverlap(allChildren,printer);
+  for (const r of roots) allChildren.push(...r.children);
+  splitChunkTreeByOverlap(allChildren, printer);
 }
 
 

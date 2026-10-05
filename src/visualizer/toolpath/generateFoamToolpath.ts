@@ -1059,6 +1059,7 @@ function makeChunkPath(
     chunkPath.forEach(point => {
         if (chunk.shell) {
             point.point.add(chunk.modelObj!.mesh.position);
+            point.point.add(new THREE.Vector3(0, 0, 0.2)); //TODO: UNHARDCODE
             return;
         }
         let pointLayer = Math.floor((point.point.z - modelHeight + 0.0001) / VTPSettings.deltaZ);
