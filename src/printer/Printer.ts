@@ -333,7 +333,7 @@ M83  ; extruder relative mode
 M900 K0.05 ; Filament gcode LA 1.5
 M900 K30 ; Filament gcode LA 1.0
 ${pickFirstTool}
-G1 Z0.200 F2400.000
+G0 Z0.200 F2400.000
 
 M204 S1000 
           

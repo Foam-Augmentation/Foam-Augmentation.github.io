@@ -854,18 +854,78 @@ function approachTravelPoint(from: THREE.Vector3, to: PathPoint): PathPoint {
 }
 
 /**
- * Path for a shell region: the outer contour, then each inner contour (stored in holes), each
- * printed as a closed loop. Points are cloned because makeChunkPath moves them afterwards, and
- * the region's contours are shared with its BVH.
+ * Finds the point on a closed contour that is nearest to a target, measured in XY.
+ *
+ * @returns The distance, the index of the segment (contour[i] -> contour[i + 1]) the point lies on,
+ *          and the point itself.
  */
-function makeShellPath(region: SliceRegion): PathPoint[] {
+function closestPointOnContour(
+    contour: THREE.Vector3[],
+    target: THREE.Vector3,
+): { dist: number, segIndex: number, point: THREE.Vector3 } {
+    // Compare at the contour's own height, so the head being at a different z doesn't skew the result.
+    const flatTarget = new THREE.Vector3(target.x, target.y, contour[0].z);
+    const closest = new THREE.Vector3();
+    let best = { dist: Infinity, segIndex: 0, point: contour[0].clone() };
+
+    for (let i = 0; i < contour.length; i++) {
+        const line = new THREE.Line3(contour[i], contour[(i + 1) % contour.length]);
+        line.closestPointToPoint(flatTarget, true, closest);
+        const dist = closest.distanceTo(flatTarget);
+        if (dist < best.dist) {
+            best = { dist, segIndex: i, point: closest.clone() };
+        }
+    }
+    return best;
+}
+
+/**
+ * Path for a shell region: the outer contour and each inner contour (stored in holes), each printed
+ * as a complete closed loop.
+ *
+ * The next contour to print is always the one with a segment closest to where the head is. The loop
+ * starts on that segment, at the point on it nearest the head, and goes all the way around until it
+ * arrives back at the start, so every contour is finished before the next one begins. Points are
+ * cloned because makeChunkPath moves them afterwards, and the region's contours are shared with its BVH.
+ *
+ * @param {SliceRegion} region The shell region to build the path for.
+ * @param {THREE.Vector3} startPoint Where the print head is coming from, in the region's coordinates.
+ */
+function makeShellPath(region: SliceRegion, startPoint: THREE.Vector3): PathPoint[] {
     const path: PathPoint[] = [];
-    for (const contour of [region.contour, ...region.holes]) {
-        if (contour.length < 2) continue;
-        [...contour, contour[0]].forEach((p, i) => {
+    const remaining = [region.contour, ...region.holes].filter(c => c.length >= 2);
+    let head = startPoint;
+
+    while (remaining.length) {
+        // Pick the contour with the closest segment to the head.
+        let bestIdx = 0;
+        let best = closestPointOnContour(remaining[0], head);
+        for (let i = 1; i < remaining.length; i++) {
+            const candidate = closestPointOnContour(remaining[i], head);
+            if (candidate.dist < best.dist) {
+                best = candidate;
+                bestIdx = i;
+            }
+        }
+        const contour = remaining.splice(bestIdx, 1)[0];
+
+        // Start at the closest point on that segment, walk the rest of the segment's end and every
+        // other vertex in order, then come back to the start to close the loop.
+        const loop: THREE.Vector3[] = [best.point];
+        for (let k = 1; k <= contour.length; k++) {
+            loop.push(contour[(best.segIndex + k) % contour.length]);
+        }
+        loop.push(best.point);
+
+        // Drop consecutive duplicates (e.g. when the closest point lands exactly on a vertex).
+        const deduped = loop.filter((p, i) => i === 0 || p.distanceToSquared(loop[i - 1]) > 1e-12);
+
+        deduped.forEach((p, i) => {
             // the first point of each loop is a travel, the rest are standard (non-VTP) extrusion
             path.push({ point: p.clone(), travel: i === 0, regularSegment: i !== 0 });
         });
+
+        head = deduped[deduped.length - 1];
     }
     return path;
 }
@@ -973,7 +1033,10 @@ function makeChunkPath(
         // end mark
         let path: PathPoint[];
         if (region.shell) {
-            path = makeShellPath(region);
+            const shellStart = count === 0 //switch to relative (model) coordinates
+                ? lastLayerEndPoint.clone().sub(chunk.modelObj!.mesh.position)
+                : lastLayerEndPoint;
+            path = makeShellPath(region, shellStart);
         }else if (VTPSettings.useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
@@ -1810,7 +1873,7 @@ export function generateFoamToolpath(
         let allRegions: SliceRegion[] = [];
         let lowestHeight = Infinity;
         for (const { z, segments } of layers) {
-            const regions = extractRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 3 : 0); //TODO: Unhardcode, based on shell
+            const regions = extractRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter*visualizer.printer.extruders[0].dieSwelling, true ? 2 : 0); //TODO: Unhardcode, based on shell
             regions.forEach(region => {
                 if (region.height < lowestHeight) {
                     lowestHeight = region.height;
@@ -1821,7 +1884,7 @@ export function generateFoamToolpath(
         if(true){ //TODO: Shell
             const shellLayers = sliceMeshIntoLayers(transformedMesh, 0.2); //TODO: unhardcode
             for (const { z, segments } of shellLayers) {
-                const regions = extractShellRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 3 : 0); //TODO: Unhardcode, based on shell
+                const regions = extractShellRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 2 : 0); //TODO: Unhardcode, based on shell
                 allRegions.push(...regions);
             }
         }

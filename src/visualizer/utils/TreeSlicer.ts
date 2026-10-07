@@ -249,7 +249,7 @@ export function getBoundarySegments(
  * @param offset How much to offset the outer contour inwards (mm)
  * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, boundary segments, bounds, an id, and a height.
  */
-export function extractRegionsFromLayer(z: number, segments: LineSegment[], nozzleDiameter: number, shellLayers: number): SliceRegion[] {
+export function extractRegionsFromLayer(z: number, segments: LineSegment[], linewidth: number, shellLayers: number): SliceRegion[] {
     if (segments.length === 0) return [];
     
     const contours = connectSegments(segments);
@@ -264,7 +264,7 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[], nozz
         let outer = contour.outer;
         let holes = contour.holes;
         if(shellLayers != 0){
-          const shellOffset = nozzleDiameter * (shellLayers+1) + 0.0001; //TODO: Unhardcode. 
+          const shellOffset = linewidth * (shellLayers+1) + 0.0001; //TODO: Unhardcode. 
           outer = offsetContour(outer, -shellOffset);
           if (outer.length < 3) continue;
           holes = holes.map(hole => offsetContour(hole, shellOffset)).filter(hole => hole.length >= 3);
@@ -296,7 +296,7 @@ export function extractRegionsFromLayer(z: number, segments: LineSegment[], nozz
  * @param offset How much to offset the outer contour inwards (mm)
  * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, boundary segments, bounds, an id, and a height.
  */
-export function extractShellRegionsFromLayer(z: number, segments: LineSegment[], nozzleDiameter: number, shellLayers: number): SliceRegion[] {
+export function extractShellRegionsFromLayer(z: number, segments: LineSegment[], linewidth: number, shellLayers: number): SliceRegion[] {
     if (segments.length === 0) return [];
     
     const contours = connectSegments(segments);
@@ -313,7 +313,7 @@ export function extractShellRegionsFromLayer(z: number, segments: LineSegment[],
         //Put shell contours
         const contours = [];
         for(let i = 1; i < shellLayers; i++){
-          const aCounter = offsetContour(contour.outer, -(nozzleDiameter * i));
+          const aCounter = offsetContour(contour.outer, -(linewidth * i));
           if (aCounter.length < 3) continue;
           contours.push(aCounter);
         }
@@ -321,7 +321,7 @@ export function extractShellRegionsFromLayer(z: number, segments: LineSegment[],
         for (const hole of contour.holes) {
           contours.push(hole);
           for (let n = 1; n < shellLayers; n++) {
-            const ring = offsetContour(hole, nozzleDiameter * n);
+            const ring = offsetContour(hole, linewidth * n);
             if (ring.length < 3) continue;
             contours.push(ring);
           }
