@@ -300,8 +300,10 @@ export default class Printer {
 
     // Tracks which nozzle geometry the extrusion math should use once the body G-code starts.
     this.activeExtruder = firstExtruder;
+    const liftZ = 10;
+    const leveling = this.bedLeveling ? "G29" : "M420 S1\n";
 
-      return `; Parameters:
+    return `; Parameters:
 ; V* = ${this.globalVTPSettings.V_Star}
 ; H* = ${this.globalVTPSettings.H_star}
 ; Edot (mm/min) = ${this.globalVTPSettings.Edot}
@@ -319,16 +321,16 @@ M205 X10.00 Y10.00 Z0.20 E4.50 ; sets the jerk limits, mm/sec
 M205 S0 T0 ; sets the minimum extruding and travel feed rate, mm/sec
 M107 ; turns off fan
 ${nozzleCheck}
-
-${heaters}
 M862.3 P "${this.multipleToolheads ? "XL" : "MK3S"}" ; printer model check
-
-G28 ; home axes
-G92 X0 Y0 ; tell printer all axes are 0
-${this.bedLeveling ? "G29" : "M420 S1\n"} ; probe the printbed or use previously stored printbed mesh
 
 G21 ; set units to millimeters
 G90 ; use absolute coordinates
+G28 ; home axes
+G92 X0 Y0 ; tell printer all axes are 0
+${leveling} ; probe the printbed or use previously stored printbed mesh
+G0 Z${liftZ} F2400 ; move up before heating
+${heaters}
+
 M83  ; extruder relative mode
 M900 K0.05 ; Filament gcode LA 1.5
 M900 K30 ; Filament gcode LA 1.0

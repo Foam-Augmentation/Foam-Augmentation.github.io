@@ -959,7 +959,9 @@ function makePurgeTowerBlock(
     }
 
     if (path.length) {
-        path.unshift(approachTravelPoint(lastPoint, path[0]));
+        const approach = approachTravelPoint(lastPoint, path[0]);
+        approach.extruder = extruder;
+        path.unshift(approach);
     }
 
     return { path: path, height: fromHeight + layerCount * purgeTowerLayerHeight };
@@ -1299,7 +1301,7 @@ function makeChunkTreePath(
         const toolChanging = currentExtruder !== undefined && printExtruder !== currentExtruder;
 
         const block = makePurgeTowerBlock(
-            printExtruder,
+            toolChanging ? currentExtruder! : printExtruder,
             purgeTowerHeight,
             toolChanging ? Math.max(levelHeight, purgeTowerHeight + purgeTowerLayerHeight!) : levelHeight,
             lastLayerPoint,
@@ -1315,10 +1317,12 @@ function makeChunkTreePath(
         toolpath.push(point);
     }
     if (chunkPath.length) {
-        toolpath.push(approachTravelPoint( //to avoid collissions due to the relatively rapid change in z
+        const approach = approachTravelPoint(
             towerPath.length ? towerPath[towerPath.length - 1].point : lastLayerPoint,
             chunkPath[0],
-        ));
+        );
+        approach.extruder = printExtruder; // the swap happens here, after the purge
+        toolpath.push(approach);
     }
 
 
