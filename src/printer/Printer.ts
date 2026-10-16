@@ -483,7 +483,7 @@ M204 S1000
     const extruder = this.extruders[this.activeExtruder];
     const beadArea = extruder.dieSwelling * Math.pow(extruder.nozzleDiameter, 2) / 2;
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
-    const filamentPerMM = (beadArea / crossSection) * 2;
+    const filamentPerMM = (beadArea / crossSection) ;
     const dist = this.norm(p0, p1);
     const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${extruder.printHead_speed_when_free_move}`;
     return gcode;

@@ -783,29 +783,39 @@ interface LayerHeights {
 
 
 /**
- * Generates one layer of the purge tower, as a single Archimedean spiral winding from the rim in to
- * the centre. Being one unbroken curve with no corners in it, there is nowhere the firmware has to
- * decelerate, so the head holds its speed across the whole layer and lays an even bead. It is filled
- * rather than just walled so the tower can hold itself up once it gets tall.
+ * Generates one layer of the purge tower, as a single Archimedean spiral winding from the rim inwards
+ * over a fixed number of turns. The tower is hollow: the spiral stops at an inner radius, leaving the
+ * middle empty, so the layer is a thick ring (wall_lines beads wide) rather than a filled disc.
+ * Being one unbroken curve with no corners, the head holds its speed across the whole layer.
  *
- * @param {number} extruder The extruder printing this layer. Set on every point, so that a tool
- *                          change lands on the tower rather than on the model.
+ * @param {number} extruder The extruder printing this layer. Set on every point.
  * @param {number} z The height to print the layer at.
- * @param {THREE.Vector2} center center of purge tower. Defaults to (235,195)
- * @param {number} tower_radius radius of purge tower in mm. Defaults to 5
+ * @param {THREE.Vector2} center Center of the purge tower. Defaults to (235,195)
+ * @param {number} tower_radius Outer radius of the tower in mm. Defaults to 10
  * @param {number} line_spacing How far apart turns of the spiral are (mm). Around extrusion width, default 0.4
- * @param {number} point_spacing Roughly how long each straight chord of the spiral is (in mm). Default 0.5
+ * @param {number} point_spacing Roughly how long each straight chord of the spiral is (mm). Default 0.5
+ * @param {number} wall_lines How many beads thick the wall is (number of spiral turns). Default 3
  * @returns {PathPoint[]} The layer's toolpath. Its first point is a travel out to the spiral's start.
  */
-function addPurgeTowerToolpathAtZ(extruder: number, z: number, center: THREE.Vector2 = new THREE.Vector2(235, 195), tower_radius: number = 5, line_spacing: number = 0.4, point_spacing = 0.5): PathPoint[] {
+function addPurgeTowerToolpathAtZ(
+    extruder: number,
+    z: number,
+    center: THREE.Vector2 = new THREE.Vector2(235, 195),
+    tower_radius: number = 10,
+    line_spacing: number = 0.4,
+    point_spacing = 0.5,
+    wall_lines: number = 3,
+): PathPoint[] {
     const toolpath: PathPoint[] = [];
 
-    // The radius loses one line spacing per full turn, which is what leaves the windings sitting a
-    // bead apart. Runs until the spiral has wound all the way in to the middle.
+    // The spiral stops once it has wound in by the wall thickness. The floor of one line spacing
+    // keeps a thick wall setting from winding past the centre on a small tower.
+    const innerRadius = Math.max(line_spacing, tower_radius - wall_lines * line_spacing);
+
     let theta = 0;
     let radius = tower_radius;
 
-    while (radius > 0) {
+    while (radius > innerRadius) {
         toolpath.push({
             point: new THREE.Vector3(
                 center.x + radius * Math.cos(theta),
@@ -816,9 +826,7 @@ function addPurgeTowerToolpathAtZ(extruder: number, z: number, center: THREE.Vec
             regularSegment: true,
         });
 
-        // Stepped along the curve rather than by a fixed angle, so the chords stay about the same
-        // length the whole way in instead of becoming vanishingly short near the centre. The floor on
-        // the radius keeps that step from blowing up as the spiral closes.
+        // Stepped along the curve rather than by a fixed angle, so chords stay about the same length.
         theta += point_spacing / Math.max(radius, line_spacing);
         radius = tower_radius - (line_spacing * theta) / (Math.PI * 2);
     }
