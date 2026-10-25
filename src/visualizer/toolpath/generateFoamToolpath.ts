@@ -41,6 +41,7 @@ export interface PathPoint {
     vStar?: number;
     edot?: number;
     deltaL?: number;
+    ironing?: boolean;
 }
 
 /**
@@ -419,6 +420,7 @@ function fillToolpath(
                     point: pointAlongLine(point.point, nextPoint.point, i * fillDist),
                     travel: nextPoint.travel,
                     regularSegment: nextPoint.regularSegment,
+                    ironing: nextPoint.ironing,
                     extruder: point.extruder,
                     hStar: point.hStar,
                     vStar: point.vStar,
@@ -1043,10 +1045,20 @@ function makeChunkPath(
         // end mark
         let path: PathPoint[];
         if (region.shell) {
-            const shellStart = count === 0 //switch to relative (model) coordinates
+            let shellStart = count === 0 //switch to relative (model) coordinates
                 ? lastLayerEndPoint.clone().sub(chunk.modelObj!.mesh.position)
                 : lastLayerEndPoint;
-            path = makeShellPath(region, shellStart);
+            path = [];
+            if (count === 0 && chunk.dependentRegions?.size) { //ironing pass
+                path = generateRectilinearInfillWithHoles(region.BVH, region.contour, 0.4, scanX, shellStart);
+                path.forEach(p => p.ironing = !p.travel);
+                if (path.length) {
+                    shellStart = path[path.length - 1].point;
+                    path[0].debug = "IRONING START";
+                    path[path.length - 1].debug = "IRONING END";
+                }
+            }
+            path.push(...makeShellPath(region, shellStart));
         }else if (VTPSettings.useFermatSpirals) {
             const insetContoursRoot = generateInsetContourTree(
                 useInitial ? offsetContour(region.contour, initialOffset) : region.contour, 
@@ -1289,7 +1301,7 @@ function makeChunkTreePath(
     const printExtruder = roots[printIndex].regions[0].extruder;
     const chunkPath = makeChunkPath(roots[printIndex], lastLayerPoint, printedRegions, modelHeight, scanX, undefined, layerHeights);
     chunkPath.forEach(p => p.extruder = printExtruder);
-    chunkPath[0].debug = `NEW CHUNK. Min: ${roots[printIndex].regions[0].height}, MAX: ${roots[printIndex].regions[roots[printIndex].regions.length-1].height}, shell ${roots[printIndex].shell}, extruder ${printExtruder}, scanX ${scanX}`;
+    chunkPath[0].debug = `NEW CHUNK. Min: ${roots[printIndex].regions[0].height}, MAX: ${roots[printIndex].regions[roots[printIndex].regions.length-1].height}, shell ${roots[printIndex].shell}, extruder ${printExtruder}, scanX ${scanX}` + (chunkPath[0].debug ? " | " + chunkPath[0].debug : "");
 
     if (roots[printIndex].regions.length % 2 === 1) {
         scanX = !scanX;

@@ -469,7 +469,6 @@ M204 S1000
    * Extrudes a regular line of filament between two points.
    * The intended layer height of the extrusion is the nozzle diameter / 2 and the
    * intended width of the extrusion is the thread diameter.
-   * Currently multiplied by 2 becuase it didn't seem like enough otherwise.
    * 
    * @param {THREE.Vector3} p0 The point the toolhead is coming from
    * @param {THREE.Vector3} p1 The point the toolhead is moving to.
@@ -478,6 +477,8 @@ M204 S1000
   private extrudeRegularSegment(
     p0: THREE.Vector3,
     p1: THREE.Vector3,
+    flow: number = 1,
+    speed: number = 3000, // 50 mm/s
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
     const extruder = this.extruders[this.activeExtruder];
@@ -485,8 +486,22 @@ M204 S1000
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
     const filamentPerMM = (beadArea / crossSection) ;
     const dist = this.norm(p0, p1);
-    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(filamentPerMM * dist).toFixed(6)} F${extruder.printHead_speed_when_free_move}`;
+    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(flow * filamentPerMM * dist).toFixed(6)} F${speed}`;
     return gcode;
+  }
+
+  /**
+   * Extrudes an ironing segment between two points: 20% of the regular flow at 50 mm/s.
+   *
+   * @param {THREE.Vector3} p0 The point the toolhead is coming from
+   * @param {THREE.Vector3} p1 The point the toolhead is moving to.
+   * @returns {string} The gcode to iron the segment.
+   */
+  private extrudeIroningSegment(
+    p0: THREE.Vector3,
+    p1: THREE.Vector3,
+  ): string {
+    return this.extrudeRegularSegment(p0, p1, 0.2, 3000);
   }
 
 
@@ -608,7 +623,14 @@ M204 S1000
         )
       }
 
-      if (point.regularSegment && !this.testSweep) {
+      if (point.ironing && !this.testSweep) {
+        body_gcode.push(
+          this.extrudeIroningSegment(
+            lastTarget,
+            currentPoint
+          )
+        );
+      }else if (point.regularSegment && !this.testSweep) {
         body_gcode.push(
           this.extrudeRegularSegment(
             lastTarget, 
