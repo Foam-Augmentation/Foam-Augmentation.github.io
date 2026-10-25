@@ -327,7 +327,6 @@ G21 ; set units to millimeters
 G90 ; use absolute coordinates
 G28 ; home axes
 G92 X0 Y0 ; tell printer all axes are 0
-${leveling} ; probe the printbed or use previously stored printbed mesh
 G0 Z${liftZ} F2400 ; move up before heating
 ${heaters}
 
@@ -335,6 +334,7 @@ M83  ; extruder relative mode
 M900 K0.05 ; Filament gcode LA 1.5
 M900 K30 ; Filament gcode LA 1.0
 ${pickFirstTool}
+${leveling} ; probe the printbed or use previously stored printbed mesh with hot bed and picked tool
 G0 Z0.200 F2400.000
 
 M204 S1000 
@@ -573,7 +573,14 @@ M204 S1000
     // toolchange for the first point.
     let extruder: number | null = this.activeExtruder;
 
-    body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
+    if (this.purgeLine) {
+      const safeZ = firstPoint.z + 2;
+      body_gcode.push(`G0 Z${safeZ.toFixed(4)} F2400 ; lift off the purge line`);
+      body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${safeZ.toFixed(4)}; move to start point`);
+      body_gcode.push(`G0 Z${firstPoint.z.toFixed(4)} F600 ; lower to start point`);
+    } else {
+      body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
+    }
     body_gcode.push("M205 X8 Y8; tune down acceleration");
 
     
