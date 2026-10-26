@@ -1013,6 +1013,7 @@ function makeChunkPath(
     const initialOffset = chunk.modelObj!.initialOffset;
     const gradient = chunk.modelObj!.gradient;
     let count = 0;
+    const isFirstChunkPrinted = printedRegions.size === 0;
     for (const region of chunk.regions) {
         printedRegions.add(region.id);
         let regionLayer = Math.floor((region.height - modelHeight + 0.0001) / VTPSettings.deltaZ);
@@ -1049,7 +1050,7 @@ function makeChunkPath(
                 ? lastLayerEndPoint.clone().sub(chunk.modelObj!.mesh.position)
                 : lastLayerEndPoint;
             path = [];
-            if (count === 0 && chunk.dependentRegions?.size) { //ironing pass
+            if (!isFirstChunkPrinted && region === chunk.regions[0] && chunk.dependentRegions?.size) { //ironing pass
                 path = generateRectilinearInfillWithHoles(region.BVH, region.contour, 0.4, scanX, shellStart);
                 path.forEach(p => p.ironing = !p.travel);
                 if (path.length) {
@@ -2175,13 +2176,13 @@ function addPurgeLine(
     lineNum: number,
 ): void {
     const rectangleContour = [
-        new THREE.Vector3(5, 5, 0.1),
-        new THREE.Vector3(machineDepth - 5, 5, 0.1),
-        new THREE.Vector3(machineDepth - 5, 5 + lineSeparation * (lineNum - 1) + 0.001, 0.1),
-        new THREE.Vector3(5, 5 + lineSeparation * (lineNum - 1) + 0.001, 0.1)
+        new THREE.Vector3(5, 5, 0.3),
+        new THREE.Vector3(machineDepth - 5, 5, 0.3),
+        new THREE.Vector3(machineDepth - 5, 5 + lineSeparation * (lineNum - 1) + 0.001, 0.3),
+        new THREE.Vector3(5, 5 + lineSeparation * (lineNum - 1) + 0.001, 0.3)
     ];
 
-    const path = generateRectilinearInfill(rectangleContour, lineSeparation, false, new THREE.Vector3(5, 5, 0.1));
+    const path = generateRectilinearInfill(rectangleContour, lineSeparation, false, new THREE.Vector3(5, 5, 0.3));
 
     path.reverse();
     path.forEach(point => {

@@ -478,7 +478,7 @@ M204 S1000
     p0: THREE.Vector3,
     p1: THREE.Vector3,
     flow: number = 1,
-    speed: number = 3000, // 50 mm/s
+    speed?: number,
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
     const extruder = this.extruders[this.activeExtruder];
@@ -486,12 +486,12 @@ M204 S1000
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
     const filamentPerMM = (beadArea / crossSection) ;
     const dist = this.norm(p0, p1);
-    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(flow * filamentPerMM * dist).toFixed(6)} F${speed}`;
+    const gcode = `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${(flow * filamentPerMM * dist).toFixed(6)} F${speed ?? extruder.printHead_speed_when_free_move}`;
     return gcode;
   }
 
   /**
-   * Extrudes an ironing segment between two points: 20% of the regular flow at 50 mm/s.
+   * Extrudes an ironing segment between two points: 20% of the regular flow at 25 mm/s.
    *
    * @param {THREE.Vector3} p0 The point the toolhead is coming from
    * @param {THREE.Vector3} p1 The point the toolhead is moving to.
@@ -501,7 +501,7 @@ M204 S1000
     p0: THREE.Vector3,
     p1: THREE.Vector3,
   ): string {
-    return this.extrudeRegularSegment(p0, p1, 0.2, 3000);
+    return this.extrudeRegularSegment(p0, p1, 0.2, 1500);
   }
 
 
@@ -564,7 +564,7 @@ M204 S1000
   }
 
 
-  /**
+    /**
    * Generates foam toolpath G-code from a given toolpath.
    *
    * @param {PathPoint[]} toolpath The points to turn into gcode in order with correct properties.
@@ -587,15 +587,9 @@ M204 S1000
     // Seeded from the tool the start G-code already picked, so we don't emit a redundant
     // toolchange for the first point.
     let extruder: number | null = this.activeExtruder;
+    let purgeDone = !this.purgeLine;
 
-    if (this.purgeLine) {
-      const safeZ = firstPoint.z + 2;
-      body_gcode.push(`G0 Z${safeZ.toFixed(4)} F2400 ; lift off the purge line`);
-      body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${safeZ.toFixed(4)}; move to start point`);
-      body_gcode.push(`G0 Z${firstPoint.z.toFixed(4)} F600 ; lower to start point`);
-    } else {
-      body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
-    }
+    body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
     body_gcode.push("M205 X8 Y8; tune down acceleration");
 
     
@@ -603,6 +597,10 @@ M204 S1000
     for (let i = 0; i < toolpath.length; i++) {
       const point = toolpath[i];
       const currentPoint = point.point.clone();
+      if (!purgeDone && i > 0 && !point.regularSegment) {
+        purgeDone = true;
+        body_gcode.push(`G0 Z${(lastTarget.z + 2).toFixed(4)} F2400 ; lift off the purge line`);
+      }
       // Note the !== undefined: extruder 0 is falsy, so a truthiness check would never pick tool 0.
       if(point.debug !== undefined){
         body_gcode.push("; DEBUG: " + point.debug);
@@ -630,7 +628,7 @@ M204 S1000
             currentPoint
           )
         );
-      }else if (point.regularSegment && !this.testSweep) {
+      } else if (point.regularSegment && !this.testSweep) {
         body_gcode.push(
           this.extrudeRegularSegment(
             lastTarget, 
