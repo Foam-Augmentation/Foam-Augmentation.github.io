@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "webpack serve --mode development --open",
     "watch": "webpack --watch",
     "build": "webpack --mode production",
     "deploy": "gh-pages -d dist",
@@ -33,6 +34,7 @@
     "ts-loader": "^9.5.2",
     "typescript": "^5.7.3",
     "webpack": "^5.91.0",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.2.3"
   }
 }

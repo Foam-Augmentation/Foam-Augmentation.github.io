@@ -2,12 +2,19 @@ import * as THREE from 'three';
 import ClipperLib from 'clipper-lib';
 import Delaunator from 'delaunator';
 import { ToolpathConfig, EverydayModel } from '../types/modelTypes';
+import { PathPoint } from '../toolpath/generateFoamToolpath';
+import Printer, { VTPSettings } from '../../printer/Printer';
 
 
 // Clipper scale is how scaled up the points are when passed to clipper. They are then scaled down when turned back.
 const CLIPPER_SCALE = 1000;
 // Min area is the minimum area when insetting contours that a contour needs
 const MIN_AREA = 3;
+// Contours are closed loops, so edges shorter than this are degenerate and get dropped when
+// turning a contour into line segments. Matches the connection tolerance in connectSegments.
+const MIN_SEGMENT_LENGTH = 0.00001;
+// The most line segments a leaf of a chunk BVH will hold before it gets split in two.
+const CHUNK_BVH_LEAF_SIZE = 4;
 
 
 // basic data structures for slicing
@@ -17,6 +24,22 @@ export interface SliceRegion {
     contour: THREE.Vector3[];
     holes: THREE.Vector3[][];
     bounds: { min: THREE.Vector3; max: THREE.Vector3 };
+    BVH: SliceRegionBVHNode;
+    extruder: number; // 0 for left, 1 for right. We can add more extruders later if we want to support more than 2.
+    shell: boolean,
+}
+
+export interface SliceRegionBVHNode{
+  min: THREE.Vector3;
+  max: THREE.Vector3;
+  left?: SliceRegionBVHNode;
+  right?: SliceRegionBVHNode
+  leafSegments: LineSegment[]; //CHUNK_BVH_LEAF_SIZE in max length
+}
+
+export interface LineSegment {
+  start: THREE.Vector3; 
+  end: THREE.Vector3
 }
 
 export interface RegionNode {
@@ -25,6 +48,9 @@ export interface RegionNode {
     parent: RegionNode | null;
     layer: number;
     visited: boolean;
+    shell: boolean;
+    shellDependentRegions?: Set<string>;
+    shellHeight?: number;
 }
 
 export interface ChunkNode {
@@ -32,6 +58,10 @@ export interface ChunkNode {
   children: ChunkNode[];
   parent: ChunkNode | null;
   modelObj?: EverydayModel;
+  VTPSettings: VTPSettings;
+  shell: boolean;
+  dependentRegions?: Set<string>;
+  regionDependencies?: Map<string, Set<string>>;
 }
 
 export interface PrintChunk {
@@ -55,12 +85,12 @@ export interface ContourNode {
  * 
  * @param {THREE.Mesh} mesh The mesh to slice into layers.
  * @param {number} deltaZ How far apart each layer should be.
- * @returns {{ z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[]} The list of layers.
+ * @returns {{ z: number, segments: LineSegment[] }[]} The list of layers.
  */
 export function sliceMeshIntoLayers(
   mesh: THREE.Mesh, 
   deltaZ: number
-): { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] {
+): { z: number, segments: LineSegment[] }[] {
     const geometry = mesh.geometry as THREE.BufferGeometry;
     geometry.computeBoundingBox();
     const bbox = geometry.boundingBox!;
@@ -68,7 +98,7 @@ export function sliceMeshIntoLayers(
     const minZ = bbox.min.z + 0.00001;
     console.log("Minz: " + minZ);
     const maxZ = bbox.max.z - 0.00001;
-    const layers: { z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[] }[] = [];
+    const layers: { z: number, segments: LineSegment[] }[] = [];
     
     // go from bottom to top, slice every deltaZ
     for (let z = minZ; z <= maxZ; z += deltaZ) {
@@ -177,14 +207,96 @@ function getHolesAndOuters(
 
 
 /**
+ * Gets the line segments making up the entire boundary of a region: the edges of its outer
+ * contour followed by the edges of each of its holes. Each contour is treated as a closed loop,
+ * so an edge is added from its last point back to its first. Degenerate edges are skipped, which
+ * covers the repeated first/last point that connectSegments leaves on its contours.
+ *
+ * The segments reference the contour's points rather than copying them, so reordering a contour
+ * (as preparePaths does) is safe, but moving its points would move the segments with them.
+ *
+ * @param {THREE.Vector3[]} outer The outer contour of the region.
+ * @param {THREE.Vector3[][]} holes The hole contours of the region.
+ * @returns {LineSegment[]} The edges of the outer contour and of every hole.
+ */
+export function getBoundarySegments(
+  outer: THREE.Vector3[],
+  holes: THREE.Vector3[][],
+): LineSegment[] {
+  const segments: LineSegment[] = [];
+
+  for (const contour of [outer, ...holes]) {
+    for (let i = 0; i < contour.length; i++) {
+      const start = contour[i];
+      const end = contour[(i + 1) % contour.length];
+
+      if (start.distanceToSquared(end) < MIN_SEGMENT_LENGTH * MIN_SEGMENT_LENGTH) continue;
+
+      segments.push({ start, end });
+    }
+  }
+
+  return segments;
+}
+
+
+/**
  * Takes in a layer represented by a list of segments and finds separate regions in it.
  * Separate regions are parts of the layer that are not connected to each other by any segment.
- * 
+ *
  * @param z The z position of the layer
  * @param segments The list of segments to find the regions from.
- * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, bounds, an id, and a height.
+ * @param offset How much to offset the outer contour inwards (mm)
+ * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, boundary segments, bounds, an id, and a height.
  */
-export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vector3, end: THREE.Vector3 }[]): SliceRegion[] {
+export function extractRegionsFromLayer(z: number, segments: LineSegment[], linewidth: number, shellLayers: number): SliceRegion[] {
+    if (segments.length === 0) return [];
+    
+    const contours = connectSegments(segments);
+
+    const holeContours = getHolesAndOuters(contours);
+
+    const regions: SliceRegion[] = [];
+    
+    // make a region for each contour we found
+    for (let i = 0; i < holeContours.length; i++) {
+        const contour = holeContours[i];
+        let outer = contour.outer;
+        let holes = contour.holes;
+        if(shellLayers != 0){
+          const shellOffset = linewidth * (shellLayers+1) + 0.0001; //TODO: Unhardcode. 
+          outer = offsetContour(outer, -shellOffset);
+          if (outer.length < 3) continue;
+          holes = holes.map(hole => offsetContour(hole, shellOffset)).filter(hole => hole.length >= 3);
+        }
+        const bounds = getBounds(contour.outer, z);
+        const otherSegments = getBoundarySegments(outer, holes);
+
+        regions.push({
+            id: `region_${z.toFixed(3)}_${i}`,
+            height: z,
+            contour: outer,
+            holes: holes,
+            bounds: bounds,
+            extruder: 0, // Default to left extruder
+            BVH: buildSliceRegionBVH(otherSegments),
+            shell: false,
+        });
+    }
+    
+    return regions;
+}
+
+/**
+ * Takes in a layer represented by a list of segments and finds separate regions in it.
+ * Separate regions are parts of the layer that are not connected to each other by any segment.
+ *
+ * @param z The z position of the layer
+ * @param segments The list of segments to find the regions from.
+ * @param offset How much to offset the outer contour inwards (mm)
+ * @returns {SliceRegion[]} A list of slice regions each with an outer contour, hole contours, boundary segments, bounds, an id, and a height.
+ */
+export function extractShellRegionsFromLayer(z: number, segments: LineSegment[], linewidth: number, shellLayers: number): SliceRegion[] {
     if (segments.length === 0) return [];
     
     const contours = connectSegments(segments);
@@ -198,17 +310,58 @@ export function extractRegionsFromLayer(z: number, segments: { start: THREE.Vect
         const contour = holeContours[i];
         const bounds = getBounds(contour.outer, z);
         
+        //Put shell contours
+        const contours = [];
+        for(let i = 1; i < shellLayers; i++){
+          const aCounter = offsetContour(contour.outer, -(linewidth * i));
+          if (aCounter.length < 3) continue;
+          contours.push(aCounter);
+        }
+        //Put shell contours around holes (the hole itself, then rings growing outwards)
+        for (const hole of contour.holes) {
+          contours.push(hole);
+          for (let n = 1; n < shellLayers; n++) {
+            const ring = offsetContour(hole, linewidth * n);
+            if (ring.length < 3) continue;
+            contours.push(ring);
+          }
+        }
+        const segments = getBoundarySegments(contour.outer, contours);
+        //push shell
         regions.push({
-            id: `region_${z.toFixed(3)}_${i}`,
+            id: `region_${z.toFixed(3)}_${i}_S`,
             height: z,
             contour: contour.outer,
-            holes: contour.holes,
-            bounds: bounds
+            holes: contours,
+            bounds: bounds,
+            extruder: 0, // Default to left extruder
+            BVH: buildSliceRegionBVH(segments),
+            shell: true,
         });
     }
     
     return regions;
 }
+
+/**
+ * if (shellLayers == 0) continue; //no shell
+        //Put shell contours
+        const contours = [];
+        for(let i = 1; i < shellLayers; i++){
+          contours.push(offsetContour(outer, -(nozzleDiameter * i)));
+        }
+        //push shell
+        regions.push({
+            id: `region_${z.toFixed(3)}_${i}_S`,
+            height: z,
+            contour: contour.outer,
+            holes: contours,
+            bounds: bounds,
+            extruder: 0, // Default to left extruder
+            BVH: buildSliceRegionBVH(otherSegments),
+            shell: true,
+        });
+ */
 
 /**
  * Gets the outer contour of a mesh on a specific plane
@@ -388,6 +541,74 @@ export function checkOverlap(
     );
 }
 
+/**
+ * Determines if a shell region overlaps with the solid area of a regular (non-shell) region.
+ * The solid area of a regular region is the space inside its outer contour but outside all its holes.
+ * 
+ * @param {SliceRegion} shellRegion The shell region.
+ * @param {SliceRegion} regularRegion The regular region to check against.
+ * @returns {boolean} Whether or not the shell overlaps the regular region's solid area.
+ */
+export function checkShellRegularOverlap(
+  shellRegion: SliceRegion,
+  regularRegion: SliceRegion,
+  maxDz: number = Infinity //TODO: unhardcode. 
+): boolean {
+    // Fast bounding box check
+    if (!checkOverlap(shellRegion, regularRegion)) {
+        return false;
+    }
+    const dz = shellRegion.height - regularRegion.height;
+    if (dz < -0.0001 || dz > maxDz + 0.0001) {
+        return false;
+    }
+
+    // Helper to check if a single point is inside the regular region's solid area
+    const isPointInRegularRegion = (pt: THREE.Vector3) => {
+        if (!pointInPolygon(pt, regularRegion.contour)) return false;
+        for (const hole of regularRegion.holes) {
+            if (pointInPolygon(pt, hole)) return false;
+        }
+        return true;
+    };
+
+    // Gather all contours from the shell (outer contour + inner shell layers stored in holes)
+    const shellContours = [shellRegion.contour, ...shellRegion.holes];
+
+    // 1. Vertex Inclusion Check
+    // See if any vertex of the shell's contours lies inside the regular region's solid space
+    for (const contour of shellContours) {
+        for (const pt of contour) {
+            if (isPointInRegularRegion(pt)) {
+                return true;
+            }
+        }
+    }
+
+    // 2. Edge Intersection Check 
+    // Fallback in case a shell segment crosses entirely over a regular region 
+    // without any of its vertices falling inside the area.
+    const regularSegments = getBoundarySegments(regularRegion.contour, regularRegion.holes);
+    const shellSegments = getBoundarySegments(shellRegion.contour, shellRegion.holes);
+
+    const ccw = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+        return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+    };
+
+    for (const sSeg of shellSegments) {
+        for (const rSeg of regularSegments) {
+            if (
+                ccw(sSeg.start, rSeg.start, rSeg.end) !== ccw(sSeg.end, rSeg.start, rSeg.end) &&
+                ccw(sSeg.start, sSeg.end, rSeg.start) !== ccw(sSeg.start, sSeg.end, rSeg.end)
+            ) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // split regions into groups when they overlap (for support stuff)
 // export function splitRegionsByOverlapOrSupport(regions: SliceRegion[]): SliceRegion[][] {
 //     let groups: SliceRegion[][] = [regions];
@@ -464,7 +685,10 @@ export function buildRegionTree(
             children: [],
             parent: null,
             layer: Math.floor((region.height + 0.0001) / layerHeight),
-            visited: false
+            visited: false,
+            shell: region.shell,
+            shellDependentRegions: (region.shell ? new Set<string>() : undefined),
+            shellHeight: (region.shell ? region.height : undefined),
         };
         nodes.set(region.id, node);
     }
@@ -478,15 +702,24 @@ export function buildRegionTree(
         const [id, node] = sortedNodeRegions[i];
         for (let j = i + 1; j < sortedNodeRegions.length; j++) {
             const [otherId, otherNode] = sortedNodeRegions[j];
-
             // break out of for loop after checking all nodes in the next layer down.
             if (otherNode.layer - node.layer > 1) {
-                break;
+              break;
             }
-
-            if (otherNode.parent === null && checkOverlap(node.region, otherNode.region)) {
-                node.children.push(otherNode);
-                otherNode.parent = node;
+            if(!node.shell && !otherNode.shell){ //regular
+              if (otherNode.parent === null && checkOverlap(node.region, otherNode.region)) {
+                  node.children.push(otherNode);
+                  otherNode.parent = node;
+              }
+            }else if(node.shell && otherNode.shell){ //both shell
+              node.children.push(otherNode);
+              otherNode.parent = node; // don't even need to check for overlap. Shells only parent should be the shell below it
+              break;
+            }else if(otherNode.shell){ // and !node.shell
+              //check to see if the shell depends on this region
+              if(checkShellRegularOverlap(otherNode.region,node.region,layerHeight)){
+                otherNode.shellDependentRegions!.add(node.region.id);
+              }
             }
         }
     }
@@ -499,40 +732,123 @@ export function buildRegionTree(
 
 
 /**
+ * Gets the axis aligned bounding box of a list of line segments. An empty list gives an inverted
+ * box, so that nothing is ever found inside of it.
+ *
+ * @param {LineSegment[]} segments The segments to bound.
+ * @returns {{min: THREE.Vector3, max: THREE.Vector3}} The bounding box of the segments.
+ */
+function getSegmentBounds(
+  segments: LineSegment[],
+): { min: THREE.Vector3; max: THREE.Vector3 } {
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+
+  for (const segment of segments) {
+    min.min(segment.start).min(segment.end);
+    max.max(segment.start).max(segment.end);
+  }
+
+  return { min, max };
+}
+
+
+/**
+ * Builds a BVH over the boundary segments of a single region, so that queries against the region's
+ * boundary don't have to walk every segment. A region is planar, so unlike a chunk BVH this only
+ * ever splits along x or y.
+ *
+ * The leaves hold references to the same segments that were passed in, so the tree goes stale if
+ * the region's contours are moved after it is built.
+ *
+ * @param {LineSegment[]} segments The boundary segments of the region.
+ * @returns {SliceRegionBVHNode} The root node of the region's BVH.
+ */
+export function buildSliceRegionBVH(
+  segments: LineSegment[],
+): SliceRegionBVHNode {
+  const bounds = getSegmentBounds(segments);
+
+  // few enough segments left that splitting further costs more than it saves
+  if (segments.length <= CHUNK_BVH_LEAF_SIZE) {
+    return {
+      min: bounds.min,
+      max: bounds.max,
+      leafSegments: segments,
+    };
+  }
+
+  // split along whichever of x and y the segments are most spread out on
+  const axis: 'x' | 'y' =
+    bounds.max.y - bounds.min.y > bounds.max.x - bounds.min.x ? 'y' : 'x';
+
+  // Sort by midpoint along that axis and split at the median. Splitting at the centre of the
+  // bounds instead would leave every segment on one side whenever they are unevenly spread,
+  // which would never terminate.
+  const sorted = segments.slice().sort((a, b) =>
+    (a.start[axis] + a.end[axis]) - (b.start[axis] + b.end[axis])
+  );
+
+  const mid = Math.floor(sorted.length / 2);
+
+  return {
+    min: bounds.min,
+    max: bounds.max,
+    left: buildSliceRegionBVH(sorted.slice(0, mid)),
+    right: buildSliceRegionBVH(sorted.slice(mid)),
+    leafSegments: [],
+  };
+}
+
+/**
  * Builds a tree of printable chunks from a tree of regions by splitting the regions into
  * super nodes and splitting the supernodes when they overlap. Note, this does not group
  * nodes when they are closer than nozzle width/2, so there may be issues if regions are
  * very close to each other.
- * 
+ *
  * @param {RegionNode[]} roots The root nodes of the region tree.
- * @param {number} nozzleHeight The height of the nozzle.
+ * @param {printer} Printer settings
  * @returns {ChunkNode[]} The root nodes of the printable chunk tree.
  */
 export function buildChunkTree(
   roots: RegionNode[],
-  nozzleHeight: number,
+  printer: Printer,
 ): ChunkNode[] {
   if (roots.length === 0) {
     return [];
   }
   const rootNodes: ChunkNode[] = [];
   for (const root of roots) {
+    let currentNode = root;
+    const extruder = currentNode.region.extruder
     let currentChunkNode: ChunkNode = {
       regions: [],
       children: [],
       parent: null,
+      VTPSettings: extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings,
+      shell: root.shell,
+      dependentRegions: root.shell ? new Set(root.shellDependentRegions) : undefined,
+      regionDependencies: root.shell
+        ? new Map([[root.region.id, new Set(root.shellDependentRegions)]])
+        : undefined,
     }
-    let currentNode = root;
+
     let regions: SliceRegion[] = [currentNode.region];
+    // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
+    const chunkExtruder = root.region.extruder;
     while (true) {
       if (currentNode.children.length === 0) {
         currentChunkNode.regions = regions;
         rootNodes.push(currentChunkNode);
         break;
       }
-      if (currentNode.children.length > 1 || currentNode.children[0].region.height - root.region.height > nozzleHeight) {
+      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? 0.2 : currentChunkNode.VTPSettings.ZOffset);
+      if (currentNode.children.length > 1
+          || currentNode.children[0].region.height - root.region.height > nozzleHeight
+          || currentNode.children[0].region.extruder !== chunkExtruder
+          || (root.shell && (currentNode.children[0].shellDependentRegions!.size > 0) !== (currentChunkNode.dependentRegions!.size > 0))) {
         currentChunkNode.regions = regions;
-        currentChunkNode.children = buildChunkTree(currentNode.children, nozzleHeight);
+        currentChunkNode.children = buildChunkTree(currentNode.children, printer);
         for (const child of currentChunkNode.children) {
           child.parent = currentChunkNode;
         }
@@ -541,9 +857,16 @@ export function buildChunkTree(
       }
       currentNode = currentNode.children[0];
       regions.push(currentNode.region);
+      currentNode.shellDependentRegions?.forEach(id => currentChunkNode.dependentRegions!.add(id));
+      if (currentNode.shell) {
+        currentChunkNode.regionDependencies!.set(currentNode.region.id, new Set(currentNode.shellDependentRegions));
+      }
     }
   }
-  splitChunkTreeByOverlap(rootNodes);
+  splitChunkTreeByOverlap(rootNodes,printer);
+
+  //assignChunkBVHs(rootNodes);
+
   return rootNodes;
 }
 
@@ -583,40 +906,124 @@ function findHeightSiblings(
  */
 function splitChunkTreeByOverlap(
   roots: ChunkNode[],
+  printer: Printer,
 ): void {
   if (roots.length === 0) return;
-
   const allChildren: ChunkNode[] = [];
+
+  const dependenciesFor = (chunk: ChunkNode, regions: SliceRegion[]) => {
+    if (!chunk.regionDependencies) return { map: undefined, union: undefined };
+    const map = new Map<string, Set<string>>();
+    const union = new Set<string>();
+    for (const r of regions) {
+      const deps = chunk.regionDependencies.get(r.id) ?? new Set<string>();
+      map.set(r.id, deps);
+      deps.forEach(id => union.add(id));
+    }
+    return { map, union };
+  };
 
   for (let i = 0; i < roots.length; i++) {
     const root = roots[i];
-    const siblings = findHeightSiblings(roots.filter((root, idx) => idx != i), root);
+    const siblings = findHeightSiblings(
+      roots.filter((root, idx) => idx != i),
+      root
+    );
 
     for (const sibling of siblings) {
       let foundOverlap = false;
-      for (let j = 1; j < sibling.regions.length; j++) {
+
+      for (let j = 1; j < sibling.regions.length && !foundOverlap; j++) {
         for (let k = 0; k < root.regions.length; k++) {
           if (checkOverlap(sibling.regions[j], root.regions[k])) {
-            const newNodeSibling: ChunkNode = {
-              regions: sibling.regions.slice(j),
-              children: sibling.children,
-              parent: sibling,
-            }
-            sibling.children = [newNodeSibling];
-            sibling.regions = sibling.regions.slice(0, j);
             foundOverlap = true;
             break;
           }
         }
       }
+
       if (foundOverlap) {
+        const tip = (c: ChunkNode) =>
+          c.shell ? 0.2 : c.VTPSettings.ZOffset;
+
+        const rootMax = root.regions[root.regions.length - 1].height;
+
+        const j = sibling.regions.findIndex(
+          r => r.height > rootMax + 0.0001
+        );
+
+        if (j > 0) {
+          const newNodeRegions = sibling.regions.slice(j);
+          const lowerRegions = sibling.regions.slice(0, j);
+          const upperDeps = dependenciesFor(sibling, newNodeRegions);
+          const lowerDeps = dependenciesFor(sibling, lowerRegions);
+
+          const newNodeSibling: ChunkNode = {
+            regions: newNodeRegions,
+            children: sibling.children,
+            parent: sibling,
+            VTPSettings:
+              newNodeRegions[0].extruder == 0
+                ? printer.globalVTPSettings
+                : printer.senseVTPSettings,
+            shell: sibling.shell,
+            dependentRegions: upperDeps.union,
+            regionDependencies: upperDeps.map,
+          };
+
+          newNodeSibling.children.forEach(c => (c.parent = newNodeSibling));
+          sibling.children = [newNodeSibling];
+          sibling.regions = lowerRegions;
+          sibling.dependentRegions = lowerDeps.union;
+          sibling.regionDependencies = lowerDeps.map;
+        }
+
+        const siblingBase = sibling.regions[0].height;
+
+        if (
+          root.regions[0].height + tip(root)
+            < siblingBase + tip(sibling) - 0.0001
+          &&
+          siblingBase + tip(sibling) + 0.0001
+            <= root.regions[root.regions.length - 1].height
+        ) {
+          const k = root.regions.findIndex(
+            r => r.height > siblingBase + tip(sibling) + 0.0001
+          );
+
+          if (k > 0) {
+            const upperRegions = root.regions.slice(k);
+            const lowerRegions = root.regions.slice(0, k);
+            const upperDeps = dependenciesFor(root, upperRegions);
+            const lowerDeps = dependenciesFor(root, lowerRegions);
+
+            const upperNode: ChunkNode = {
+              regions: upperRegions,
+              children: root.children,
+              parent: root,
+              VTPSettings:
+                upperRegions[0].extruder == 0
+                  ? printer.globalVTPSettings
+                  : printer.senseVTPSettings,
+              shell: root.shell,
+              dependentRegions: upperDeps.union,
+              regionDependencies: upperDeps.map,
+            };
+
+            upperNode.children.forEach(c => (c.parent = upperNode));
+            root.children = [upperNode];
+            root.regions = lowerRegions;
+            root.dependentRegions = lowerDeps.union;
+            root.regionDependencies = lowerDeps.map;
+          }
+        }
         break;
       }
     }
-    allChildren.push(...root.children);
   }
-  
-  splitChunkTreeByOverlap(allChildren);
+
+  for (const r of roots) allChildren.push(...r.children);
+  splitChunkTreeByOverlap(allChildren, printer);
 }
 
 
@@ -829,9 +1236,10 @@ function spiralContours(
   isocontours: THREE.Vector3[][],
   indicesToSpiral: number[],
   initialStartIndex: number,
-  step: number
-): THREE.Vector3[] {
-  let path: THREE.Vector3[] = [];
+  step: number,
+  edot: number
+): PathPoint[] {
+  let path: PathPoint[] = [];
 
   let startIndex = initialStartIndex;
   let initialDist = 0;
@@ -854,18 +1262,17 @@ function spiralContours(
       totalDist += dist;
       lastPointIndex = endIndex;
     }
-
     let curIndex = startIndex;
     while(curIndex != endIndex) {
-      path.push(isocontours[i][curIndex]);
+      path.push({point: isocontours[i][curIndex], travel: false, edot});
       curIndex++;
       if (curIndex >= isocontours[i].length) {
         curIndex -= isocontours[i].length;
       }
     }
-    path.push(isocontours[i][endIndex]);
+    path.push({point: isocontours[i][endIndex], travel: false, edot});
 
-    path.push(endPoint);
+    path.push({point: endPoint, travel: false, edot});
 
     const checkContourIndex = i + 2;
     if (checkContourIndex < isocontours.length) {
@@ -888,7 +1295,7 @@ function spiralContours(
         lastPoint = point;
       }
       
-      path.push(closestPoint);
+      path.push({point: closestPoint, travel: false, edot});
       startIndex = closestIndex;
       initialDist = -isocontours[checkContourIndex][startIndex].distanceTo(closestPoint);
     }
@@ -912,8 +1319,9 @@ export function connectIsocontours(
   isocontoursRoot: ContourNode,
   step: number,
   lastLayerEndPoint: THREE.Vector3,
+  edot: number,
   reverse: boolean = false,
-): THREE.Vector3[] {
+): PathPoint[] {
   if (isocontoursRoot.contour.length === 0) {
     return [];
   }
@@ -964,11 +1372,11 @@ export function connectIsocontours(
   }
 
   // make inwards path
-  const path = spiralContours(isocontours, evenIndices, startIndex, step);
+  const path = spiralContours(isocontours, evenIndices, startIndex, step, edot);
 
   // make paths for children nodes before spiralling outwards only if the most inward contour is spiralled inwards
   if (isocontours.length % 2 === 1 && currentNode.children.length > 0) {
-    const childPaths: {path: THREE.Vector3[], index: number}[] = [];
+    const childPaths: {path: PathPoint[], index: number}[] = [];
     for (const child of currentNode.children) {
       lowestDist = Infinity;
       let closestIndexOuter = 0;
@@ -976,7 +1384,7 @@ export function connectIsocontours(
         const point = path[path.length - 1 - i];
         for (let j = 0; j < child.contour.length; j++) {
           const otherPoint = child.contour[j];
-          const dist = point.distanceTo(otherPoint);
+          const dist = point.point.distanceTo(otherPoint);
           if (dist < lowestDist) {
             lowestDist = dist;
             closestIndexOuter = path.length - 1 - i;
@@ -984,7 +1392,7 @@ export function connectIsocontours(
         }
       }
 
-      const childPath = connectIsocontours(child, step, path[closestIndexOuter], !reverse);
+      const childPath = connectIsocontours(child, step, path[closestIndexOuter].point, edot, !reverse);
       childPaths.push({path: childPath, index: closestIndexOuter});
     }
 
@@ -1036,10 +1444,10 @@ export function connectIsocontours(
 
     isocontours[1].splice(startIndex, 0, closestPoint);
 
-    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step);
+    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step, edot);
 
     if (isocontours.length % 2 === 0 && currentNode.children.length > 0) {
-      const childPaths: {path: THREE.Vector3[], index: number}[] = [];
+      const childPaths: {path: PathPoint[], index: number}[] = [];
       for (const child of currentNode.children) {
         lowestDist = Infinity;
         let closestIndexOuter = 0;
@@ -1047,7 +1455,7 @@ export function connectIsocontours(
           const point = inwardSpiralPath[inwardSpiralPath.length - 1 - i];
           for (let j = 0; j < child.contour.length; j++) {
             const otherPoint = child.contour[j];
-            const dist = point.distanceTo(otherPoint);
+            const dist = point.point.distanceTo(otherPoint);
             if (dist < lowestDist) {
               lowestDist = dist;
               closestIndexOuter = inwardSpiralPath.length - 1 - i;
@@ -1055,7 +1463,7 @@ export function connectIsocontours(
           }
         }
 
-        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter], reverse);
+        const childPath = connectIsocontours(child, step, inwardSpiralPath[closestIndexOuter].point, edot, reverse);
         childPaths.push({path: childPath, index: closestIndexOuter});
       }
 
@@ -1067,7 +1475,7 @@ export function connectIsocontours(
     }
 
     path.push(...inwardSpiralPath.reverse());
-    path.push(endPoint);
+    path.push({point: endPoint,travel: false, edot});
   }
   return path
 }
@@ -1367,7 +1775,8 @@ export function getWindingOrder(
  */
 export function extractRegionsFromPointCloud(
   points: THREE.Vector3[],
-  alpha: number = Infinity
+  alpha: number = Infinity,
+  extruder: number = 0
 ): SliceRegion[] {
   if (points.length === 0) return [];
 
@@ -1460,15 +1869,20 @@ export function extractRegionsFromPointCloud(
   // build SliceRegion for each contour
   const regions: SliceRegion[] = holeContours.map((holeContour, i) => {
     const xs = holeContour.outer.map(p => p.x), ys = holeContour.outer.map(p => p.y);
+    const segments = getBoundarySegments(holeContour.outer, holeContour.holes);
     return {
-      id:      `region-${i}`,
+      id:      `region-${extruder}-${i}`,
       height: height,
       contour: holeContour.outer,
       holes:   holeContour.holes,
       bounds: {
         min: new THREE.Vector3(Math.min(...xs), Math.min(...ys), 0),
         max: new THREE.Vector3(Math.max(...xs), Math.max(...ys), 0),
-      }
+      },
+      segments: segments,
+      BVH: buildSliceRegionBVH(segments),
+      extruder: extruder,
+      shell: false,
     };
   });
 

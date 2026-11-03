@@ -254,12 +254,16 @@ export class ViewCube {
     }
 
     public update() {
-        // Sync cube rotation with main camera
-        const cameraDirection = new THREE.Vector3();
-        this.mainCamera.getWorldDirection(cameraDirection);
+        // Keep the cube axis-aligned with the world and orbit the mini camera instead,
+        // so the cube is always seen from exactly the same direction as the main camera.
+        const target = this.mainControls?.target ?? new THREE.Vector3();
+        const offset = this.mainCamera.position.clone().sub(target);
 
-        // Update cube rotation to match main camera orientation
-        this.cube.lookAt(cameraDirection.multiplyScalar(-1));
+        if (offset.lengthSq() < 1e-8) return;
+
+        this.camera.position.copy(offset.normalize().multiplyScalar(5));
+        this.camera.up.copy(this.mainCamera.up);
+        this.camera.lookAt(0, 0, 0);
     }
 
     private animate = () => {

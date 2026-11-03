@@ -1,6 +1,6 @@
 // src/types/modelTypes.ts
 import * as THREE from 'three';
-import {Gradient} from '../loaders/modelLoader'
+import { Gradient } from '../loaders/modelLoader'
 
 /**
  * Represents a GUI item, typically a folder from a GUI library.
@@ -63,11 +63,20 @@ export interface ToolpathConfig {
     hStarEnd: number;
     vStar: number;
     vStarEnd: number;
+    deltaLEnd: number;
+
+    senseDeltaLEnd: number;
+    senseDeltaZ: number;
+    senseHStar: number;
+    senseHStarEnd: number;
+    senseVStar: number;
+    SenseVStarEnd: number;
     /** zOffset **Not set manually** (distance between the nozzle and the layer under to allow VTP) */
     // zOffset: number;
     /** grid size */
     gridSize: number;
     deltaL: number;
+    senseDeltaL: number;
     /** die swell */
     // dieSwell: number;
     // sandwiched structure
@@ -78,6 +87,7 @@ export interface ToolpathConfig {
     /** final Foam layer count */
     finalFoamLayerCount: number;
     edot: number;
+    senseEdot: number;
     bumpSpacingX: number;
     bumpSpacingY: number;
     bumpScale: number;
@@ -106,6 +116,10 @@ export interface ToolpathConfig {
     // nozzleSizeSensingFoam: number;
 }
 
+export interface PointCloudPoint {
+    point: THREE.Vector3
+    type: string //In the future we can connect this to extruder types. 
+}
 
 /**
  * EverydayModel: used for everyday objects. Extends BasicModel.
@@ -122,8 +136,8 @@ export interface EverydayModel extends BasicModel {
     /** Mesh displaying sampled sense points. */
     pointsMesh_sense?: THREE.Points;
     /** Sampled points for toolpath generation. point: sample points; type: regular foam / sensing area */
-    toolpathSamplePoints?: { point: THREE.Vector3, type: string }[];
-    
+    toolpathSamplePoints?: PointCloudPoint[];
+
     augmentSamplePoints?: THREE.Vector3[][];
     /** Group for Toolpath visualization. */
     toolpathVisualizationObject?: THREE.Group;
@@ -145,9 +159,12 @@ export interface EverydayModel extends BasicModel {
     initialOffset: number;
 
     /** segments of regular + sensing area */
-    all_area_segments?: { point: THREE.Vector3, type: string }[][];
+    all_area_segments?: PointCloudPoint[][];
     /** segments of regular area */
-    regular_area_segments?: { point: THREE.Vector3, type: string }[][];
+    regular_area_segments?: PointCloudPoint[][];
     /** segments of sensing area */
-    sense_area_segments?: { point: THREE.Vector3, type: string }[][];
+    sense_area_segments?: PointCloudPoint[][];
+
+    extruders?: number[]
+    firstExtruder?: number
 }

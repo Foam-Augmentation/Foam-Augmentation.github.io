@@ -9,6 +9,7 @@ import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolp
 import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import {EverydayModel} from '../types/modelTypes';
+import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -109,6 +110,10 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   //   });
   // displayFolder.close();
 
+  // Assigned further down, once the printer settings folder exists. Importing a preset can change
+  // the extruder count, so the import handler needs to be able to rebuild these folders.
+  let extrudersFolder: GUI | undefined;
+
   const presetFolder = gui.addFolder('Presets');
   presetFolder.add({ exportPreset: () => {
     if (!visualizer.currentSelectedModel) {
@@ -128,6 +133,10 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       }
 
       const filename = await importPresetFromFile(visualizer);
+      // The preset may have added or removed extruders, so rebuild those folders before refreshing.
+      if (extrudersFolder) {
+        refreshExtruderFolders(visualizer, extrudersFolder);
+      }
       gui.controllersRecursive().forEach(controller => {
         controller.updateDisplay();
       });
@@ -154,10 +163,6 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const printerFolder = settingFolder.addFolder('printer settings');
   printerFolder.add(visualizer.config, 'bedTemp', 0, 110, 1)
     .onChange((v: number) => { visualizer.printer.material_bed_temperature = v; });
-  printerFolder.add(visualizer.config, 'nozzleLeftTemp', 0, 260, 1)
-    .onChange((v: number) => { visualizer.printer.print_temp_left_extruder = v; });
-  printerFolder.add(visualizer.config, 'nozzleRightTemp', 0, 260, 1)
-    .onChange((v: number) => { visualizer.printer.print_temp_right_extruder = v; });
   printerFolder.add(visualizer.config, 'machineDepth', 0, 1000, 1)
     .onChange((v: number) => {
       visualizer.printer.machine_depth = v;
@@ -175,14 +180,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       visualizer.printer.machine_height = v;
       initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
     });
-  printerFolder.add(visualizer.config, 'dieSwelling', 0, 2, 0.01)
-    .onChange((v: number) => { visualizer.printer.dieSwelling = v; });
-  printerFolder.add(visualizer.config, 'nozzleDiameter', 0, 2, 0.01)
-    .onChange((v: number) => { visualizer.printer.nozzleDiameter = v; });
   printerFolder.add(visualizer.config, 'filamentDiameter', 0, 5, 0.01)
     .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
-  printerFolder.add(visualizer.config, 'nozzleLength', 0, 100, 0.01)
-    .onChange((v: number) => { visualizer.printer.nozzleLength = v; });
   printerFolder.add(visualizer.config, 'printHeadMinX', -100, 0, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.min.setX(v); });
   printerFolder.add(visualizer.config, 'printHeadMinY', -100, 0, 0.01)
@@ -191,11 +190,18 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
   printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
     .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
+  printerFolder.add(visualizer.config, 'multipleToolheads').name('Multiple Toolheads')
+    .onChange((v: boolean) => { visualizer.printer.multipleToolheads = v; });
+  printerFolder.add(visualizer.config, 'purgeTower').name('Purge Tower')
+    .onChange((v: boolean) => { visualizer.printer.purgeTower = v; });
+
+  // Per-extruder parameters, plus the button to add another extruder.
+  extrudersFolder = addExtrudersFolder(visualizer, printerFolder);
 
   printerFolder.close();
 
   const slicerFolder = settingFolder.addFolder('slicer settings');
-  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.useFermatSpirals = v});
+  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.globalVTPSettings.useFermatSpirals = v});
   slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
   slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
   slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
@@ -283,10 +289,30 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   
   const saveFolder = gui.addFolder('Saving');
   // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
-  saveFolder.add({ saveGcode: () => {
-    const gcode = visualizer.printer.build_start_gcode(1) + 
+    saveFolder.add({ saveGcode: () => {
+    const usedExtruders: number[] = []
+    let firstExtruder = null;
+    for(const model of visualizer.everydayModelList){
+      if(!model.extruders) continue;
+      for(const n of model.extruders){
+        if(usedExtruders.indexOf(n) == -1){
+          usedExtruders.push(n)
+        }
+      }
+      if(firstExtruder === null || firstExtruder === undefined){
+        firstExtruder = model.firstExtruder
+      }
+    }
+    if(!visualizer.everydayModelList || firstExtruder === null){
+      console.warn("no gcode to save")
+      return;
+    }
+    console.log("Using Extruders", usedExtruders);
+    console.log("first extruder",firstExtruder)
+    console.log("Extruders:",visualizer.printer.extruders);
+    const gcode = visualizer.printer.build_start_gcode(firstExtruder!,usedExtruders) + 
                   visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
-                  visualizer.printer.end_gcode;
+                  visualizer.printer.build_end_gcode(usedExtruders);
 
     visualizer.saveGcodeToFile(gcode, "toolpath")
   } }, 'saveGcode').name('Save Toolpath G-Code');
@@ -314,16 +340,21 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     const toolpath = generateFoamToolpath(visualizer, models);
     console.log('Generated toolpath:', toolpath);
     
-    if (!toolpath || !toolpath.foam) {
+    if (!toolpath) {
         console.warn('Failed to generate toolpath. Please try again.');
         return;
     }
-    
+    const usedExtruders: number[] = []
+    for(const point of toolpath){
+      if(point.extruder !== undefined && usedExtruders.indexOf(point.extruder) == -1){
+        usedExtruders.push(point.extruder)
+      }
+    }
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.build_start_gcode(1) + 
-                  visualizer.printer.generate_foam_gcode(toolpath.foam) + visualizer.printer.end_gcode + 
-                  visualizer.printer.end_gcode;
+    const gcode = visualizer.printer.build_start_gcode(toolpath[0].extruder !== undefined ? toolpath[0].extruder: 0,usedExtruders) + 
+                  visualizer.printer.generate_foam_gcode(toolpath) + 
+                  visualizer.printer.build_end_gcode(usedExtruders); //TODO: Why is printer end_gcode added twice? This might be a mistake.
     console.log('Generated G-code:', gcode);
     
     // Save G-code file

@@ -364,6 +364,7 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
     paramsFolder.add(modelObj.toolpathConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolder.add(modelObj.toolpathConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L'); 
     paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
     paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
     paramsFolder.add(modelObj.toolpathConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
@@ -382,6 +383,7 @@ export function addParamsFolder_EverydayModel(
         visualize_All_Layers(visualizer, modelObj);
     });
     paramsFolderInitial.add(modelObj.initialConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolderInitial.add(modelObj.initialConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
     paramsFolderInitial.add(modelObj.initialConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
     paramsFolderInitial.add(modelObj.initialConfig, 'vStar', 0.01, 5, 0.01).name('V*');
     paramsFolderInitial.add(modelObj.initialConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
@@ -410,8 +412,23 @@ export function addParamsFolder_EverydayModel(
     // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
     // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
 
+    const paramsFolderSense = modelGUIitem.addFolder('sense params');
+    paramsFolderSense.domElement.classList.add('params-folder-sense');
+
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
+        visualize_All_Layers(visualizer, modelObj);
+    });
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaL', 0.2, 100, 0.01).name('Delta L');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseVStar', 0.01, 5, 0.01).name('V*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'SenseVStarEnd', 0.01, 5, 0.01).name('End V*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStar', 0.01, 100, 0.01).name('H*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStarEnd', 0.01, 100, 0.01).name('End H*');
+    paramsFolderSense.add(modelObj.toolpathConfig, 'senseEdot', 0.01, 1000, 0.01).name('Edot');
+    
     paramsFolder.close();
     paramsFolderInitial.close();
+    paramsFolderSense.close();
 }
 
 
@@ -491,6 +508,8 @@ export function addGradientFolder(
     gradientFolder.add(selectGradient, 'selectGradientSVG').name("Select Gradient SVG");
     gradientFolder.close();
 }
+
+
 
 
 /**
