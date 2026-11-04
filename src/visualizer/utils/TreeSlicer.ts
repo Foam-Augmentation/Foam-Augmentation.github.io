@@ -842,7 +842,7 @@ export function buildChunkTree(
         rootNodes.push(currentChunkNode);
         break;
       }
-      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? 0.2 : currentChunkNode.VTPSettings.ZOffset);
+      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? 0.1 : currentChunkNode.VTPSettings.ZOffset);
       if (currentNode.children.length > 1
           || currentNode.children[0].region.height - root.region.height > nozzleHeight
           || currentNode.children[0].region.extruder !== chunkExtruder
@@ -944,7 +944,7 @@ function splitChunkTreeByOverlap(
 
       if (foundOverlap) {
         const tip = (c: ChunkNode) =>
-          c.shell ? 0.2 : c.VTPSettings.ZOffset;
+          c.shell ? 0.1 : c.VTPSettings.ZOffset;
 
         const rootMax = root.regions[root.regions.length - 1].height;
 

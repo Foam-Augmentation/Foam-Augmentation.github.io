@@ -1050,8 +1050,8 @@ function makeChunkPath(
                 ? lastLayerEndPoint.clone().sub(chunk.modelObj!.mesh.position)
                 : lastLayerEndPoint;
             path = [];
-            if (!isFirstChunkPrinted && region === chunk.regions[0] && chunk.dependentRegions?.size) { //ironing pass
-                path = generateRectilinearInfillWithHoles(region.BVH, region.contour, 0.4, scanX, shellStart);
+            if (!isFirstChunkPrinted && chunk.dependentRegions?.size) { //ironing pass
+                path = makeShellPath(region, shellStart);
                 path.forEach(p => p.ironing = !p.travel);
                 if (path.length) {
                     shellStart = path[path.length - 1].point;
@@ -1906,8 +1906,8 @@ export function generateFoamToolpath(
                 allRegions.push(region);
             })
         }
-        if(true){ //TODO: Shell
-            const shellLayers = sliceMeshIntoLayers(transformedMesh, 0.2); //TODO: unhardcode
+        if(true){ 
+            const shellLayers = sliceMeshIntoLayers(transformedMesh, 0.1); //TODO: unhardcode
             for (const { z, segments } of shellLayers) {
                 const regions = extractShellRegionsFromLayer(z, segments, visualizer.printer.extruders[0].nozzleDiameter, true ? 2 : 0); //TODO: Unhardcode, based on shell
                 allRegions.push(...regions);
