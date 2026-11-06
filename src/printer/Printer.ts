@@ -301,7 +301,7 @@ export default class Printer {
     // Tracks which nozzle geometry the extrusion math should use once the body G-code starts.
     this.activeExtruder = firstExtruder;
     const liftZ = 10;
-    const leveling = this.bedLeveling ? "G29" : "M420 S1\n";
+    const leveling = this.bedLeveling ? "G29" : "M420 S1";
 
     return `; Parameters:
 ; V* = ${this.globalVTPSettings.V_Star}
@@ -327,14 +327,14 @@ G21 ; set units to millimeters
 G90 ; use absolute coordinates
 G28 ; home axes
 G92 X0 Y0 ; tell printer all axes are 0
-G0 Z${liftZ} F2400 ; move up before heating
+G0 Z${liftZ} F2400 ; move up before probing
+${pickFirstTool}${leveling} ; probe the printbed (cold) or load the stored mesh, before any heating
 ${heaters}
 
 M83  ; extruder relative mode
 M900 K0.05 ; Filament gcode LA 1.5
 M900 K30 ; Filament gcode LA 1.0
-${pickFirstTool}
-${leveling} ; probe the printbed or use previously stored printbed mesh with hot bed and picked tool
+
 G0 Z0.200 F2400.000
 
 M204 S1000 
@@ -477,7 +477,7 @@ M204 S1000
   private extrudeRegularSegment(
     p0: THREE.Vector3,
     p1: THREE.Vector3,
-    flow: number = 1,
+    flow: number = 2, //default to 2 since it didn't seem like enough
     speed?: number,
   ): string {
     // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
