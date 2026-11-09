@@ -310,9 +310,11 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     console.log("Using Extruders", usedExtruders);
     console.log("first extruder",firstExtruder)
     console.log("Extruders:",visualizer.printer.extruders);
-    const gcode = visualizer.printer.build_start_gcode(firstExtruder!,usedExtruders) + 
-                  visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
-                  visualizer.printer.build_end_gcode(usedExtruders);
+    const modelGcode = visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n");
+    const gcode = visualizer.printer.build_start_gcode(firstExtruder!, usedExtruders, visualizer.printer.boundsFromGcode(modelGcode)) +
+              modelGcode +
+              visualizer.printer.build_end_gcode(usedExtruders);
+
 
     visualizer.saveGcodeToFile(gcode, "toolpath")
   } }, 'saveGcode').name('Save Toolpath G-Code');
@@ -352,9 +354,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     }
     // Create G-code
     console.log('Creating G-code...');
-    const gcode = visualizer.printer.build_start_gcode(toolpath[0].extruder !== undefined ? toolpath[0].extruder: 0,usedExtruders) + 
+    const gcode = visualizer.printer.build_start_gcode(toolpath[0].extruder !== undefined ? toolpath[0].extruder : 0, usedExtruders, visualizer.printer.boundsFromToolpath(toolpath)) +
                   visualizer.printer.generate_foam_gcode(toolpath) + 
-                  visualizer.printer.build_end_gcode(usedExtruders); //TODO: Why is printer end_gcode added twice? This might be a mistake.
+                  visualizer.printer.build_end_gcode(usedExtruders);
     console.log('Generated G-code:', gcode);
     
     // Save G-code file
