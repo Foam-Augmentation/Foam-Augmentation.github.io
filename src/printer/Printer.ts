@@ -178,7 +178,7 @@ export default class Printer {
     this.globalVTPSettings.H_star = toolpathConfig.hStar;
     this.globalVTPSettings.deltaL = toolpathConfig.deltaL;
     this.globalVTPSettings.deltaLEnd = toolpathConfig.deltaLEnd;
-    this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
+    this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * this.threadDiameter(0);
     this.globalVTPSettings.hStarEnd = toolpathConfig.hStarEnd;
     this.globalVTPSettings.vStarEnd = toolpathConfig.vStarEnd;
     this.globalVTPSettings.Edot = toolpathConfig.edot;
@@ -188,10 +188,34 @@ export default class Printer {
     this.senseVTPSettings.H_star = toolpathConfig.senseHStar;
     this.senseVTPSettings.deltaL = toolpathConfig.senseDeltaL;
     this.senseVTPSettings.deltaLEnd = toolpathConfig.senseDeltaLEnd;
-    this.senseVTPSettings.ZOffset = this.senseVTPSettings.H_star * (this.extruders[0].nozzleDiameter * this.extruders[0].dieSwelling);
+    this.senseVTPSettings.ZOffset = this.senseVTPSettings.H_star * this.threadDiameter(1);
     this.senseVTPSettings.hStarEnd = toolpathConfig.senseHStarEnd;
     this.senseVTPSettings.vStarEnd = toolpathConfig.SenseVStarEnd;
     this.senseVTPSettings.Edot = toolpathConfig.senseEdot;
+  }
+
+  /**
+   * The diameter of the thread coming out of an extruder: nozzle diameter times die swell.
+   * This is the d in H = H* d. Falls back to extruder 0 if the index doesn't exist
+   * (e.g. sensing settings on a single-extruder setup).
+   *
+   * @param {number} extruder The extruder index.
+   * @returns {number} The thread diameter in mm.
+   */
+  public threadDiameter(extruder: number): number {
+    const e = this.extruders[extruder] ?? this.extruders[0];
+    return e.nozzleDiameter * e.dieSwelling;
+  }
+
+  /**
+   * Returns a copy of the VTP settings for an extruder (0 = regular foam, otherwise sensing).
+   * Callers get their own object, so later updateParameters calls don't change it.
+   *
+   * @param {number} extruder The extruder index.
+   * @returns {VTPSettings} A copy of that extruder's VTP settings.
+   */
+  public getVTPSettings(extruder: number): VTPSettings {
+    return { ...(extruder == 0 ? this.globalVTPSettings : this.senseVTPSettings) };
   }
 
   /**
@@ -426,11 +450,15 @@ M204 S1000
    * @private
    * @param {THREE.Vector3} p0 - The starting point.
    * @param {THREE.Vector3} p1 - The ending point.
+   * @param {number} vStar - V* (head speed / thread speed) for this segment. Defaults to the global setting.
+   * @param {number} edot - Filament feed rate (mm/min) for this segment. Defaults to the global setting.
    * @returns {string} The G-code command for the extrusion segment.
    */
   private extrudeSingleSegment(
     p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
     p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
+    vStar: number = this.globalVTPSettings.V_Star,
+    edot: number = this.globalVTPSettings.Edot,
   ): string {
     // Extract Vector3 points regardless of input type
     const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
@@ -444,9 +472,9 @@ M204 S1000
     const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
    // console.log("gamnma ",gamma);
 
-    const S = gamma / (beta * this.globalVTPSettings.V_Star);
+    const S = gamma / (beta * vStar);
     //console.log("S ", S);
-    const F = this.globalVTPSettings.Edot / S;
+    const F = edot / S;
     //console.log("F ", F);
 
 
@@ -640,11 +668,9 @@ M204 S1000
           this.moveToPosition(currentPoint)
         );
       } else {
-        this.globalVTPSettings.V_Star = point.vStar!;
-        this.globalVTPSettings.H_star = point.hStar!;
-        this.globalVTPSettings.Edot = point.edot!;
-        this.globalVTPSettings.ZOffset = this.globalVTPSettings.H_star * (this.extruders[this.activeExtruder].nozzleDiameter * this.extruders[this.activeExtruder].dieSwelling);
-        const line = this.extrudeSingleSegment(lastTarget, currentPoint);
+        // Use the point's own V* and Edot without writing them back into globalVTPSettings:
+        // chunks may share that object, and overwriting it left the last point's values behind.
+        const line = this.extrudeSingleSegment(lastTarget, currentPoint, point.vStar, point.edot);
         body_gcode.push(
           `${line} ; V*=${point.vStar!.toFixed(4)} H*=${point.hStar!.toFixed(4)} deltaZ=${point.deltaZ?.toFixed(4) ?? this.globalVTPSettings.deltaZ.toFixed(4)} deltaL=${point.deltaL?.toFixed(4) ?? 'N/A'} Edot=${point.edot!.toFixed(4)}`
         );

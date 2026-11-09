@@ -825,7 +825,8 @@ export function buildChunkTree(
       regions: [],
       children: [],
       parent: null,
-      VTPSettings: extruder == 0 ? printer.globalVTPSettings : printer.senseVTPSettings,
+      // A copy, so later updateParameters calls (e.g. for the next model) don't change this chunk.
+      VTPSettings: printer.getVTPSettings(extruder),
       shell: root.shell,
       dependentRegions: root.shell ? new Set(root.shellDependentRegions) : undefined,
       regionDependencies: root.shell
@@ -962,10 +963,8 @@ function splitChunkTreeByOverlap(
             regions: newNodeRegions,
             children: sibling.children,
             parent: sibling,
-            VTPSettings:
-              newNodeRegions[0].extruder == 0
-                ? printer.globalVTPSettings
-                : printer.senseVTPSettings,
+            // Same chunk split in two, so it keeps the settings it was built with.
+            VTPSettings: { ...sibling.VTPSettings },
             shell: sibling.shell,
             dependentRegions: upperDeps.union,
             regionDependencies: upperDeps.map,
@@ -1001,10 +1000,7 @@ function splitChunkTreeByOverlap(
               regions: upperRegions,
               children: root.children,
               parent: root,
-              VTPSettings:
-                upperRegions[0].extruder == 0
-                  ? printer.globalVTPSettings
-                  : printer.senseVTPSettings,
+              VTPSettings: { ...root.VTPSettings },
               shell: root.shell,
               dependentRegions: upperDeps.union,
               regionDependencies: upperDeps.map,

@@ -96,7 +96,7 @@ You can make foam gradients on the x and y axes using an SVG file. This way, if 
     - `Layer Thickness (deltaZ)`: How far apart each layer should be from one another.
     - `Delta L`: How far apart infill lines should be from one anotherr
     - `Grid Size`: How far apart points should be sampled. Loewring this gives better accuracy but slower slicing times.
-    - `V*`: The ratio of extrusion speed and movement speed ($V_{extrude} / V_{movement}$). 
+    - `V*`: The ratio of print head speed to the speed the thread leaves the nozzle ($V_{movement} / V_{extrude}$). Values below 1 make the thread coil; at 1 and above it is laid down as a straight line or stretched.
     - `End V*`: When using a gradient, the V* value will get closer to End V* at darker sections on the gradient SVG. It will be closer to the regular V* value at lighter sections.
     - `H*`: The ratio of extrusion/nozzle height and thread diameter ($H_{nozzle} / D_{thread}$).
     - `End H*`: When using a gradient, the H* value will get closer to End H* at darker sections on the gradient SVG. It will be closer to the regular H* value at lighter sections.

@@ -773,8 +773,8 @@ function generateRectilinearInfillWithHoles(
  * left level with the bed.
  */
 interface LayerHeights {
-    /** Nozzle diameter times die swelling, which turns a point's hStar into its ZOffset. */
-    threadDiameter: number;
+    /** Nozzle diameter times die swelling for each extruder (by index), which turns a point's hStar into its ZOffset. */
+    threadDiameters: number[];
     /** The surface to drape the layers over. Leave it out for flat layers. */
     surface?: {
         /** The surface itself, as columns of sampled points. */
@@ -1162,7 +1162,7 @@ function makeChunkPath(
         const percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
         point.hStar = hStar + percent * (configToUse.hStarEnd - hStar);
         point.vStar = vStar + percent * (configToUse.vStarEnd - vStar);
-        point.edot = VTPSettings.Edot;
+        point.edot = pointLayer < initialConfig.initialFoamLayerCount ? initialConfig.edot : VTPSettings.Edot;
         point.deltaZ = configToUse.deltaZ;
         point.deltaL = configToUse.deltaL;
         point.point.add(chunk.modelObj!.mesh.position);
@@ -1198,7 +1198,10 @@ function applyLayerHeight(
     const config = modelObj.toolpathConfig;
     const position = point.point;
 
-    const pointZOffset = point.hStar! * layerHeights.threadDiameter;
+    // Each chunk is printed by a single extruder, so its thread diameter sets H = H* d.
+    const extruder = chunk.regions[0]?.extruder ?? 0;
+    const threadDiameter = layerHeights.threadDiameters[extruder] ?? layerHeights.threadDiameters[0];
+    const pointZOffset = point.hStar! * threadDiameter;
     const surface = layerHeights.surface;
 
     if (!surface) {
@@ -1966,7 +1969,6 @@ export function generateFoamToolpath(
 
     visualizer.scene.add(visualizationGroup);
 
-    const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, highestStartHeight);
     const printedRegions = new Set<string>();
     const toolpath = makeChunkTreePath(
@@ -1976,7 +1978,7 @@ export function generateFoamToolpath(
         undefined,
         false,
         undefined,
-        { threadDiameter: firstExtruder.nozzleDiameter * firstExtruder.dieSwelling },
+        { threadDiameters: visualizer.printer.extruders.map((_, i) => visualizer.printer.threadDiameter(i)) },
     );
 
     /*
@@ -2849,7 +2851,6 @@ export function generateAugmentFoamToolpath(
     transformedMesh.geometry.computeBoundingBox();
     const bbox = transformedMesh.geometry.boundingBox!;
 
-    const firstExtruder = visualizer.printer.extruders[0];
     const startPoint = new THREE.Vector3(0, 0, modelObj.mesh.position.z);
     const printedRegions = new Set<string>();
     const toolpath = makeChunkTreePath(
@@ -2860,7 +2861,7 @@ export function generateAugmentFoamToolpath(
         false,
         undefined,
         {
-            threadDiameter: firstExtruder.nozzleDiameter * firstExtruder.dieSwelling,
+            threadDiameters: visualizer.printer.extruders.map((_, i) => visualizer.printer.threadDiameter(i)),
             surface: {
                 samplePointMatrix: samplePointMatrixCopy,
                 modelMaxZ: bbox.max.z,
@@ -3016,7 +3017,7 @@ export function generateAugmentFoamToolpath(
     console.log("Print head dims ", visualizer.printer.printHeadDims);
 
     console.log("Required additional offset: " + requiredZOffsetAdditional);
-    const recommendedHStar = visualizer.printer.globalVTPSettings.H_star + requiredZOffsetAdditional / visualizer.printer.extruders[0].nozzleDiameter;
+    const recommendedHStar = visualizer.printer.globalVTPSettings.H_star + requiredZOffsetAdditional / visualizer.printer.threadDiameter(0); // H = H* d, with d including die swell
     console.log("Recommended H*: " + recommendedHStar);
     if (requiredZOffsetAdditional > 0) {
         alert("Collision detected! Recommended H* to avoid collision: " + recommendedHStar.toFixed(4));
