@@ -55,4 +55,12 @@ export interface PathPoint {
      * extruder's travel speed, as it always has. Ignored by travel, ironing and foam moves.
      */
     speed?: number;
+    /**
+     * The exact filament (mm, relative E) the move here feeds, from an outside slicer such as
+     * PrusaSlicer. When set it replaces the amount the emitter would work out for a regular
+     * segment. A travel may carry a negative amount: a retraction made while moving (a wipe).
+     */
+    extrusion?: number;
+    /** G-code lines written as they are before the move here: retractions, fan changes. */
+    preGcode?: string[];
 }

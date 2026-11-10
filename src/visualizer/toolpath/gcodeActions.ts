@@ -10,7 +10,7 @@ import {
     makePurgeLine,
     visualizeToolpath,
 } from './generateFoamToolpath';
-import { generateRegularToolpath } from './regularSlicer';
+import { sliceRegularParts } from './prusaSlicer';
 import { disposeObject3D } from '../gui/modelActions';
 import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
 import { saveGcodeToFile } from './saveGcodeToFile';
@@ -80,15 +80,18 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
 }
 
 /**
- * Slices the regular-print objects into one toolpath (all of them together, layer by layer)
- * and shows it in the scene.
+ * Slices the regular-print objects into one toolpath and shows it in the scene.
+ *
+ * In the desktop app with PrusaSlicer installed, PrusaSlicer slices them; otherwise the built-in
+ * slicer does (all of them together, layer by layer). Anything the user should know about which
+ * slicer ran is shown as a toast.
  *
  * @param {Visualizer} visualizer The visualizer holding the printer and the scene.
  * @param {EverydayModel[]} models The objects whose kind is `regular`.
- * @returns {PathPoint[]} The toolpath; empty if there is nothing to print.
- * @throws {Error} If an object's regular-print settings are invalid.
+ * @returns {Promise<PathPoint[]>} The toolpath; empty if there is nothing to print.
+ * @throws {Error} If an object's regular-print settings are invalid, or PrusaSlicer fails.
  */
-function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[]): PathPoint[] {
+async function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[]): Promise<PathPoint[]> {
     // Whatever was previewed for these objects before is about to be out of date.
     models.forEach(model => {
         disposeObject3D(model.toolpathVisualizationObject);
@@ -98,7 +101,7 @@ function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[]): Pa
         return [];
     }
 
-    const toolpath = generateRegularToolpath(
+    const { toolpath, notes } = await sliceRegularParts(
         visualizer.printer,
         models.map(model => ({
             // Rotation and scale are baked into the copy; the position is added as an offset.
@@ -108,6 +111,7 @@ function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[]): Pa
             name: model.name,
         }))
     );
+    notes.forEach(note => notify(note, 'warning'));
     if (!toolpath.length) {
         return [];
     }
@@ -192,9 +196,9 @@ export function slicePlateAndSave(visualizer: Visualizer): Promise<void> {
         return Promise.resolve();
     }
 
-    return withBusy('Slicing plate…', () => {
+    return withBusy('Slicing plate…', async () => {
         const printer = visualizer.printer;
-        const regularPath = sliceRegularModels(visualizer, regularModels);
+        const regularPath = await sliceRegularModels(visualizer, regularModels);
         // The purge line is printed once, at the very start of the file. The foam slicer adds
         // its own when it is the only thing printed; with regular prints first, it goes in front
         // of those instead.

@@ -215,6 +215,9 @@ export function validateToolpath(printer: Printer, toolpath: PathPoint[]): strin
         if (point.speed !== undefined && !(Number.isFinite(point.speed) && point.speed > 0)) {
             report('Speed must be a positive number', `point ${i} has ${point.speed}`);
         }
+        if (point.extrusion !== undefined && !Number.isFinite(point.extrusion)) {
+            report('Extrusion amount is not a number', `point ${i} has ${point.extrusion}`);
+        }
     }
 
     counts.forEach((entry, kind) => {

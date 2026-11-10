@@ -154,3 +154,18 @@ When a preset is imported, every value is checked first (type, range, allowed op
 > - Fermat spiral infill overlaps for certain geometries.
 > - Augmentation toolpaths are slightly bumpy.
 > - Rectilinear paths go over holes in models and for certain geometries print outside of the model.
+# Desktop App (PrusaSlicer)
+
+The same app also runs as a desktop app (Electron), which can slice **Regular Print** objects with [PrusaSlicer](https://www.prusa3d.com/page/prusaslicer_424/) instead of the built-in slicer. That brings in PrusaSlicer's supports, bridging, retraction, cooling and Arachne walls.
+
+1. Install PrusaSlicer. The app looks for it in the usual install folder (on Windows, `C:\Program Files\Prusa3D\PrusaSlicer\prusa-slicer-console.exe`). If it is somewhere else, use **Slicer → Locate PrusaSlicer…** or set the `PRUSA_SLICER_PATH` environment variable.
+2. Optionally, export a config from PrusaSlicer (**File → Export → Export Config**) and choose it under **Slicer → Choose PrusaSlicer Profile…**. Everything it sets is used, except the settings the app controls: each object's own Regular Print settings (layer height, walls, infill, solid layers, speed), the machine size, nozzle and filament, and the start/end G-code, skirt and wipe tower (the app's own start/end G-code, purge line and purge tower are used instead).
+3. Start the app:
+
+```bash
+npm run desktop
+```
+
+Without PrusaSlicer, or in the web version, Regular Print objects are sliced with the built-in slicer as before. Foam and augmentation slicing is unchanged.
+
+PrusaSlicer is a separate program under the AGPL-3.0 licence. The app only runs it; it is not included.

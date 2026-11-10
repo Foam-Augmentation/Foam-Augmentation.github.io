@@ -707,7 +707,17 @@ M204 S1000
         )
       }
 
-      if (point.ironing && !this.testSweep) {
+      if (point.preGcode?.length && !this.testSweep) {
+        body_gcode.push(...point.preGcode);
+      }
+
+      if (point.extrusion !== undefined && (point.regularSegment || point.travel) && !this.testSweep) {
+        // An outside slicer already worked out how much filament this move feeds; copy it as is.
+        const speed = point.speed ?? this.requireExtruder(extruder).printHead_speed_when_free_move;
+        body_gcode.push(
+          `G1 X${currentPoint.x.toFixed(6)} Y${currentPoint.y.toFixed(6)} Z${currentPoint.z.toFixed(6)} E${point.extrusion.toFixed(6)} F${speed}`
+        );
+      } else if (point.ironing && !this.testSweep) {
         body_gcode.push(
           this.extrudeRegularSegment(lastTarget, currentPoint, extruder, IRONING_FLOW, IRONING_SPEED, point.layerHeight)
         );
@@ -719,7 +729,9 @@ M204 S1000
         );
       } else if (point.travel || this.testSweep) {
         body_gcode.push(
-          this.moveToPosition(currentPoint, extruder)
+          point.speed !== undefined && !this.testSweep
+            ? `G0 X${currentPoint.x.toFixed(6)} Y${currentPoint.y.toFixed(6)} Z${currentPoint.z.toFixed(6)} F${point.speed}`
+            : this.moveToPosition(currentPoint, extruder)
         );
       } else {
         if (point.vStar === undefined || point.hStar === undefined || point.edot === undefined) {

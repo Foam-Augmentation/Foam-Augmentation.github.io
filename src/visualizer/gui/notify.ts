@@ -75,11 +75,14 @@ function setBusy(label: string | null): void {
  * has to be painted *before* the work starts — hence the two animation frames. Errors are
  * reported as a toast and re-thrown so callers can still react to them.
  *
+ * `work` may also return a promise (e.g. when it waits for PrusaSlicer); the overlay then stays
+ * up until the promise settles, and a rejection is reported the same way as a thrown error.
+ *
  * @param label What the user is waiting for, e.g. "Slicing…".
  * @param work The blocking function to run.
- * @returns Whatever `work` returns.
+ * @returns Whatever `work` returns (or resolves to).
  */
-export function withBusy<T>(label: string, work: () => T): Promise<T> {
+export function withBusy<T>(label: string, work: () => T | Promise<T>): Promise<T> {
   if (!hasDom) {
     return Promise.resolve().then(work);
   }
@@ -88,19 +91,27 @@ export function withBusy<T>(label: string, work: () => T): Promise<T> {
     setBusy(label);
 
     let started = false;
+    const fail = (error: unknown) => {
+      notify(error instanceof Error ? error.message : String(error), 'error');
+      reject(error);
+    };
     const run = () => {
       if (started) {
         return;
       }
       started = true;
+      let result: T | Promise<T>;
       try {
-        resolve(work());
+        result = work();
       } catch (error) {
-        notify(error instanceof Error ? error.message : String(error), 'error');
-        reject(error);
-      } finally {
         setBusy(null);
+        fail(error);
+        return;
       }
+      Promise.resolve(result).then(
+        value => { setBusy(null); resolve(value); },
+        error => { setBusy(null); fail(error); },
+      );
     };
 
     requestAnimationFrame(() => requestAnimationFrame(run));
