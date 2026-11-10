@@ -66,7 +66,7 @@ describe('buildPrintGcode across several models (G1)', () => {
         const printer = new Printer();
         const gcode = buildPrintGcode(printer, [modelToolpath(1, 40, 8), modelToolpath(0, 120, 5)]);
 
-        expect(count(gcode, 'G28 ; home axes')).toBe(1);
+        expect(count(gcode, 'G28 XY')).toBe(1);
         expect(count(gcode, 'lift off the purge line')).toBe(1);
         // The purge line itself: one extrusion along the front of the bed.
         expect(count(gcode, 'G1 X245.000000 Y5.000000 Z0.300000')).toBe(1);
@@ -182,15 +182,15 @@ describe('validation before emission (G5)', () => {
             foam(printer.machine_depth, printer.machine_depth_y, 0, 0), // exactly on the edge is fine
         ]).join('\n');
         expect(problems).toMatch(/X is below 0: 1 point/);
-        expect(problems).toMatch(/Y is beyond the machine's 210 mm: 1 point/);
-        expect(problems).toMatch(/Z is beyond the machine's 220 mm: 1 point/);
+        expect(problems).toMatch(/Y is beyond the machine's 360 mm: 1 point/);
+        expect(problems).toMatch(/Z is beyond the machine's 360 mm: 1 point/);
     });
 
     it('follows the configured machine size', () => {
         const printer = new Printer();
-        const toolpath = [foam(300, 10, 5, 0)];
+        const toolpath = [foam(400, 10, 5, 0)];
         expect(validateToolpath(printer, toolpath)).not.toEqual([]);
-        printer.machine_depth = 350;
+        printer.machine_depth = 450;
         expect(validateToolpath(printer, toolpath)).toEqual([]);
     });
 
@@ -227,10 +227,11 @@ describe('validation before emission (G5)', () => {
 describe('purge positions follow the printer config (G5)', () => {
     it('puts the purge tower in the far corner of the configured bed', () => {
         const printer = new Printer();
-        expect(printer.purgeTowerCenter().toArray()).toEqual([235, 195]);
-        printer.machine_depth = 360;
-        printer.machine_depth_y = 360;
+        // The default bed is a Prusa XL's 360 x 360 mm.
         expect(printer.purgeTowerCenter().toArray()).toEqual([345, 345]);
+        printer.machine_depth = 250;
+        printer.machine_depth_y = 210;
+        expect(printer.purgeTowerCenter().toArray()).toEqual([235, 195]);
     });
 });
 
@@ -326,5 +327,24 @@ describe('extrusion details', () => {
         const printer = new Printer();
         const toolpath = [travel(10, 10, 5, { extruder: 0 }), { point: new THREE.Vector3(20, 10, 5) }];
         expect(() => printer.generate_foam_gcode(toolpath, printer.createEmitterState(0))).toThrow(/missing V\*, H\* or Edot/);
+    });
+});
+
+describe('first-layer bounds in the start G-code', () => {
+    it('limits probing (M555) to what touches the bed and the lowest layer above it', () => {
+        const printer = new Printer();
+        const above = 8 + printer.globalVTPSettings.deltaZ + 1;
+        const toolpath: PathPoint[] = [
+            travel(40, 50, 0.2, { extruder: 0 }),
+            // On the bed, e.g. a purge line or the first regular layer.
+            { point: new THREE.Vector3(60, 50, 0.2), regularSegment: true },
+            { point: new THREE.Vector3(60, 80, 0.2), regularSegment: true },
+            // The lowest layer above the bed (foam starts H* up): counts.
+            { point: new THREE.Vector3(100, 90, 8), regularSegment: true },
+            // Any layer above that: does not widen the probed area.
+            { point: new THREE.Vector3(300, 300, above), regularSegment: true },
+        ];
+        const gcode = buildPrintGcode(printer, [toolpath]);
+        expect(gcode).toContain('M555 X60 Y50 W40 H40');
     });
 });

@@ -33,7 +33,6 @@ import {
     BOUNDARY_OFFSET,
     COLLISION_OFFSET_TOLERANCE,
     CURVE_AUGMENT_EXTRA_FLAT_LAYERS,
-    IRONING_LINE_SPACING,
     LAYER_INDEX_TOLERANCE,
     POINT_CLOUD_ALPHA,
     PURGE_LINE_COUNT,
@@ -926,8 +925,8 @@ function makeChunkPath(
                 ? lastLayerEndPoint.clone().sub(modelObj.mesh.position)
                 : lastLayerEndPoint;
             path = [];
-            if (!isFirstChunkPrinted && region === chunk.regions[0] && chunk.dependentRegions?.size) { //ironing pass
-                path = generateRectilinearInfillWithHoles(region.BVH, region.contour, IRONING_LINE_SPACING, scanX, shellStart);
+            if (!isFirstChunkPrinted && chunk.dependentRegions?.size) { //ironing pass: retrace the shell loops
+                path = makeShellPath(region, shellStart);
                 path.forEach(p => p.ironing = !p.travel);
                 if (path.length) {
                     shellStart = path[path.length - 1].point;
@@ -1344,7 +1343,7 @@ export function generateFoamToolpath(
     let highestStartHeight = -Infinity;
     let boundaryPath: PathPoint[] = [];
     const models = new Map<EverydayModel, ModelContext>();
-    const shellLayerHeight = printer.regularLayerHeight(0);
+    const shellLayerHeight = printer.shellLayerHeight;
 
     modelObjs.forEach(modelObj => {
         assertPositive(modelObj.toolpathConfig.deltaZ, `Layer thickness (deltaZ) of "${modelObj.name}"`);
@@ -1396,7 +1395,7 @@ export function generateFoamToolpath(
             pushAll(allRegions, extractRegionsFromLayer(z, segments, printer.threadDiameter(0), SHELL_LAYER_COUNT));
         }
 
-        // Shells are regular extrusions, sliced at the regular layer height rather than the foam's.
+        // Shells are regular extrusions, sliced at their own layer height (printer.shellLayerHeight).
         const shellLayers = sliceMeshIntoLayers(transformedMesh, shellLayerHeight);
         for (const { z, segments } of shellLayers) {
             pushAll(allRegions, extractShellRegionsFromLayer(z, segments, printer.extruders[0].nozzleDiameter, SHELL_LAYER_COUNT));
@@ -1916,7 +1915,7 @@ export function generateAugmentFoamToolpath(
         modelHeight,
         {
             threadDiameters: printer.extruders.map((_, i) => printer.threadDiameter(i)),
-            shellLayerHeight: printer.regularLayerHeight(0),
+            shellLayerHeight: printer.shellLayerHeight,
             surface: {
                 samplePointMatrix: samplePointMatrixCopy,
                 modelMaxZ: bbox.max.z,

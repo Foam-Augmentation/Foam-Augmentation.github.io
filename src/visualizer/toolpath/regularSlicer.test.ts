@@ -599,7 +599,7 @@ describe('helpers shared with the foam generator', () => {
 
         expect(gcode).not.toContain('NaN');
         expect(gcode.split('lift off the purge line').length - 1).toBe(1);
-        expect(gcode.split('G28 ; home axes').length - 1).toBe(1);
+        expect(gcode.split('G28 XY').length - 1).toBe(1);
     });
 
     it('exports getTransformedMesh, which bakes rotation and scale but not position', () => {

@@ -268,7 +268,8 @@ export function buildPrintGcode(printer: Printer, toolpaths: PathPoint[][]): str
     assertPrintable(printer, toolpath);
 
     const { first, used } = getExtruderUsage(toolpath);
-    const start = printer.build_start_gcode(first, used);
+    // The start G-code probes, and cleans the nozzle next to, the area the first layer covers.
+    const start = printer.build_start_gcode(first, used, printer.boundsFromToolpath(toolpath));
     const body = printer.generate_foam_gcode(toolpath, printer.createEmitterState(first));
     return start + body + printer.build_end_gcode();
 }
