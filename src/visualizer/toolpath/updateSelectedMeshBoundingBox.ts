@@ -56,7 +56,7 @@ export function updateSelectedMeshBoundingBox(
   visualizer.scene.add(bboxHelper);
   object.selectedRegularFoamMeshBoundingBoxHelper = bboxHelper;
 
-  // Red outline of actual geometry
+  // Outline of the actual geometry, in the foam colour (--foam in style.css)
   const outlineGeometry = new THREE.EdgesGeometry(geometry);
   const outlineMaterial = new THREE.LineBasicMaterial({
     color: 0xff0000,

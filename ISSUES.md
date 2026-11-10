@@ -190,11 +190,13 @@ Files: `src/visualizer/Visualizer.ts`, `gui/*`, `interactions/*`, `renderer/*`.
 
 ## Product design review
 
-Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes above. It looks at the app as a product: can a new user get from an STL to a G-code file, and does the screen show what is going on. The six P1 items were fixed the same day (see each item's note); D5, D8 and D23 are partly fixed as a side effect; the other 19 are open.
+Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes above. It looks at the app as a product: can a new user get from an STL to a G-code file, and does the screen show what is going on. The six P1 items were fixed the same day, and a visual restyle closed D4, D23 and D24 (see each item's note). D5, D8, D13, D25 and D26 are partly fixed; the other 14 are open.
 
 **Severity here:** `P1` blocks or misleads the main workflow · `P2` friction or missing feedback · `P3` polish.
 
 **P1 fix pass (2026-11-09):** checked with `npm run typecheck`, `npm test` (163 tests), a production build, and a dev-build run at 1024×768 on the built-in example model: empty-state card, Load Example, arming selection, a plain (no Alt) box drag, toolpath refresh after a parameter edit and after a slicer setting, the job switch, Slice Plate and Fit View. Pointer and input events were scripted, so a real mouse drag, a real file drop and the look of the result on screen were not checked. Nothing was run on a printer.
+
+**Visual restyle (2026-11-09):** one dark theme for the panel and every overlay (`style.css` rewritten around CSS variables), primary buttons for Import / Save / Slice, model cards, thin accent sliders, a gradient behind the scene, softer three-light shading, a bed with a grid, and a neutral view cube. Looked at in a dev build at 1280×800 with the example model (empty state, model loaded, selection armed, toasts). Not looked at: other window sizes, the foam job, busy overlay and tooltips. It closes D4, D23 and D24 and partly D13, D25 and D26.
 
 **How it was checked:** `verified` items were seen in a dev build at 1024×768 with a generated 60 mm dome STL (import, open every folder, arm selection, top view, box selection). `read` items come from the source only. The selection drag was simulated with scripted pointer events, so the feel of a real Alt-drag was not judged. Lighting and model shading were not judged (the test STL had no normals).
 
@@ -209,7 +211,8 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [x] **D3 · P1 · verified — the camera never frames the content.** The orbit target is the bed origin (`initRenderer.ts:54`), so on load the bed runs off the right edge. An imported model lands at the bed centre and was cut off by the window edge. "Go to Top View" centres the origin, so the model ends up in the top-right corner next to the hint and the view cube.
   **Fixed:** The camera starts in front of the bed and orbits its centre. Importing a model frames all models. Arming a selection goes to the top view centred on that model. A **Fit View** button sits under the view cube.
   Fix: orbit around the bed centre; frame the model on import; make "Go to Top View" centre the armed model; add a "Fit View" button.
-- [ ] **D4 · P2 · verified — the bed is a dashed wireframe box with no surface.** It is hard to tell whether a model rests on the bed or which edge is the front.
+- [x] **D4 · P2 · verified — the bed is a dashed wireframe box with no surface.** It is hard to tell whether a model rests on the bed or which edge is the front.
+  **Fixed:** The bed has a surface, a 10 mm grid (stronger every 50 mm) and a solid outline; the rest of the print space is drawn faintly.
   Fix: a grid plane with the front edge marked.
 - [~] **D5 · P2 · verified — import gives no confirmation and does not select the new model.** No toast, no highlight in the panel. Every model is placed at the bed centre (`modelLoader.ts:147`), so a second model lands inside the first.
   **Status: partly fixed.** A new model is framed by the camera (D3). No toast, no selection, and models still stack at the bed centre.
@@ -238,7 +241,8 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [x] **D12 · P1 · verified — the sliders cannot be used.** Slider ranges are the validation ranges (line spacing 0.2–100 mm, extrusion rate 0.01–1000 mm/min) on an 80 px track, so every default sits at the left edge and one pixel is more than 1 mm.
   **Fixed:** Each numeric spec can carry a narrower slider range (`slider` in `paramSpecs.ts`); the hard limits still apply to typed values and presets. Line spacing now slides over 0.5–5 mm and sits at 27 % of the track. **The slider ranges are estimates around the defaults and need a check by someone who prints with these parameters.**
   Fix: give each spec a narrow slider range separate from the hard limits, or drop the sliders for number fields with steppers.
-- [ ] **D13 · P2 · verified — the panel is too dense for its width.** One model adds 90 controls; fully open, the panel holds 1,831 px of content in a 758 px window. Text is 11 px and 35 of 90 labels wrap to two lines in the 300 px panel.
+- [~] **D13 · P2 · verified — the panel is too dense for its width.** One model adds 90 controls; fully open, the panel holds 1,831 px of content in a 758 px window. Text is 11 px and 35 of 90 labels wrap to two lines in the 300 px panel.
+  **Status: partly fixed.** Text is 12 px, rows are 24 px high and the panel is 340–380 px wide, so most labels fit on one line. The number of controls is unchanged.
   Fix: a wider or resizable panel; show the unit as a suffix in the value field; split Basic and Advanced.
 - [ ] **D14 · P2 · verified — Initial Layer and Sensing parameters are always shown as full copies.** Nine rows each, even with Initial Foam Layers at 0 and no sensing area. Two defaults already differ (initial extrusion rate 200 vs 35, sensing V\* 0.16 vs 0.15, `modelLoader.ts:200,214`), so a fresh model shows "differs" marks nobody set.
   Fix: make overrides opt-in per row with "Reset to Foam Value"; hide each group until it applies.
@@ -264,14 +268,17 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 
 ### Visual and layout polish
 
-- [~] **D23 · P2 · verified — the panel title is crushed when the panel overflows.** "AugPrint Foam Slicer" shrinks to 11 px high and is clipped, and the panel's last 5 px fall below the window (top 5 px + height 100%).
-  **Status: partly fixed.** The title keeps its height (25 px measured). The panel's last 5 px still fall below the window.
+- [x] **D23 · P2 · verified — the panel title is crushed when the panel overflows.** "AugPrint Foam Slicer" shrinks to 11 px high and is clipped, and the panel's last 5 px fall below the window (top 5 px + height 100%).
+  **Fixed:** The title keeps its height and the panel stays 12 px inside the window on every side.
   Fix: `.lil-gui.root > .title { flex-shrink: 0 }` and `max-height: calc(100% - 10px)`.
-- [ ] **D24 · P2 · verified — overlays are positioned against the window, not the canvas.** The Esc bar spans the full width and covers the bottom rows of the panel; the selection hint is centred on the window and touches the panel edge at 1024 px.
+- [x] **D24 · P2 · verified — overlays are positioned against the window, not the canvas.** The Esc bar spans the full width and covers the bottom rows of the panel; the selection hint is centred on the window and touches the panel edge at 1024 px.
+  **Fixed:** The selection hint, the Esc message (now a pill) and the getting-started card are centred in the part of the window the panel leaves free; toasts stack above the Esc pill.
   Fix: offset both by the panel width, or move them into one status strip over the canvas.
-- [ ] **D25 · P3 · verified — the view cube does not match the scene.** Six unrelated pastel face colours against red/green/blue axes, no home or isometric view, only faces are clickable.
+- [~] **D25 · P3 · verified — the view cube does not match the scene.** Six unrelated pastel face colours against red/green/blue axes, no home or isometric view, only faces are clickable.
+  **Status: partly fixed.** The cube is one neutral colour with drawn edges, and a Fit View button sits under it. Edges and corners are still not clickable.
   Fix: a neutral cube with axis-coloured labels, clickable edges and corners, and a Home button.
-- [ ] **D26 · P3 · read — colour has no fixed meaning.** Orange marks the foam highlight, the "differs" label and the selection hint; blue marks the selected model; hex values are spread across `style.css` and the TypeScript.
+- [~] **D26 · P3 · read — colour has no fixed meaning.** Orange marks the foam highlight, the "differs" label and the selection hint; blue marks the selected model; hex values are spread across `style.css` and the TypeScript.
+  **Status: partly fixed.** `style.css` defines every colour once as a CSS variable: blue for interactive things and the selected model, orange for the foam area, amber for "differs". Scene colours (bed, lights, toolpath) are still constants in the TypeScript.
   Fix: CSS variables for a small palette, one meaning per colour.
 - [ ] **D27 · P3 · read — mouse-only and small.** Area selection has no keyboard path, the canvas has no accessible name, text is 11 px. Below about 700 px wide the panel, hint and view cube overlap.
   Fix: a "Use Whole Model" button as the keyboard path, a canvas label, 12–13 px base text, a collapsible panel on narrow windows.

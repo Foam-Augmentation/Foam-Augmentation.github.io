@@ -225,7 +225,7 @@ function addSelectedMeshFolder(
         return false;
     };
 
-    addButton(
+    const foamAreaButton = addButton(
         selectionFolder,
         'Select Foam Area',
         'Goes to the top view of the model and arms selection: drag over the model to mark where foam is printed. Press Esc when done.',
@@ -234,6 +234,8 @@ function addSelectedMeshFolder(
             visualizer.armSelection(modelObj, 'foam');
         }
     );
+    // The step that starts an augmentation, in the colour of the foam area it draws.
+    foamAreaButton.domElement.classList.add('foam-action');
     addButton(
         selectionFolder,
         'Select Sensing Area',

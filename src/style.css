@@ -1,64 +1,363 @@
-/* add tab space to 2nd folders */
-.lil-gui .children {
-    /* kept small so deeply nested controls still have room */
-    margin-left: 12px;
-    /* 或者使用 padding-left */
+/* ==========================================================================
+   AugPrint Foam Slicer: one theme for the panel and every overlay.
+   Colours and sizes are defined once here; nothing below uses a raw hex value
+   except where it defines a token.
+   ========================================================================== */
+
+:root {
+    /* surfaces, darkest to lightest */
+    --canvas-top: #2a2f37;
+    --canvas-bottom: #15181d;
+    --surface: #1d2127;
+    --surface-raised: #272c34;
+    --surface-hover: #323843;
+    --surface-active: #3d4552;
+    --border: #353b46;
+
+    /* text */
+    --text: #e6e9ee;
+    --text-muted: #9aa3b0;
+
+    /* accent: interactive things and the selected model */
+    --accent: #5b9cff;
+    --accent-strong: #3d84f5;
+    --accent-soft: rgba(91, 156, 255, 0.16);
+
+    /* foam: the foam area on the model, and anything said about it */
+    --foam: #ff9d3c;
+    --foam-soft: rgba(255, 157, 60, 0.16);
+
+    /* status */
+    --success: #4cc38a;
+    --warning: #f5b83d;
+    --danger: #f2665c;
+
+    --radius: 6px;
+    --radius-large: 10px;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --font: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    /* the panel, and the strip of window it takes up (panel + its margins) */
+    --panel-margin: 12px;
+    --panel-width: clamp(340px, 24vw, 380px);
+    --panel-space: calc(var(--panel-width) + 2 * var(--panel-margin));
+    /* horizontal centre of the part of the window the panel leaves free */
+    --canvas-center: calc(var(--panel-space) + (100vw - var(--panel-space)) / 2);
 }
 
-/* change position for the lil-gui to the left */
+/* ----- page: the canvas fills the window, so the page itself never scrolls ----- */
+html,
+body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    /* the 3D canvas is transparent; this is what shows behind the scene */
+    background: radial-gradient(120% 90% at 60% 20%, var(--canvas-top) 0%, var(--canvas-bottom) 100%);
+    color: var(--text);
+    font-family: var(--font);
+}
+
+#myCanvasContainer canvas {
+    display: block;
+}
+
+/* ==========================================================================
+   The panel (lil-gui)
+   ========================================================================== */
+
+/* lil-gui declares its variables on every `.lil-gui` element (each folder is one), so the
+   theme has to be set on all of them, not just the root. */
+.lil-gui.root,
+.lil-gui.root .lil-gui {
+    --background-color: var(--surface);
+    --text-color: var(--text);
+    --title-background-color: transparent;
+    --title-text-color: var(--text);
+    --widget-color: var(--surface-raised);
+    --hover-color: var(--surface-hover);
+    --focus-color: var(--surface-active);
+    --number-color: var(--accent);
+    --string-color: var(--text);
+    --font-family: var(--font);
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --padding: 8px;
+    --spacing: 5px;
+    --widget-height: 24px;
+    --widget-border-radius: 4px;
+    --widget-padding: 0 0 0 6px;
+    --slider-knob-width: 3px;
+    --slider-input-width: 30%;
+    --slider-input-min-width: 52px;
+    --scrollbar-width: 8px;
+    /* labels carry units, so give them half the row */
+    --name-width: 50%;
+}
+
 .lil-gui.root {
     position: absolute;
-    top: 5px;
-    left: 5px;
+    top: var(--panel-margin);
+    left: var(--panel-margin);
+    width: var(--panel-width);
+    max-height: calc(100% - 2 * var(--panel-margin));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow);
+    overflow: hidden;
 }
 
+/* nested folders sit on the panel's surface */
+.lil-gui.root .lil-gui {
+    background: transparent;
+}
 
+.lil-gui.root > .children {
+    padding-bottom: 6px;
+}
 
+.lil-gui.root > .children::-webkit-scrollbar {
+    background: transparent;
+}
+
+.lil-gui.root > .children::-webkit-scrollbar-thumb {
+    background: var(--surface-active);
+    border: 2px solid var(--surface);
+}
+
+/* ----- titles ----- */
+
+/* long folder titles (e.g. "Presets (Applied: <file name>)") are cut off instead of wrapping
+   onto the folder below */
+.lil-gui .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-weight: 600;
+    transition: background-color 0.12s, color 0.12s;
+}
+
+.lil-gui .title:hover,
+.lil-gui .title:active {
+    background: var(--surface-raised);
+    color: var(--text);
+    opacity: 1;
+}
+
+.lil-gui .title:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    text-decoration: none;
+}
+
+.lil-gui .title:before {
+    padding-right: 6px;
+    color: var(--text-muted);
+}
+
+/* the panel title: the product name. It must keep its height when the content overflows. */
+.lil-gui.root > .title,
 .lil-gui .title.lil-gui-1st-title {
-    font-size: 16px;
+    flex-shrink: 0;
+    --title-height: 40px;
+    height: 40px;
+    line-height: 38px;
+    padding: 0 12px;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+    color: var(--text);
+    font-size: 14px;
+    letter-spacing: 0.01em;
+}
+
+/* top-level sections */
+.lil-gui.root > .children > .lil-gui > .title {
+    --title-height: 34px;
+    height: 34px;
+    line-height: 32px;
+    margin-top: 4px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.lil-gui.root > .children > .lil-gui:first-of-type > .title {
+    border-top: 0;
 }
 
 .lil-gui .title.lil-gui-2nd-title {
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .lil-gui .title.lil-gui-3rd-title {
     font-size: 12px;
 }
 
-.lil-gui.root {
-    width: 20vw;
-    min-width: 300px;
-    /* labels carry units now, so give them half the row */
-    --name-width: 52%;
+/* indent for nested folders; kept small so deeply nested controls still have room */
+.lil-gui .children {
+    margin-left: 10px;
 }
+
+.lil-gui.root > .children {
+    margin-left: 0;
+}
+
+/* a thin guide line shows which rows belong to an open nested folder */
+.lil-gui .lil-gui .lil-gui > .children {
+    border-left: 1px solid var(--border);
+}
+
+/* ----- rows ----- */
 
 /* let long labels wrap onto a second line instead of squeezing the slider */
 .lil-gui .controller:not(.function) .name {
     width: var(--name-width);
     white-space: normal;
     line-height: 1.25;
+    color: var(--text-muted);
 }
 
-/* lil gui icon style */
+.lil-gui .controller:hover .name {
+    color: var(--text);
+}
+
+.lil-gui input,
+.lil-gui .controller.option .display {
+    border: 1px solid transparent;
+    transition: border-color 0.12s, background-color 0.12s;
+}
+
+.lil-gui input:hover {
+    border-color: var(--border);
+}
+
+.lil-gui input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+}
+
+.lil-gui .controller.number input {
+    font-variant-numeric: tabular-nums;
+}
+
+/* sliders: a quiet track with an accent fill */
+.lil-gui .controller.number .slider {
+    height: 6px;
+    border-radius: 3px;
+    padding-right: 0;
+    background-color: var(--surface-active);
+    /* transparent borders make the 6 px track easy to grab without making it look taller */
+    box-sizing: content-box;
+    border: solid transparent;
+    border-width: 9px 0;
+    background-clip: padding-box;
+}
+
+.lil-gui .controller.number .slider.active {
+    background-color: var(--surface-active);
+}
+
+.lil-gui .controller.number .slider .fill {
+    height: 100%;
+    border-radius: 3px;
+    border-right: 0;
+    background: var(--accent);
+}
+
+/* checkboxes */
+.lil-gui .controller.boolean input {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-raised);
+}
+
+.lil-gui .controller.boolean input:checked {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+
+/* dropdowns */
+.lil-gui .controller.option .display {
+    border-color: var(--border);
+}
+
+.lil-gui .controller.option:hover .display {
+    background: var(--surface-hover);
+}
+
+/* ----- buttons ----- */
+.lil-gui button {
+    height: 28px;
+    line-height: 26px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    font-weight: 500;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.lil-gui button:hover {
+    border-color: var(--surface-active);
+    background: var(--surface-hover);
+}
+
+.lil-gui button:active {
+    background: var(--surface-active);
+}
+
+.lil-gui button:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* the action that finishes a job, and importing a model (see initGUI.ts) */
+.lil-gui .controller.primary-action button {
+    border-color: var(--accent-strong);
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 600;
+}
+
+.lil-gui .controller.primary-action button:hover {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+/* arming an area selection (see refreshModelGUIList.ts) */
+.lil-gui .controller.foam-action button {
+    border-color: var(--foam);
+    background: var(--foam-soft);
+    color: var(--foam);
+}
+
+.lil-gui .controller.foam-action button:hover {
+    background: rgba(255, 157, 60, 0.28);
+}
+
+.lil-gui .controller.disabled {
+    opacity: 0.4;
+}
+
+/* ----- icons and title-bar buttons ----- */
 .lil-gui-icon {
     width: 16px;
     height: 16px;
     margin: 0 6px 0 0;
     vertical-align: -3px;
-}
-
-
-/* tooltip style */
-.tippy-box {
-    font-size: 12px;
+    opacity: 0.85;
 }
 
 /* delete buttons in folder title bars (models, extruders) */
 .delete-icon {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     vertical-align: middle;
+    opacity: 0.6;
 }
 
 /* `.lil-gui button` makes every button a full-width widget, so the selector has to out-rank it */
@@ -67,77 +366,28 @@
     width: auto;
     height: auto;
     min-height: 0;
-    margin: 0 4px 0 auto;
-    padding: 2px;
+    margin: 0 2px 0 auto;
+    padding: 4px;
     border: 0;
-    border-radius: 3px;
+    border-radius: 4px;
     background: none;
     line-height: 0;
     cursor: pointer;
 }
 
 .lil-gui .delete-btn:hover {
-    background: rgba(255, 255, 255, 0.18);
+    border: 0;
+    background: rgba(242, 102, 92, 0.2);
+}
+
+.lil-gui .delete-btn:hover .delete-icon {
+    opacity: 1;
 }
 
 .lil-gui .delete-btn:focus-visible {
-    outline: 2px solid #2196F3;
+    outline: 2px solid var(--accent);
     outline-offset: 1px;
-}
-
-/* model name in a model folder's title bar */
-.model-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* a value in the initial-layer or sensing parameters that differs from the foam parameter */
-.lil-gui .controller.differs-from-foam .name {
-    color: #ffb74d;
-}
-
-.lil-gui .controller.differs-from-foam .name::after {
-    content: " \2022";
-}
-
-/* selected model highlight in GUI */
-.foam-model-item.selectedModel {
-    /* background-color: #f0f8ff; */
-    /* 浅蓝色背景 */
-    border: 1px solid #2196F3 !important;
-    /* 蓝色边框 */
-    border-radius: 4px;
-    padding: 2px 4px;
-}
-
-/* if has foam-model-item class but don't have selectedModel class */
-/* account for adding a 1px border */
-.foam-model-item:not(.selectedModel) {
-    padding: 3px 5px;
-}
-
-/* selected model highlight in GUI */
-.everyday-model-item.selectedModel {
-    /* background-color: #f0f8ff; */
-    /* 浅蓝色背景 */
-    border: 1px solid #2196F3 !important;
-    /* 蓝色边框 */
-    border-radius: 4px;
-    padding: 2px 4px;
-}
-
-/* if has foam-model-item class but don't have selectedModel class */
-/* account for adding a 1px border */
-.everyday-model-item:not(.selectedModel) {
-    padding: 3px 5px;
-}
-
-
-.controller-wrapper {
-    width: 100%;
+    box-shadow: none;
 }
 
 /* title bars that end in a delete button: text on the left, button pushed to the right */
@@ -148,152 +398,121 @@
     align-items: center;
 }
 
-.lil-gui .transform-folder {
-    --name-width: 20%;
-}
-/* page layout: the canvas fills the window, so the page itself never scrolls */
-html,
-body {
-    margin: 0;
-    height: 100%;
-    overflow: hidden;
-    background: #262626;
-}
+/* ----- model cards ----- */
 
-#myCanvasContainer canvas {
-    display: block;
-}
-
-/* bottom bar that says what Esc will do right now (see gui/bottomTooltip.ts) */
-#escDiv {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background: rgba(0, 0, 0, 0.7);
-    color: #fff;
-    text-align: center;
-    padding: 5px;
-    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    z-index: 9999;
-}
-
-/* toast messages (see gui/notify.ts) */
-#toastContainer {
-    position: fixed;
-    right: 16px;
-    bottom: 40px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-width: min(420px, calc(100vw - 32px));
-    z-index: 10000;
-    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-}
-
-.toast-message {
-    padding: 10px 14px;
-    border-radius: 4px;
-    border-left: 4px solid #2196F3;
-    background: #1f1f1f;
-    color: #ebebeb;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    cursor: pointer;
-}
-
-.toast-success { border-left-color: #4caf50; }
-.toast-warning { border-left-color: #ffb300; }
-.toast-error { border-left-color: #f44336; }
-
-/* blocking overlay shown while slicing / generating (see gui/notify.ts) */
-#busyOverlay {
-    position: fixed;
-    inset: 0;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.55);
-    color: #fff;
-    font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    z-index: 10001;
-    cursor: progress;
-}
-
-/* instructions shown on the canvas while area selection is armed (see gui/bottomTooltip.ts) */
-#selectionHint {
-    position: fixed;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    box-sizing: border-box;
-    max-width: min(560px, 40vw);
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    border-left: 4px solid #ff9800;
-    border-radius: 4px;
-    background: rgba(31, 31, 31, 0.92);
-    color: #ebebeb;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    z-index: 9998;
-}
-
-.selection-hint-button {
-    flex: none;
-    padding: 5px 10px;
-    border: 1px solid #ff9800;
-    border-radius: 3px;
-    background: none;
-    color: #ffb74d;
-    font: inherit;
-    cursor: pointer;
-}
-
-.selection-hint-button:hover,
-.selection-hint-button:focus-visible {
-    background: rgba(255, 152, 0, 0.2);
-    outline: none;
-}
-
-/* long folder titles (e.g. "Presets (Applied: <file name>)") are cut off instead of wrapping
-   onto the folder below */
-.lil-gui .title {
+/* model name in a model folder's title bar */
+.model-name {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--text);
 }
 
-/* ----- job switch: sections that only belong to augmenting are hidden in the foam job ----- */
+/* each model is a card inside the model list */
+.lil-gui .foam-model-item,
+.lil-gui .everyday-model-item {
+    margin: 6px 8px 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.02);
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+/* the selected model */
+.lil-gui .foam-model-item.selectedModel,
+.lil-gui .everyday-model-item.selectedModel {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-soft), inset 3px 0 0 var(--accent);
+}
+
+/* a value in the initial-layer or sensing parameters that differs from the foam parameter */
+.lil-gui .controller.differs-from-foam .name {
+    color: var(--warning);
+}
+
+.lil-gui .controller.differs-from-foam .name::after {
+    content: " \2022";
+}
+
+.controller-wrapper {
+    width: 100%;
+}
+
+.lil-gui .transform-folder {
+    --name-width: 20%;
+}
+
+/* job switch: sections that only belong to augmenting are hidden in the foam job */
 .lil-gui.job-foam .mesh-selection-folder {
     display: none;
 }
 
-/* the panel title must keep its height when the panel's content overflows */
-.lil-gui.root > .title {
-    flex-shrink: 0;
+/* tooltips */
+.tippy-box {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    font: 12px/1.45 var(--font);
 }
 
-/* "Fit View" button under the view cube (see Visualizer.ts) */
-#fitViewButton {
+.tippy-box > .tippy-arrow {
+    color: var(--surface-raised);
+}
+
+/* ==========================================================================
+   Things on the canvas
+   ========================================================================== */
+
+/* view cube (see gui/ViewCube.ts) and the "Fit View" button under it (see Visualizer.ts) */
+.view-cube {
     position: absolute;
-    top: 150px;
-    right: 20px;
-    width: 124px;
-    padding: 4px 0;
-    border: 1px solid #555;
-    border-radius: 4px;
-    background: rgba(31, 31, 31, 0.92);
-    color: #ebebeb;
-    font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    top: var(--panel-margin);
+    right: var(--panel-margin);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: rgba(29, 33, 39, 0.72);
+    box-shadow: var(--shadow);
     cursor: pointer;
     z-index: 1000;
 }
 
+#fitViewButton {
+    position: absolute;
+    top: calc(var(--panel-margin) + 130px);
+    right: var(--panel-margin);
+    width: 122px;
+    padding: 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(29, 33, 39, 0.9);
+    color: var(--text-muted);
+    font: 500 12px var(--font);
+    cursor: pointer;
+    z-index: 1000;
+    transition: color 0.12s, border-color 0.12s, background-color 0.12s;
+}
+
 #fitViewButton:hover,
 #fitViewButton:focus-visible {
-    border-color: #2196F3;
+    border-color: var(--accent);
+    background: var(--surface-raised);
+    color: var(--text);
     outline: none;
+}
+
+/* shared look of the floating cards over the canvas */
+#emptyState,
+#selectionHint,
+.toast-message {
+    border: 1px solid var(--border);
+    background: rgba(29, 33, 39, 0.94);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(6px);
 }
 
 /* getting-started card, shown while no model is loaded (see gui/emptyState.ts).
@@ -301,38 +520,42 @@ body {
 #emptyState {
     position: fixed;
     top: 50%;
-    left: calc(50% + 150px);
+    left: var(--canvas-center);
     transform: translate(-50%, -50%);
     box-sizing: border-box;
-    width: min(420px, calc(100vw - 340px));
-    padding: 20px 24px;
-    border: 1px solid #444;
-    border-radius: 6px;
-    background: rgba(31, 31, 31, 0.94);
-    color: #ebebeb;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    width: min(440px, calc(100vw - var(--panel-space) - 24px));
+    padding: 24px 28px;
+    border-radius: var(--radius-large);
+    font: 13px/1.55 var(--font);
     z-index: 900;
 }
 
 #emptyState h2 {
     margin: 0 0 4px;
-    font-size: 18px;
-    font-weight: 600;
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
 }
 
 #emptyState p {
-    margin: 0 0 12px;
+    margin: 0 0 16px;
+    color: var(--text-muted);
 }
 
 #emptyState ol {
-    margin: 16px 0 0;
-    padding-left: 18px;
-    color: #bdbdbd;
+    margin: 20px 0 0;
+    padding: 16px 0 0 18px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
 }
 
 #emptyState li + li {
-    margin-top: 4px;
+    margin-top: 6px;
+}
+
+#emptyState b {
+    color: var(--text);
+    font-weight: 600;
 }
 
 .empty-state-actions {
@@ -340,26 +563,36 @@ body {
     gap: 8px;
 }
 
-.empty-state-actions button {
-    padding: 7px 14px;
-    border: 1px solid #666;
-    border-radius: 4px;
-    background: none;
-    color: #ebebeb;
-    font: inherit;
+.empty-state-actions button,
+.selection-hint-button {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 500 13px var(--font);
     cursor: pointer;
-}
-
-.empty-state-actions button.empty-state-primary {
-    border-color: #2196F3;
-    background: #2196F3;
-    color: #fff;
+    transition: background-color 0.12s, border-color 0.12s;
 }
 
 .empty-state-actions button:hover,
 .empty-state-actions button:focus-visible {
-    border-color: #90caf9;
+    border-color: var(--surface-active);
+    background: var(--surface-hover);
     outline: none;
+}
+
+.empty-state-actions button.empty-state-primary {
+    border-color: var(--accent-strong);
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 600;
+}
+
+.empty-state-actions button.empty-state-primary:hover,
+.empty-state-actions button.empty-state-primary:focus-visible {
+    border-color: var(--accent);
+    background: var(--accent);
 }
 
 /* outline shown while files are dragged over the window */
@@ -369,15 +602,139 @@ body {
     display: none;
     align-items: center;
     justify-content: center;
-    border: 2px dashed #2196F3;
-    border-radius: 8px;
-    background: rgba(33, 150, 243, 0.12);
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-large);
+    background: var(--accent-soft);
     color: #fff;
-    font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    font: 600 18px var(--font);
     pointer-events: none;
     z-index: 10002;
 }
 
 body.file-drag-over #dropOverlay {
     display: flex;
+}
+
+/* instructions shown on the canvas while area selection is armed (see gui/bottomTooltip.ts) */
+#selectionHint {
+    position: fixed;
+    top: var(--panel-margin);
+    left: var(--canvas-center);
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    max-width: min(560px, calc(100vw - var(--panel-space) - 300px));
+    align-items: center;
+    gap: 14px;
+    padding: 10px 12px 10px 16px;
+    border-color: var(--foam);
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow), inset 4px 0 0 var(--foam);
+    font: 13px/1.45 var(--font);
+    z-index: 9998;
+}
+
+.selection-hint-button {
+    flex: none;
+    padding: 6px 12px;
+    border-color: var(--foam);
+    background: var(--foam-soft);
+    color: var(--foam);
+    white-space: nowrap;
+}
+
+.selection-hint-button:hover,
+.selection-hint-button:focus-visible {
+    background: rgba(255, 157, 60, 0.28);
+    outline: none;
+}
+
+/* pill at the bottom of the canvas that says what Esc will do right now (see gui/bottomTooltip.ts) */
+#escDiv {
+    position: fixed;
+    bottom: 16px;
+    left: var(--canvas-center);
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    max-width: calc(100vw - var(--panel-space) - 24px);
+    padding: 7px 16px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(21, 24, 29, 0.88);
+    color: var(--text-muted);
+    box-shadow: var(--shadow);
+    font: 12px var(--font);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 9999;
+}
+
+/* toast messages (see gui/notify.ts); they stack above the Esc pill */
+#toastContainer {
+    position: fixed;
+    right: 16px;
+    bottom: 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    z-index: 10000;
+    font: 13px/1.45 var(--font);
+}
+
+.toast-message {
+    padding: 10px 14px 10px 16px;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow), inset 4px 0 0 var(--accent);
+    cursor: pointer;
+    animation: toast-in 0.18s ease-out;
+}
+
+.toast-success { box-shadow: var(--shadow), inset 4px 0 0 var(--success); }
+.toast-warning { box-shadow: var(--shadow), inset 4px 0 0 var(--warning); }
+.toast-error { box-shadow: var(--shadow), inset 4px 0 0 var(--danger); }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* blocking overlay shown while slicing / generating (see gui/notify.ts) */
+#busyOverlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(13, 15, 18, 0.6);
+    color: var(--text);
+    font: 500 16px var(--font);
+    backdrop-filter: blur(2px);
+    z-index: 10001;
+    cursor: progress;
+}
+
+/* spinner in front of the overlay's label */
+#busyOverlay::before {
+    content: "";
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--surface-active);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: busy-spin 0.8s linear infinite;
+}
+
+@keyframes busy-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #busyOverlay::before,
+    .toast-message {
+        animation: none;
+    }
 }

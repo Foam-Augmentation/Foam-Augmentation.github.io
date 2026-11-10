@@ -30,7 +30,8 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
     // Render at the display's pixel density (capped at 2 to keep large windows fast).
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor(0x262626, 1);
+    // Transparent: the page background (a gradient, see style.css) shows behind the scene.
+    renderer.setClearColor(0x000000, 0);
 
     // Create a new Three.js Scene.
     const scene = new THREE.Scene();
@@ -68,11 +69,8 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
     orbitControls.update();
 
     // Create the cube view for the camera
-    const viewCube = new ViewCube(camera, orbitControls, {
-        size: 120,
-        position: { top: 20, right: 20 },
-        opacity: 0.9
-    });
+    // Its position comes from the `.view-cube` rule in style.css.
+    const viewCube = new ViewCube(camera, orbitControls, { size: 120 });
 
     return { renderer, scene, camera, orbitControls, printBaseObjects, viewCube };
 }

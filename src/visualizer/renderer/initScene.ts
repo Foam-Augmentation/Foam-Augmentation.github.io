@@ -1,5 +1,37 @@
 import * as THREE from 'three';
-import Printer from '../../printer/Printer'; 
+import Printer from '../../printer/Printer';
+
+/** Colours of the print bed and print space. They match the page theme in style.css. */
+const BED_COLORS = {
+  surface: 0x242a33,
+  gridMinor: 0x3a4350,
+  gridMajor: 0x4a5565,
+  outline: 0x8fa3bf,
+  volume: 0x4a5565,
+  origin: 0xf2665c,
+};
+
+/** Spacing of the bed grid lines (mm); every `GRID_MAJOR_EVERY`-th line is drawn stronger. */
+const GRID_STEP = 10;
+const GRID_MAJOR_EVERY = 5;
+
+/** Length of the axes at the bed origin (mm). */
+const AXES_LENGTH = 30;
+
+/**
+ * Builds line segments from a flat list of points, two per segment.
+ *
+ * @param {number[]} vertices x, y, z of each point.
+ * @param {number} color The line colour.
+ * @param {number} opacity The line opacity, 0 to 1.
+ * @returns {THREE.LineSegments} The lines.
+ */
+function makeLines(vertices: number[], color: number, opacity = 1): THREE.LineSegments {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  const material = new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity });
+  return new THREE.LineSegments(geometry, material);
+} 
 
 /**
  * Initializes a Three.js scene, adding lighting and a bounding box representing the printer base.
@@ -21,14 +53,20 @@ export default function initScene(
 ): THREE.Object3D[] {
   // Add lighting
   if (setLight) {
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.set(2048, 2048);
-    directionalLight.position.set(10, 10, 10);
-    scene.add(directionalLight);
+    // Sky/ground light gives every face a base level that depends on which way it points,
+    // so shapes read even where the key light does not reach.
+    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x3a414d, 1.0);
+    hemisphereLight.position.set(0, 0, 1); // "up" is +Z
+    scene.add(hemisphereLight);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1);
-    scene.add(ambientLight);
+    // Key light from the front left, above; a weaker fill from the opposite side.
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    keyLight.position.set(-0.6, -1, 1.4);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xdfe8ff, 0.35);
+    fillLight.position.set(1, 0.8, 0.5);
+    scene.add(fillLight);
   }
 
   // Remove the previous print base objects and free their GPU resources.
@@ -53,54 +91,69 @@ export default function initScene(
 
   // Draw the printer base
   if (setPrintBase) {
-    const points = [
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(xMax, 0, 0),
-      new THREE.Vector3(xMax, yMax, 0),
-      new THREE.Vector3(0, yMax, 0),
-      new THREE.Vector3(0, 0, zMax),
-      new THREE.Vector3(xMax, 0, zMax),
-      new THREE.Vector3(xMax, yMax, zMax),
-      new THREE.Vector3(0, yMax, zMax)
-    ];
+    const add = (object: THREE.Object3D): void => {
+      scene.add(object);
+      printBaseObjects.push(object);
+    };
 
-    const geometry = new THREE.BufferGeometry();
-    const vertices = new Float32Array([
-      ...points[0].toArray(), ...points[1].toArray(),
-      ...points[1].toArray(), ...points[2].toArray(),
-      ...points[2].toArray(), ...points[3].toArray(),
-      ...points[3].toArray(), ...points[0].toArray(),
-      ...points[4].toArray(), ...points[5].toArray(),
-      ...points[5].toArray(), ...points[6].toArray(),
-      ...points[6].toArray(), ...points[7].toArray(),
-      ...points[7].toArray(), ...points[4].toArray(),
-      ...points[0].toArray(), ...points[4].toArray(),
-      ...points[1].toArray(), ...points[5].toArray(),
-      ...points[2].toArray(), ...points[6].toArray(),
-      ...points[3].toArray(), ...points[7].toArray()
-    ]);
-    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+    // The bed surface, a hair below z = 0 so models and toolpaths resting on the bed do not
+    // flicker against it.
+    const surface = new THREE.Mesh(
+      new THREE.PlaneGeometry(xMax, yMax),
+      new THREE.MeshBasicMaterial({
+        color: BED_COLORS.surface,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    surface.position.set(xMax / 2, yMax / 2, -0.05);
+    surface.renderOrder = -2;
+    add(surface);
 
-    const material = new THREE.LineDashedMaterial({
-      color: 0xffffff,
-      dashSize: 10,
-      gapSize: 10
-    });
+    // Grid on the bed: a line every GRID_STEP mm, stronger every GRID_MAJOR_EVERY lines.
+    const minor: number[] = [];
+    const major: number[] = [];
+    for (let k = 1; k * GRID_STEP < xMax; k++) {
+      (k % GRID_MAJOR_EVERY === 0 ? major : minor).push(k * GRID_STEP, 0, 0, k * GRID_STEP, yMax, 0);
+    }
+    for (let k = 1; k * GRID_STEP < yMax; k++) {
+      (k % GRID_MAJOR_EVERY === 0 ? major : minor).push(0, k * GRID_STEP, 0, xMax, k * GRID_STEP, 0);
+    }
+    const minorGrid = makeLines(minor, BED_COLORS.gridMinor);
+    const majorGrid = makeLines(major, BED_COLORS.gridMajor);
+    minorGrid.renderOrder = -1;
+    majorGrid.renderOrder = -1;
+    add(minorGrid);
+    add(majorGrid);
 
-    const line = new THREE.LineSegments(geometry, material);
-    line.computeLineDistances();
-    scene.add(line);
-    printBaseObjects.push(line);
+    // Outline of the bed.
+    add(makeLines([
+      0, 0, 0, xMax, 0, 0,
+      xMax, 0, 0, xMax, yMax, 0,
+      xMax, yMax, 0, 0, yMax, 0,
+      0, yMax, 0, 0, 0, 0,
+    ], BED_COLORS.outline));
 
-    const originGeometry = new THREE.SphereGeometry(2);
-    const originMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-    const originSphere = new THREE.Mesh(originGeometry, originMaterial);
-    scene.add(originSphere);
-    printBaseObjects.push(originSphere);
+    // The rest of the print space: the four uprights and the top, drawn faintly.
+    add(makeLines([
+      0, 0, 0, 0, 0, zMax,
+      xMax, 0, 0, xMax, 0, zMax,
+      xMax, yMax, 0, xMax, yMax, zMax,
+      0, yMax, 0, 0, yMax, zMax,
+      0, 0, zMax, xMax, 0, zMax,
+      xMax, 0, zMax, xMax, yMax, zMax,
+      xMax, yMax, zMax, 0, yMax, zMax,
+      0, yMax, zMax, 0, 0, zMax,
+    ], BED_COLORS.volume, 0.45));
 
-    const axesHelper = new THREE.AxesHelper(50);
-    scene.add(axesHelper);
-    printBaseObjects.push(axesHelper);
+    // The bed origin and its axes (X red, Y green, Z blue).
+    add(new THREE.Mesh(
+      new THREE.SphereGeometry(1.5, 16, 12),
+      new THREE.MeshBasicMaterial({ color: BED_COLORS.origin })
+    ));
+    add(new THREE.AxesHelper(AXES_LENGTH));
   }
 
   return printBaseObjects;

@@ -248,9 +248,10 @@ export function addModelFromGeometry(
         // Select a material based on the model type.
         let material: THREE.Material;
         if (type === 'foam') {
-            material = new THREE.MeshStandardMaterial({ color: 0x90ee90 });
+            material = new THREE.MeshStandardMaterial({ color: 0x9fd8a8, roughness: 0.75, metalness: 0 });
         } else {
-            material = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            // A light neutral grey: the orange foam highlight and the toolpath colours read well on it.
+            material = new THREE.MeshStandardMaterial({ color: 0xc9d0da, roughness: 0.8, metalness: 0 });
         }
 
         // Create a mesh using the geometry and material.

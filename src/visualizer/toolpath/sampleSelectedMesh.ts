@@ -106,7 +106,7 @@ export function sampleSelectedMesh(visualizer: Visualizer, modelObj: EverydayMod
     // Create materials for foam and sense points.
     const pointsMaterialFoam = new THREE.PointsMaterial({
         size: 4,
-        color: 0xff0000 // red points for foam
+        color: 0xff9d3c // foam orange, as in style.css (--foam)
     });
     const pointsMaterialSense = new THREE.PointsMaterial({
         size: 4,

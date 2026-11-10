@@ -81,7 +81,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   );
   decorateSectionTitle(everydayModelFolder, './assets/icons/bottle.svg');
   const everydayModelListFolder = everydayModelFolder;
-  addButton(
+  const importButton = addButton(
     everydayModelFolder,
     'Import STL Model',
     'Load an STL file. It is placed in the middle of the print bed. STL files can also be dropped on the window.',
@@ -231,6 +231,11 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const sliceButton = treeSlicerFolder
     .add({ sliceModel: () => slicePlateAndSave(visualizer) }, 'sliceModel')
     .name('Slice Plate') as unknown as Controller;
+
+  // The action that finishes each job, and importing a model, are the panel's main buttons.
+  saveButton.domElement.classList.add('primary-action');
+  sliceButton.domElement.classList.add('primary-action');
+  importButton.domElement.classList.add('primary-action');
 
   // Tooltips for the two buttons above (looked up by position so their handlers stay untouched).
   setTip(

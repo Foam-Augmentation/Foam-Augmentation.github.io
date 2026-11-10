@@ -640,7 +640,7 @@ export default class Visualizer {
                     this.runSelectionUpdate(model);
                 } else if (!this.lassoState.dragging) {
                     notify(
-                        'Nothing to select on yet: open an everyday model in the panel and press “Select Foam Area” first.',
+                        'Nothing to select on yet: open a model in the panel and press “Select Foam Area” first.',
                         'info'
                     );
                 }

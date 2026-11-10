@@ -8,6 +8,14 @@ export interface ViewCubeOptions {
     opacity?: number;
 }
 
+/**
+ * The cube's colours. Every face is the same neutral colour, so the cube does not compete
+ * with the axis colours in the scene; the lighting tells the faces apart.
+ */
+const FACE_COLOR = 0xe3e8ef;
+const FACE_TEXT_COLOR = '#2b323d';
+const FACE_BORDER_COLOR = '#aab4c3';
+
 /** Names of the six standard views, as shown on the cube's faces. */
 export type ViewName = 'Right' | 'Left' | 'Top' | 'Bottom' | 'Front' | 'Back';
 
@@ -41,12 +49,12 @@ export class ViewCube {
      * side of the scene the camera goes to when the face is clicked.
      */
     private faces: { name: ViewName; color: number; direction: THREE.Vector3 }[] = [
-        { name: 'Right', color: 0xff6b6b, direction: new THREE.Vector3(1, 0, 0) },
-        { name: 'Left', color: 0x4ecdc4, direction: new THREE.Vector3(-1, 0, 0) },
-        { name: 'Top', color: 0x45b7d1, direction: new THREE.Vector3(0, 0, 1) },
-        { name: 'Bottom', color: 0x96ceb4, direction: new THREE.Vector3(0, 0, -1) },
-        { name: 'Front', color: 0xfeca57, direction: new THREE.Vector3(0, -1, 0) },
-        { name: 'Back', color: 0xff9ff3, direction: new THREE.Vector3(0, 1, 0) }
+        { name: 'Right', color: FACE_COLOR, direction: new THREE.Vector3(1, 0, 0) },
+        { name: 'Left', color: FACE_COLOR, direction: new THREE.Vector3(-1, 0, 0) },
+        { name: 'Top', color: FACE_COLOR, direction: new THREE.Vector3(0, 0, 1) },
+        { name: 'Bottom', color: FACE_COLOR, direction: new THREE.Vector3(0, 0, -1) },
+        { name: 'Front', color: FACE_COLOR, direction: new THREE.Vector3(0, -1, 0) },
+        { name: 'Back', color: FACE_COLOR, direction: new THREE.Vector3(0, 1, 0) }
     ];
 
     /**
@@ -77,15 +85,12 @@ export class ViewCube {
         this.canvas = document.createElement('canvas');
         this.canvas.width = this.size;
         this.canvas.height = this.size;
-        this.canvas.style.position = 'absolute';
-        this.canvas.style.top = `${options.position?.top || 20}px`;
-        this.canvas.style.right = `${options.position?.right || 20}px`;
-        this.canvas.style.border = '2px solid #333';
-        this.canvas.style.borderRadius = '8px';
-        this.canvas.style.cursor = 'pointer';
-        this.canvas.style.zIndex = '1000';
-        this.canvas.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
-        this.canvas.style.backdropFilter = 'blur(10px)';
+        // Position and frame come from the `.view-cube` rule in style.css.
+        this.canvas.className = 'view-cube';
+        if (options.position) {
+            this.canvas.style.top = `${options.position.top}px`;
+            this.canvas.style.right = `${options.position.right}px`;
+        }
         this.canvas.title = 'View cube: click a face to look at the scene from that side';
 
         document.body.appendChild(this.canvas);
@@ -142,8 +147,12 @@ export class ViewCube {
 
         context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
         context.fillRect(0, 0, canvas.width, canvas.height);
-        context.fillStyle = '#1f1f1f';
-        context.font = 'bold 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+        // A border on every face draws the cube's edges.
+        context.strokeStyle = FACE_BORDER_COLOR;
+        context.lineWidth = 6;
+        context.strokeRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = FACE_TEXT_COLOR;
+        context.font = '600 28px "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
         context.fillText(name, canvas.width / 2, canvas.height / 2);
@@ -169,25 +178,6 @@ export class ViewCube {
 
         this.cube = new THREE.Mesh(geometry, materials);
         this.scene.add(this.cube);
-
-        this.addCornerMarkers();
-    }
-
-    /** Adds small spheres on some corners as extra orientation cues. */
-    private addCornerMarkers() {
-        const sphereGeometry = new THREE.SphereGeometry(0.05, 8, 8);
-        const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-        // corner indicators
-        const corners = [
-            [0.5, 0.5, 0.5], [-0.5, 0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, -0.5]
-        ];
-
-        corners.forEach(([x, y, z]) => {
-            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-            sphere.position.set(x, y, z);
-            this.scene.add(sphere);
-        });
     }
 
     /** Hooks up clicking and hovering on the cube. */
@@ -222,7 +212,7 @@ export class ViewCube {
 
     private handleMouseMove = (event: MouseEvent) => {
         // highlight the cube while a face is hovered
-        this.canvas.style.filter = this.pickFace(event) !== null ? 'brightness(1.2)' : 'brightness(1)';
+        this.canvas.style.filter = this.pickFace(event) !== null ? 'brightness(1.12)' : 'brightness(1)';
     };
 
     /**
