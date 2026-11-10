@@ -1,3 +1,5 @@
 gcode/
 node_modules/
-bundle.js
+dist/
+.DS_Store
+.claude/
