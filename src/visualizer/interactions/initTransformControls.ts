@@ -28,8 +28,9 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
 
     // Click a model to select it and attach the move gizmo.
     canvas.addEventListener('pointerdown', (event: PointerEvent) => {
-        // Alt-drag draws an area selection; it must not also grab the model under the cursor.
-        if (event.altKey) return;
+        // A drag that draws an area selection (any drag while armed, or an Alt-drag) must not
+        // also grab the model under the cursor.
+        if (event.altKey || visualizer.selectionArmed) return;
 
         // Convert the pointer position to normalized device coordinates (NDC) of the canvas.
         const ndc = pointerToNdc(event, canvas);

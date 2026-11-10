@@ -282,12 +282,7 @@ export function updateSelection(
     }
 
     try {
-        updateSelectedMeshBoundingBox(visualizer, modelObj);
-        sampleSelectedMesh(visualizer, modelObj);
-
-        visualizer.printer.updateParameters(modelObj.toolpathConfig);
-
-        const toolpath = generateAugmentFoamToolpath(visualizer, modelObj);
+        const toolpath = regenerateSelectionToolpath(visualizer, modelObj);
         if (!toolpath) {
             notify('No toolpath was generated: the selection has no printable area. Select a larger or flatter area.', 'warning');
             return [];
@@ -298,4 +293,23 @@ export function updateSelection(
         notify(`Could not generate the toolpath: ${error instanceof Error ? error.message : String(error)}`, 'error');
         return [];
     }
+}
+
+/**
+ * Samples a model's selected area again and regenerates its toolpath and preview from the
+ * model's current parameters and placement. Used right after an area is drawn, and whenever a
+ * parameter the toolpath depends on is edited afterwards.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param modelObj - A model with a selected foam area.
+ * @returns The new toolpath, or null if the selection has no printable area.
+ * @throws {Error} If sampling or toolpath generation fails (for example an invalid grid size).
+ */
+export function regenerateSelectionToolpath(visualizer: Visualizer, modelObj: EverydayModel) {
+    updateSelectedMeshBoundingBox(visualizer, modelObj);
+    sampleSelectedMesh(visualizer, modelObj);
+
+    visualizer.printer.updateParameters(modelObj.toolpathConfig);
+
+    return generateAugmentFoamToolpath(visualizer, modelObj) ?? null;
 }

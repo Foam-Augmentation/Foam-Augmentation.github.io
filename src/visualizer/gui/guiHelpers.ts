@@ -109,7 +109,16 @@ export function addParam<T extends object>(
 
   let controller: Controller;
   if (spec.type === 'number') {
-    controller = add(target, key, spec.min, spec.max, spec.step);
+    const [sliderMin, sliderMax] = spec.slider ?? [spec.min, spec.max];
+    controller = add(target, key, sliderMin, sliderMax, spec.step);
+    if (spec.slider) {
+      // lil-gui clamps typed values to the slider's range. The slider only covers the everyday
+      // range here, so replace the clamp with the spec's hard limits: values outside the
+      // slider can still be typed into the number field. (`_clamp` is lil-gui's own hook for
+      // this; it is called for typed, dragged and arrow-key input alike.)
+      (controller as unknown as { _clamp: (value: number) => number })._clamp =
+        value => Math.min(spec.max, Math.max(spec.min, value));
+    }
   } else if (spec.type === 'enum') {
     const options: Record<string, string> = {};
     spec.options.forEach(value => { options[spec.optionLabels[value] ?? value] = value; });

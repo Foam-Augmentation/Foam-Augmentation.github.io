@@ -230,12 +230,14 @@ export class ViewCube {
      * orbit target.
      *
      * @param view - The side to look from, e.g. 'Top' to look straight down.
+     * @param distance - How far from the orbit target the camera ends up. Defaults to its
+     *                   current distance.
      */
-    public setView(view: ViewName) {
+    public setView(view: ViewName, distance?: number) {
         const face = this.faces.find(f => f.name === view);
         if (!face) return;
 
-        const distance = Math.max(
+        distance = distance ?? Math.max(
             this.mainControls.object.position.distanceTo(this.mainControls.target),
             50
         );
@@ -274,7 +276,7 @@ export class ViewCube {
     }
 
     /** Stops the camera move animation, if one is running. */
-    private cancelCameraAnimation() {
+    public cancelCameraAnimation() {
         if (this.cameraAnimationFrame !== null) {
             cancelAnimationFrame(this.cameraAnimationFrame);
             this.cameraAnimationFrame = null;

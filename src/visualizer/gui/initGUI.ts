@@ -1,5 +1,5 @@
 // src/visualizer/gui/initGUI.ts
-import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Visualizer from '../Visualizer';
 import { importSTLModel } from '../loaders/modelLoader';
 import { saveAugmentGcode, slicePlateAndSave } from '../toolpath/gcodeActions';
@@ -19,6 +19,8 @@ export interface InitGUIResult {
   saveFolder: GUI;                 // Folder for the "Save Toolpath G-Code" action.
   treeSlicerFolder: GUI;          // Folder for the "Slice Plate" action.
   presetFolder: GUI;
+  saveButton: Controller;          // The "Save Toolpath G-Code" button.
+  sliceButton: Controller;         // The "Slice Plate" button.
 }
 
 /**
@@ -41,9 +43,10 @@ function decorateSectionTitle(folder: GUI, iconUrl: string): void {
 /**
  * Initializes the GUI for the visualizer.
  *
- * The top-level folders follow the order of the workflow: import models (and, inside each
- * model, set its parameters and select the area to cover), slice, save the G-code, and
- * finally presets and settings.
+ * The panel starts with the job (augment an object, or print a model as foam). Below it the
+ * folders follow the order of the workflow: import models (and, inside each model, set its
+ * parameters and select the area to cover), then the one action that finishes the chosen job
+ * (save the G-code, or slice the plate), and finally presets and settings.
  *
  * @param visualizer - An instance of Visualizer (exported as default from Visualizer.ts).
  * @returns The GUI instance and the folders other code needs to reach.
@@ -58,23 +61,36 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     importEverydayModel: () => importSTLModel(visualizer, 'everyday'),
   };
 
-  // ----- 1. Everyday Object Models: import, parameters and area selection per model -----
+  // ----- 0. Job: which of the two workflows the panel shows -----
+  const jobController = gui
+    .add(visualizer, 'job', { 'Augment an Object': 'augment', 'Print a Foam Model': 'foam' })
+    .name('Job')
+    .onChange(() => visualizer.applyJob());
+  setTip(
+    jobController.domElement,
+    'Augment an Object: print foam onto part of an existing object. Select an area on the model, then save the G-code. ' +
+    'Print a Foam Model: print the whole model as foam with Slice Plate.'
+  );
+
+  // ----- 1. Models: import, parameters and area selection per model -----
   // The model folders are added straight into this folder (see refreshModelGUIList).
   const everydayModelFolder = addFolderWithTip(
     gui,
-    'Everyday Object Models',
-    'Objects to print foam on or to slice into foam. Import an STL, set its parameters, then select the area to cover.'
+    'Models',
+    'The object to print foam on, or the model to print as foam. Import an STL (or drop one on the window), then set its parameters.'
   );
   decorateSectionTitle(everydayModelFolder, './assets/icons/bottle.svg');
   const everydayModelListFolder = everydayModelFolder;
   addButton(
     everydayModelFolder,
-    'Import Everyday STL Model',
-    'Load an STL file. It is placed in the middle of the print bed.',
+    'Import STL Model',
+    'Load an STL file. It is placed in the middle of the print bed. STL files can also be dropped on the window.',
     importControls.importEverydayModel
   );
 
   // ----- 2. Models for Foam Slicing -----
+  // Hidden: nothing reads this list (Slice Plate slices the models above), so showing it only
+  // offered an import that led nowhere. The folder is kept because the model code refers to it.
   const modelFolder = addFolderWithTip(
     gui,
     'Models for Foam Slicing',
@@ -89,13 +105,14 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     importControls.importFoamModel
   );
   modelFolder.close();
+  modelFolder.hide();
 
   // ----- 3. Foam Slicing and 4. Save G-Code -----
   // Created here so they sit in workflow order; their buttons are added further down.
   const treeSlicerFolder = addFolderWithTip(
     gui,
     'Foam Slicing',
-    'Slice the everyday models on the plate into a foam toolpath.'
+    'Slice the models on the plate into a foam toolpath.'
   );
   const saveFolder = addFolderWithTip(
     gui,
@@ -164,7 +181,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   const selectionFolder = addFolderWithTip(
     settingFolder,
     'Selection Settings',
-    'How drawing on the canvas with Alt (Option on Mac) held selects part of a model.'
+    'How drawing on the canvas selects part of a model, once “Select Foam Area” or “Select Sensing Area” is pressed.'
   );
   addSettings(selectionFolder, ['toolMode', 'selectionMode', 'selectModel', 'liveUpdate', 'selectWireframe']);
   selectionFolder.close();
@@ -174,6 +191,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     'Printer Settings',
     'The printer: bed, print space, filament, print head and extruders.'
   );
+  // Printer and slicer settings shape the toolpath, so an edit refreshes the previews.
+  const refreshPreviews = () => visualizer.scheduleToolpathRefresh();
+  printerFolder.onFinishChange(refreshPreviews);
   addSettings(printerFolder, ['bedTemp'], syncPrinter);
   addSettings(printerFolder, ['machineDepth', 'machineDepthY', 'machineHeight'], syncPrinterAndRedrawBed);
   addSettings(
@@ -197,24 +217,29 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     ['useFermatSpirals', 'generateBoundary', 'purgeLine', 'checkCollisions', 'bedLeveling', 'testSweep'],
     syncPrinter
   );
+  slicerFolder.onFinishChange(refreshPreviews);
   slicerFolder.close();
   settingFolder.close();
 
   // ----- Save G-Code button (folder created above) -----
   // Every model's toolpath and G-code body is generated at save time, in one pass (see gcodeActions.ts).
-  saveFolder.add({ saveGcode: () => saveAugmentGcode(visualizer) }, 'saveGcode').name('Save Toolpath G-Code');
+  const saveButton = saveFolder
+    .add({ saveGcode: () => saveAugmentGcode(visualizer) }, 'saveGcode')
+    .name('Save Toolpath G-Code') as unknown as Controller;
 
   // ----- Slice Plate button (folder created above) -----
-  treeSlicerFolder.add({ sliceModel: () => slicePlateAndSave(visualizer) }, 'sliceModel').name('Slice Plate');
+  const sliceButton = treeSlicerFolder
+    .add({ sliceModel: () => slicePlateAndSave(visualizer) }, 'sliceModel')
+    .name('Slice Plate') as unknown as Controller;
 
   // Tooltips for the two buttons above (looked up by position so their handlers stay untouched).
   setTip(
     saveFolder.controllers[0]?.domElement,
-    'Download one G-code file with the toolpath of every model that has a selected area. Select an area first.'
+    'Download one G-code file with the toolpath of every model that has a selected area. Enabled once an area is selected.'
   );
   setTip(
     treeSlicerFolder.controllers[0]?.domElement,
-    'Slice every everyday model on the plate, show the toolpath and download the G-code. Large models can take a while.'
+    'Slice every model on the plate, show the toolpath and download the G-code. Enabled once a model is imported. Large models can take a while.'
   );
 
   // Turn on tooltips for every control in the panel, including ones added later.
@@ -229,6 +254,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     everydayModelListFolder,
     saveFolder,
     treeSlicerFolder,
-    presetFolder
+    presetFolder,
+    saveButton,
+    sliceButton
   };
 }

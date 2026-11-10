@@ -28,7 +28,7 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
         model => model.toolpathSamplePoints && model.toolpathSamplePoints.length > 0
     );
     if (!models.length) {
-        notify('There is no toolpath to save yet. Select a foam area on a model first (Alt-drag over it).', 'warning');
+        notify('There is no toolpath to save yet. Press “Select Foam Area” on a model and drag over it first.', 'warning');
         return Promise.resolve();
     }
 

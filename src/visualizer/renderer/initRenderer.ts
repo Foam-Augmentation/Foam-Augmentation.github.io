@@ -46,19 +46,26 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
         0.1,
         10000
     );
-    camera.position.set(
-        printer.machine_depth,
-        printer.machine_depth / 2,
-        printer.machine_height / 2
-    );
-    camera.lookAt(0, 0, 0);
+    // Start in front of the bed, a little to the right and above, looking at its centre, so the
+    // whole bed is in view (X to the right, Y away from the viewer).
+    const bedCenter = new THREE.Vector3(printer.machine_depth / 2, printer.machine_depth_y / 2, 0);
+    const bedSize = Math.max(printer.machine_depth, printer.machine_depth_y);
     camera.up.set(0, 0, 1);
+    camera.position.set(
+        bedCenter.x + bedSize * 0.35,
+        bedCenter.y - bedSize * 1.2,
+        bedSize * 0.9
+    );
+    camera.lookAt(bedCenter);
     scene.add(camera);
 
     // Initialize OrbitControls to allow user interaction with the camera.
     const orbitControls = new OrbitControls(camera, renderer.domElement);
     orbitControls.enableDamping = true;
     orbitControls.dampingFactor = 0.25;
+    // Orbit around the middle of the bed rather than its corner.
+    orbitControls.target.copy(bedCenter);
+    orbitControls.update();
 
     // Create the cube view for the camera
     const viewCube = new ViewCube(camera, orbitControls, {

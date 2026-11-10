@@ -22,6 +22,7 @@ Nothing here was tested on a physical printer. Visual findings come from DOM mea
 | App and GUI logic (A) | 0 | 7 | 7 | 2 | 16 |
 | Usability and aesthetics (U) | 0 | 4 | 8 | 4 | 16 |
 | Structure (T) | 0 | 0 | 3 | 3 | 6 |
+| Product design (D), added in the second pass | 0 | 6 | 17 | 5 | 28 |
 
 ---
 
@@ -187,6 +188,98 @@ Files: `src/visualizer/Visualizer.ts`, `gui/*`, `interactions/*`, `renderer/*`.
 
 ---
 
+## Product design review
+
+Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes above. It looks at the app as a product: can a new user get from an STL to a G-code file, and does the screen show what is going on. The six P1 items were fixed the same day (see each item's note); D5, D8 and D23 are partly fixed as a side effect; the other 19 are open.
+
+**Severity here:** `P1` blocks or misleads the main workflow · `P2` friction or missing feedback · `P3` polish.
+
+**P1 fix pass (2026-11-09):** checked with `npm run typecheck`, `npm test` (163 tests), a production build, and a dev-build run at 1024×768 on the built-in example model: empty-state card, Load Example, arming selection, a plain (no Alt) box drag, toolpath refresh after a parameter edit and after a slicer setting, the job switch, Slice Plate and Fit View. Pointer and input events were scripted, so a real mouse drag, a real file drop and the look of the result on screen were not checked. Nothing was run on a printer.
+
+**How it was checked:** `verified` items were seen in a dev build at 1024×768 with a generated 60 mm dome STL (import, open every folder, arm selection, top view, box selection). `read` items come from the source only. The selection drag was simulated with scripted pointer events, so the feel of a real Alt-drag was not judged. Lighting and model shading were not judged (the test STL had no normals).
+
+### Workflow and layout
+
+- [x] **D1 · P1 · verified — two different jobs share one panel with nothing separating them.** "Augment an object" ends in **Save Toolpath G-Code**; "print a model as foam" ends in **Slice Plate**. The two buttons sit one above the other, each in its own one-button folder, and neither says it belongs to a different job. Slice Plate slices the *everyday* models, while the "Models for Foam Slicing" list feeds nothing (N7).
+  **Fixed:** A **Job** control at the top of the panel (Augment an Object / Print a Foam Model) shows only that job's action: Save G-Code or Foam Slicing. The foam job also hides each model's Area Selection folder; the other per-model folders stay because slicing reads some of them. The dead "Models for Foam Slicing" list is hidden, not deleted. The model list is now titled "Models" and its button "Import STL Model".
+  Fix: a mode switch at the top of the panel (Augment an Object / Print a Foam Model) that shows only that job's sections. Remove the foam model list or make Slice Plate use it.
+- [x] **D2 · P1 · verified — the empty state gives no direction.** A first-time user sees bare axes and four buttons; two of them (Slice Plate, Save Toolpath G-Code) only produce a warning. Import is by file dialog only, one file at a time.
+  **Fixed:** A getting-started card shows while no model is loaded (Import STL Model, Load Example, three steps). STL files can be dropped on the window. Load Example adds a built-in 60 mm puck. Slice Plate and Save Toolpath G-Code are disabled until they can do something. The file drop was not exercised in the browser.
+  Fix: an on-canvas card ("Drop an STL here, or Import") with a "Load Example" button; accept drag-and-drop; disable Slice and Save until they can do something (rest of U2).
+- [x] **D3 · P1 · verified — the camera never frames the content.** The orbit target is the bed origin (`initRenderer.ts:54`), so on load the bed runs off the right edge. An imported model lands at the bed centre and was cut off by the window edge. "Go to Top View" centres the origin, so the model ends up in the top-right corner next to the hint and the view cube.
+  **Fixed:** The camera starts in front of the bed and orbits its centre. Importing a model frames all models. Arming a selection goes to the top view centred on that model. A **Fit View** button sits under the view cube.
+  Fix: orbit around the bed centre; frame the model on import; make "Go to Top View" centre the armed model; add a "Fit View" button.
+- [ ] **D4 · P2 · verified — the bed is a dashed wireframe box with no surface.** It is hard to tell whether a model rests on the bed or which edge is the front.
+  Fix: a grid plane with the front edge marked.
+- [~] **D5 · P2 · verified — import gives no confirmation and does not select the new model.** No toast, no highlight in the panel. Every model is placed at the bed centre (`modelLoader.ts:147`), so a second model lands inside the first.
+  **Status: partly fixed.** A new model is framed by the camera (D3). No toast, no selection, and models still stack at the bed centre.
+  Fix: select and frame the new model; place it in free bed space.
+- [ ] **D6 · P2 · read — nothing survives a reload.** Models, transforms and selected areas are lost; presets carry parameters only. There is no warning on leaving the page.
+  Fix: a project file (or autosave to browser storage) and a leave-page warning while there is unsaved work.
+
+### Area selection
+
+- [x] **D7 · P1 · verified — selecting an area takes three separate steps the app could do itself.** Press "Select Foam Area", go to the top view, then hold Alt and drag. The mode is already armed, so the Alt key adds nothing; the top view is required but left to the user. Alt-drag is also a window-move gesture on many Linux desktops (not tested).
+  **Fixed:** "Select Foam Area" / "Select Sensing Area" now release the gizmo, go to the top view of the model and arm selection; a plain left-drag draws. While armed, right-drag rotates the view (Shift + right-drag pans). Alt-drag still works as before.
+  Fix: arming switches to the top view of that model, and a plain drag draws while armed. Keep orbit on right-drag.
+- [~] **D8 · P2 · verified — the armed state is shown only in the bars, not where the user clicked.** "Select Foam Area" looks the same armed or not, the cursor does not change, and the mode stays armed after a successful selection.
+  **Status: partly fixed.** The cursor is a crosshair while armed. The button has no pressed state and the mode stays armed after a selection.
+  Fix: a pressed state on the button and a crosshair cursor on the canvas.
+- [ ] **D9 · P2 · read — a selection cannot be cleared or edited.** There is no "Clear Foam Area" and no add or subtract with Shift/Ctrl; a new drag replaces the old area. "Select Whole Model" is a checkbox three levels away in Settings › Selection Settings, as is the lasso/box choice.
+  Fix: put Lasso / Box / Whole Model / Clear next to the select buttons; Shift adds, Ctrl subtracts.
+- [x] **D10 · P1 · read — the preview goes stale when a parameter changes.** The toolpath is drawn when the area is selected. Save regenerates from the current parameters, so after any edit the file differs from what is on screen. Only layer thickness triggers a redraw (`refreshModelGUIList.ts:286`).
+  **Fixed:** Finishing an edit in a model's folder (slider released, value entered), or in Printer or Slicer Settings, regenerates the preview of every affected model that has a selected area, 300 ms after the last edit, behind the busy overlay. Buttons (Snap, Center, file pickers) and gizmo moves do not trigger it yet (N6).
+  Fix: regenerate on change (debounced), or mark the preview "out of date" with a Regenerate button.
+- [ ] **D11 · P2 · verified — a successful selection reports nothing.** No message, no numbers. The preview was thin grey and green lines with no legend for travel, purge and extruder colours.
+  Fix: a result summary (layers, path length, estimated time and filament), a colour legend and a layer slider.
+
+### Parameters panel
+
+- [x] **D12 · P1 · verified — the sliders cannot be used.** Slider ranges are the validation ranges (line spacing 0.2–100 mm, extrusion rate 0.01–1000 mm/min) on an 80 px track, so every default sits at the left edge and one pixel is more than 1 mm.
+  **Fixed:** Each numeric spec can carry a narrower slider range (`slider` in `paramSpecs.ts`); the hard limits still apply to typed values and presets. Line spacing now slides over 0.5–5 mm and sits at 27 % of the track. **The slider ranges are estimates around the defaults and need a check by someone who prints with these parameters.**
+  Fix: give each spec a narrow slider range separate from the hard limits, or drop the sliders for number fields with steppers.
+- [ ] **D13 · P2 · verified — the panel is too dense for its width.** One model adds 90 controls; fully open, the panel holds 1,831 px of content in a 758 px window. Text is 11 px and 35 of 90 labels wrap to two lines in the 300 px panel.
+  Fix: a wider or resizable panel; show the unit as a suffix in the value field; split Basic and Advanced.
+- [ ] **D14 · P2 · verified — Initial Layer and Sensing parameters are always shown as full copies.** Nine rows each, even with Initial Foam Layers at 0 and no sensing area. Two defaults already differ (initial extrusion rate 200 vs 35, sensing V\* 0.16 vs 0.15, `modelLoader.ts:200,214`), so a fresh model shows "differs" marks nobody set.
+  Fix: make overrides opt-in per row with "Reset to Foam Value"; hide each group until it applies.
+- [ ] **D15 · P2 · verified — layer-count names collide.** "Foam Layers" (Augmentation Settings) and "Initial Foam Layers" (Initial Layer Parameters) are different values, and the first is stored under the key `initialFoamLayerCount`. "Top Line Spacing" (bottom-to-top ramp) and "Gradient End V\*/H\*" (SVG gradient) are two kinds of gradient named two ways.
+  Fix: one "Layers" group showing the total; name the two ramps consistently ("Top …" for vertical, "Gradient …" for SVG).
+- [ ] **D16 · P2 · read — file pickers leave no trace.** After "Select Augment Model", "Select Bump Model" or "Select Gradient SVG" nothing shows that a file is loaded, which one, or how to remove it (`modelLoader.ts:266-348,438`).
+  Fix: show the file name with a remove button; draw the gradient or bump preview on the model.
+- [ ] **D17 · P2 · read — the transform controls are minimal.** One X/Y/Z triple changes meaning with Mode; no uniform-scale lock, no reset, and the model is not dropped back onto the bed after a rotate or scale. Any click on a model attaches the gizmo, including a click meant to start an orbit.
+  Fix: separate position / rotation / scale rows, a scale lock, Reset, auto drop-to-bed, and W/E/R shortcuts.
+- [ ] **D18 · P3 · read — printer setup is a list of raw numbers.** No printer profiles, presets exist only as `.txt` files on disk, extruders are numbered from 0 with no tie to T0/T1, and the extruder colour has a spec but no control (`extruderSettings.ts:9`).
+  Fix: a printer dropdown with built-in profiles, named presets kept in the app, a colour swatch per extruder.
+
+### Feedback and safety
+
+- [ ] **D19 · P2 · read — messages disappear before they can be used.** Errors close after 10 s and warnings after 7 s (`notify.ts:11`), with no history. The collision warning carries a recommended H\* the user then has to type from memory.
+  Fix: keep errors until dismissed, add a message log, and give the collision warning an "Apply H\*" button.
+- [ ] **D20 · P2 · read — the busy overlay has no progress and no cancel** (`notify.ts:82`). A long slice looks the same as a hung tab (S8).
+  Fix: run in a worker, show progress per layer, allow Cancel.
+- [ ] **D21 · P2 · read — saving goes straight to a download.** There is no summary of what the file contains (models, layers, temperatures, tools, time). Slice Plate slices and downloads in one click, so the result cannot be inspected first.
+  Fix: Slice → preview and summary → Export.
+- [ ] **D22 · P2 · read — delete uses the browser's `confirm()` and has no undo.**
+  Fix: delete at once and offer Undo in the toast.
+
+### Visual and layout polish
+
+- [~] **D23 · P2 · verified — the panel title is crushed when the panel overflows.** "AugPrint Foam Slicer" shrinks to 11 px high and is clipped, and the panel's last 5 px fall below the window (top 5 px + height 100%).
+  **Status: partly fixed.** The title keeps its height (25 px measured). The panel's last 5 px still fall below the window.
+  Fix: `.lil-gui.root > .title { flex-shrink: 0 }` and `max-height: calc(100% - 10px)`.
+- [ ] **D24 · P2 · verified — overlays are positioned against the window, not the canvas.** The Esc bar spans the full width and covers the bottom rows of the panel; the selection hint is centred on the window and touches the panel edge at 1024 px.
+  Fix: offset both by the panel width, or move them into one status strip over the canvas.
+- [ ] **D25 · P3 · verified — the view cube does not match the scene.** Six unrelated pastel face colours against red/green/blue axes, no home or isometric view, only faces are clickable.
+  Fix: a neutral cube with axis-coloured labels, clickable edges and corners, and a Home button.
+- [ ] **D26 · P3 · read — colour has no fixed meaning.** Orange marks the foam highlight, the "differs" label and the selection hint; blue marks the selected model; hex values are spread across `style.css` and the TypeScript.
+  Fix: CSS variables for a small palette, one meaning per colour.
+- [ ] **D27 · P3 · read — mouse-only and small.** Area selection has no keyboard path, the canvas has no accessible name, text is 11 px. Below about 700 px wide the panel, hint and view cube overlap.
+  Fix: a "Use Whole Model" button as the keyboard path, a canvas label, 12–13 px base text, a collapsible panel on narrow windows.
+- [ ] **D28 · P3 · read — help lives only in the README.** No link to it from the app, no first-run walkthrough, no sample model in the repo.
+  Fix: a "?" link in the panel title, a three-step first-run overlay, and a bundled example STL.
+
+---
+
 ## Structure
 
 - [~] **T1 · P2 — hidden mutable state on `Printer`** (`activeExtruder`, global VTP settings) is the root of G1, G2, G4 and G7.
@@ -243,3 +336,12 @@ Files: `src/visualizer/Visualizer.ts`, `gui/*`, `interactions/*`, `renderer/*`.
 - Preset files have a `presetVersion 2` line and carry every per-model parameter; old files still import. An invalid line rejects the whole file.
 - Downloads are timestamped: `<model>_<date>-<time>.gcode`, `augprint-preset_<date>-<time>.txt`.
 - Control labels were renamed (config keys and preset keys were not); the README parameter sections were updated to match.
+
+**Design fix pass (D1, D2, D3, D7, D10, D12)**
+
+- The panel has a Job control; Save G-Code shows only when augmenting and Foam Slicing only when printing a foam model. "Models for Foam Slicing" is hidden.
+- "Everyday Object Models" is now "Models"; "Import Everyday STL Model" is now "Import STL Model".
+- While area selection is armed, left-drag draws and right-drag rotates the view. Alt is no longer needed.
+- Editing a parameter regenerates the on-screen toolpath of models with a selected area. G-code output is unchanged: Save already regenerated from the current parameters.
+- Sliders cover a narrower range than the limits; values outside the slider can still be typed.
+- Slice Plate and Save Toolpath G-Code are disabled until there is a model / a selected area.

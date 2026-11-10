@@ -2,7 +2,7 @@
 
 # How to use
 1. **Import the Model**
-Click `Import Everyday STL Model` and select an `stl` file to import. The app should load the model into the center of the print bed automatically. You can move it around and scale/rotate it however you'd like in the `Transform` folder of the model.
+First choose the `Job` at the top of the panel: `Augment an Object` (print foam onto part of an existing object) or `Print a Foam Model` (print the whole model as foam). Then click `Import STL Model` and select an `stl` file to import, or drop the file on the window. `Load Example` on the start card adds a small built-in model to try the app with. The app should load the model into the center of the print bed automatically. You can move it around and scale/rotate it however you'd like in the `Transform` folder of the model.
 <div align="center" style="margin: 20px;">
     <img src="src/images/select-model.png" width="300">
 </div>
@@ -26,13 +26,13 @@ Click `Import Everyday STL Model` and select an `stl` file to import. The app sh
 </div>
 
 3. **Generate the Toolpath**
-- For augmentation, press `Select Foam Area` in the `Area Selection` folder of the model you want to augment. A hint appears on the canvas: position your camera above the model looking directly down at it (the hint's `Go to Top View` button or the `Top` face of the view cube does this), then hold `alt` (windows) or `option` (Mac) and draw with left cursor down to use lasso or rectangular selection to select part of the mesh. This may take a second, but after you wait you should see a visualization show up. Press `Esc` to stop selecting.
+- For augmentation, press `Select Foam Area` in the `Area Selection` folder of the model you want to augment. The camera moves to the top view of the model and a hint appears on the canvas. Draw with the left mouse button down to use lasso or rectangular selection to select part of the mesh (right-drag rotates the view while selecting; the hint's `Back to Top View` button returns to the top view). This may take a second, but after you wait you should see a visualization show up. If you change a parameter afterwards, the visualization is regenerated. Press `Esc` to stop selecting.
 <div align="center", style="margin: 20px;">
     <img src="src/images/lasso-select.png" width="300">
     <img src="src/images/augmentation.png" width="307">
 </div>
 
-- For foam slicing, press `Slice Plate` under the `Foam Slicing` folder. With this, you should be prompted to save the G-Code and see a visualization show up after it's done slicing.
+- For foam slicing, set `Job` to `Print a Foam Model` and press `Slice Plate` under the `Foam Slicing` folder. With this, you should be prompted to save the G-Code and see a visualization show up after it's done slicing.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/foam-slicing.png" width="300" style="margin-bottom: 20px;"><br>
@@ -40,7 +40,7 @@ Click `Import Everyday STL Model` and select an `stl` file to import. The app sh
 </div>
 
 4. **Save the G-Code**
-- Hit the `Save Toolpath G-Code` button under the `Save G-Code` folder to download the gcode file for the foam printing toolpath. The G-Code should have already automatically downloaded if you did foam slicing rather than augmentation.
+- When augmenting, hit the `Save Toolpath G-Code` button under the `Save G-Code` folder (enabled once an area is selected) to download the gcode file for the foam printing toolpath. The G-Code should have already automatically downloaded if you did foam slicing rather than augmentation.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/saving.png" width="300">

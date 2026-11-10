@@ -22,6 +22,12 @@ export interface NumberSpec {
   step: number;
   /** True when only whole numbers are valid. */
   integer?: boolean;
+  /**
+   * The range the slider covers, when it should be narrower than `min`..`max`. `min` and
+   * `max` are the hard limits (what may be typed in, and what a preset may hold); a slider
+   * stretched over them would put every everyday value in its first few pixels.
+   */
+  slider?: readonly [number, number];
 }
 
 /** An on/off parameter. */
@@ -45,8 +51,16 @@ export interface EnumSpec {
 export type ParamSpec = NumberSpec | BooleanSpec | EnumSpec;
 
 /** Shorthand for a numeric spec. */
-function num(label: string, min: number, max: number, step: number, tip: string, integer = false): NumberSpec {
-  return { type: 'number', label, tip, min, max, step, integer };
+function num(
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+  tip: string,
+  integer = false,
+  slider?: readonly [number, number]
+): NumberSpec {
+  return slider ? { type: 'number', label, tip, min, max, step, integer, slider } : { type: 'number', label, tip, min, max, step, integer };
 }
 
 /** Shorthand for a boolean spec. */
@@ -62,7 +76,7 @@ export const SETTING_SPECS = {
   toolMode: {
     type: 'enum',
     label: 'Selection Tool',
-    tip: 'Shape drawn while holding Alt (Option on Mac) and dragging: a free-form lasso or a rectangle.',
+    tip: 'Shape drawn when dragging over a model to select an area: a free-form lasso or a rectangle.',
     options: ['lasso', 'box'],
     optionLabels: { lasso: 'Lasso (Free Draw)', box: 'Box (Rectangle)' },
   } as EnumSpec,
@@ -83,10 +97,10 @@ export const SETTING_SPECS = {
 
   // ----- printer -----
   bedTemp: num('Bed Temperature (°C)', 0, 110, 1, 'Heated bed temperature.'),
-  machineDepth: num('Bed Width X (mm)', 1, 1000, 1, 'Size of the print space along X.'),
-  machineDepthY: num('Bed Depth Y (mm)', 1, 1000, 1, 'Size of the print space along Y.'),
-  machineHeight: num('Build Height Z (mm)', 1, 2000, 1, 'Height of the print space.'),
-  filamentDiameter: num('Filament Diameter (mm)', 0.1, 5, 0.01, 'Diameter of the filament being used.'),
+  machineDepth: num('Bed Width X (mm)', 1, 1000, 1, 'Size of the print space along X.', false, [100, 500]),
+  machineDepthY: num('Bed Depth Y (mm)', 1, 1000, 1, 'Size of the print space along Y.', false, [100, 500]),
+  machineHeight: num('Build Height Z (mm)', 1, 2000, 1, 'Height of the print space.', false, [100, 500]),
+  filamentDiameter: num('Filament Diameter (mm)', 0.1, 5, 0.01, 'Diameter of the filament being used.', false, [1, 3]),
   printHeadMinX: num('Print Head Min X (mm)', -100, 0, 0.01, 'Left edge of the print head, measured from the nozzle at (0, 0). Used for collision detection.'),
   printHeadMinY: num('Print Head Min Y (mm)', -100, 0, 0.01, 'Front edge of the print head, measured from the nozzle at (0, 0). Used for collision detection.'),
   printHeadMaxX: num('Print Head Max X (mm)', 0, 100, 0.01, 'Right edge of the print head, measured from the nozzle at (0, 0). Used for collision detection.'),
@@ -113,12 +127,12 @@ export const SETTING_SPECS = {
 
 /** Per-extruder parameters (fields of `Extruder` in Printer.ts). */
 export const EXTRUDER_SPECS = {
-  nozzleDiameter: num('Nozzle Diameter (mm)', 0.05, 2, 0.01, 'Diameter of this extruder\'s nozzle.'),
-  nozzleLength: num('Nozzle Length (mm)', 0, 100, 0.01, 'Length of the nozzle from its tip to the base of the print head.'),
-  dieSwelling: num('Die Swell Factor', 0.1, 2, 0.01, 'How much the thread widens as it leaves the nozzle (thread diameter ÷ nozzle diameter).'),
-  print_temp_extruder: num('Print Temperature (°C)', 0, 300, 1, 'Nozzle temperature while this extruder is printing.'),
+  nozzleDiameter: num('Nozzle Diameter (mm)', 0.05, 2, 0.01, 'Diameter of this extruder\'s nozzle.', false, [0.1, 1.2]),
+  nozzleLength: num('Nozzle Length (mm)', 0, 100, 0.01, 'Length of the nozzle from its tip to the base of the print head.', false, [0, 20]),
+  dieSwelling: num('Die Swell Factor', 0.1, 2, 0.01, 'How much the thread widens as it leaves the nozzle (thread diameter ÷ nozzle diameter).', false, [0.5, 2]),
+  print_temp_extruder: num('Print Temperature (°C)', 0, 300, 1, 'Nozzle temperature while this extruder is printing.', false, [150, 300]),
   idle_temp_extruder: num('Idle Temperature (°C)', 0, 300, 1, 'Standby temperature while this extruder is parked.'),
-  printHead_speed_when_free_move: num('Travel Speed (mm/min)', 1, 10000, 1, 'Print head speed for moves that do not extrude.'),
+  printHead_speed_when_free_move: num('Travel Speed (mm/min)', 1, 10000, 1, 'Print head speed for moves that do not extrude.', false, [100, 6000]),
   color: num('Color', 0, 0xffffff, 1, 'Display colour of this extruder\'s toolpath (RGB as a number).', true),
 } as const;
 
@@ -136,24 +150,24 @@ const TIP_EDOT = 'Filament feed rate. Raising it speeds up both extrusion and pr
  * The `sense…` keys repeat the foam parameters for areas selected as sensing areas.
  */
 export const MODEL_SPECS = {
-  deltaZ: num('Layer Thickness ΔZ (mm)', 0.05, 20, 0.01, TIP_DELTA_Z),
-  deltaL: num('Line Spacing ΔL (mm)', 0.2, 100, 0.01, TIP_DELTA_L),
-  deltaLEnd: num('Top Line Spacing ΔL (mm)', 0.01, 10, 0.01, TIP_DELTA_L_END),
-  gridSize: num('Sampling Grid Size (mm)', 0.2, 100, 0.01, 'How far apart the surface is sampled. Smaller is more accurate but slower.'),
-  vStar: num('Speed Ratio V*', 0.01, 5, 0.01, TIP_V_STAR),
-  vStarEnd: num('Gradient End V*', 0.01, 5, 0.01, TIP_V_STAR_END),
-  hStar: num('Height Ratio H*', 0.01, 100, 0.01, TIP_H_STAR),
-  hStarEnd: num('Gradient End H*', 0.01, 100, 0.01, TIP_H_STAR_END),
-  edot: num('Extrusion Rate Edot (mm/min)', 0.01, 1000, 0.01, TIP_EDOT),
+  deltaZ: num('Layer Thickness ΔZ (mm)', 0.05, 20, 0.01, TIP_DELTA_Z, false, [0.2, 3]),
+  deltaL: num('Line Spacing ΔL (mm)', 0.2, 100, 0.01, TIP_DELTA_L, false, [0.5, 5]),
+  deltaLEnd: num('Top Line Spacing ΔL (mm)', 0.01, 10, 0.01, TIP_DELTA_L_END, false, [0.5, 5]),
+  gridSize: num('Sampling Grid Size (mm)', 0.2, 100, 0.01, 'How far apart the surface is sampled. Smaller is more accurate but slower.', false, [0.2, 5]),
+  vStar: num('Speed Ratio V*', 0.01, 5, 0.01, TIP_V_STAR, false, [0.01, 1]),
+  vStarEnd: num('Gradient End V*', 0.01, 5, 0.01, TIP_V_STAR_END, false, [0.01, 1]),
+  hStar: num('Height Ratio H*', 0.01, 100, 0.01, TIP_H_STAR, false, [1, 20]),
+  hStarEnd: num('Gradient End H*', 0.01, 100, 0.01, TIP_H_STAR_END, false, [1, 20]),
+  edot: num('Extrusion Rate Edot (mm/min)', 0.01, 1000, 0.01, TIP_EDOT, false, [1, 300]),
 
-  senseDeltaZ: num('Layer Thickness ΔZ (mm)', 0.05, 20, 0.01, TIP_DELTA_Z),
-  senseDeltaL: num('Line Spacing ΔL (mm)', 0.2, 100, 0.01, TIP_DELTA_L),
-  senseDeltaLEnd: num('Top Line Spacing ΔL (mm)', 0.01, 10, 0.01, TIP_DELTA_L_END),
-  senseVStar: num('Speed Ratio V*', 0.01, 5, 0.01, TIP_V_STAR),
-  SenseVStarEnd: num('Gradient End V*', 0.01, 5, 0.01, TIP_V_STAR_END),
-  senseHStar: num('Height Ratio H*', 0.01, 100, 0.01, TIP_H_STAR),
-  senseHStarEnd: num('Gradient End H*', 0.01, 100, 0.01, TIP_H_STAR_END),
-  senseEdot: num('Extrusion Rate Edot (mm/min)', 0.01, 1000, 0.01, TIP_EDOT),
+  senseDeltaZ: num('Layer Thickness ΔZ (mm)', 0.05, 20, 0.01, TIP_DELTA_Z, false, [0.2, 3]),
+  senseDeltaL: num('Line Spacing ΔL (mm)', 0.2, 100, 0.01, TIP_DELTA_L, false, [0.5, 5]),
+  senseDeltaLEnd: num('Top Line Spacing ΔL (mm)', 0.01, 10, 0.01, TIP_DELTA_L_END, false, [0.5, 5]),
+  senseVStar: num('Speed Ratio V*', 0.01, 5, 0.01, TIP_V_STAR, false, [0.01, 1]),
+  SenseVStarEnd: num('Gradient End V*', 0.01, 5, 0.01, TIP_V_STAR_END, false, [0.01, 1]),
+  senseHStar: num('Height Ratio H*', 0.01, 100, 0.01, TIP_H_STAR, false, [1, 20]),
+  senseHStarEnd: num('Gradient End H*', 0.01, 100, 0.01, TIP_H_STAR_END, false, [1, 20]),
+  senseEdot: num('Extrusion Rate Edot (mm/min)', 0.01, 1000, 0.01, TIP_EDOT, false, [1, 300]),
 
   initialFoamLayerCount: num('Foam Layers', 0, 20, 1, 'How many layers an augmentation gets. The total is Foam Layers + Initial Foam Layers.', true),
   middleSenseLayerCount: num('Middle Sensing Layers', 0, 10, 1, 'How many sensing layers sit between the foam layers.', true),
@@ -161,13 +175,13 @@ export const MODEL_SPECS = {
 
   curveAugment: bool('Curved Augmentation', 'Curve the augmentation into the shape of the selected augment model. With no augment model selected, the top is flattened instead.'),
   steepnessThreshold: num('Max Surface Angle (°)', 0, 90, 0.01, 'Steepest surface that still gets augmented. Lower values keep the augmentation on flatter areas, where the nozzle can print closer to the model.'),
-  flatLayerZOffset: num('Flat Layer Z Offset (mm)', 0, 100, 0.01, 'How far above the model the flat top layer sits. Only used when Curved Augmentation is on and no augment model is selected.'),
-  additionalCurveLayers: num('Additional Curve Layers', 0, 100, 1, 'Extra layers printed after the path has reached the target shape. For example, 3 prints three more flat layers after a surface has been flattened.', true),
+  flatLayerZOffset: num('Flat Layer Z Offset (mm)', 0, 100, 0.01, 'How far above the model the flat top layer sits. Only used when Curved Augmentation is on and no augment model is selected.', false, [0, 20]),
+  additionalCurveLayers: num('Additional Curve Layers', 0, 100, 1, 'Extra layers printed after the path has reached the target shape. For example, 3 prints three more flat layers after a surface has been flattened.', true, [0, 10]),
 
   generateBumps: bool('Generate Bumps', 'Add bumps across the surface of the augmentation to improve grip.'),
-  bumpSpacingX: num('Bump Spacing X (mm)', 0.1, 100, 0.01, 'Distance between bump centres along X.'),
-  bumpSpacingY: num('Bump Spacing Y (mm)', 0.1, 100, 0.01, 'Distance between bump centres along Y.'),
-  bumpScale: num('Bump Scale', 0.01, 100, 0.01, 'Scale applied to the bump model.'),
+  bumpSpacingX: num('Bump Spacing X (mm)', 0.1, 100, 0.01, 'Distance between bump centres along X.', false, [1, 50]),
+  bumpSpacingY: num('Bump Spacing Y (mm)', 0.1, 100, 0.01, 'Distance between bump centres along Y.', false, [1, 50]),
+  bumpScale: num('Bump Scale', 0.01, 100, 0.01, 'Scale applied to the bump model.', false, [0.1, 5]),
 } as const;
 
 /**
@@ -188,7 +202,7 @@ export const INITIAL_SPECS = {
 } as const;
 
 /** `EverydayModel.initialOffset`. */
-export const INITIAL_OFFSET_SPEC = num('Outward Offset (mm)', 0, 50, 0.01, 'How far the initial layers are grown outwards, for example to build a scaffold around the object when augmenting.');
+export const INITIAL_OFFSET_SPEC = num('Outward Offset (mm)', 0, 50, 0.01, 'How far the initial layers are grown outwards, for example to build a scaffold around the object when augmenting.', false, [0, 10]);
 
 export type SettingKey = keyof typeof SETTING_SPECS;
 export type ExtruderKey = keyof typeof EXTRUDER_SPECS;

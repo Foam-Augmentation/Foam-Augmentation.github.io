@@ -263,3 +263,121 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* ----- job switch: sections that only belong to augmenting are hidden in the foam job ----- */
+.lil-gui.job-foam .mesh-selection-folder {
+    display: none;
+}
+
+/* the panel title must keep its height when the panel's content overflows */
+.lil-gui.root > .title {
+    flex-shrink: 0;
+}
+
+/* "Fit View" button under the view cube (see Visualizer.ts) */
+#fitViewButton {
+    position: absolute;
+    top: 150px;
+    right: 20px;
+    width: 124px;
+    padding: 4px 0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: rgba(31, 31, 31, 0.92);
+    color: #ebebeb;
+    font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    cursor: pointer;
+    z-index: 1000;
+}
+
+#fitViewButton:hover,
+#fitViewButton:focus-visible {
+    border-color: #2196F3;
+    outline: none;
+}
+
+/* getting-started card, shown while no model is loaded (see gui/emptyState.ts).
+   Centred in the part of the window the panel leaves free. */
+#emptyState {
+    position: fixed;
+    top: 50%;
+    left: calc(50% + 150px);
+    transform: translate(-50%, -50%);
+    box-sizing: border-box;
+    width: min(420px, calc(100vw - 340px));
+    padding: 20px 24px;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background: rgba(31, 31, 31, 0.94);
+    color: #ebebeb;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    z-index: 900;
+}
+
+#emptyState h2 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+#emptyState p {
+    margin: 0 0 12px;
+}
+
+#emptyState ol {
+    margin: 16px 0 0;
+    padding-left: 18px;
+    color: #bdbdbd;
+}
+
+#emptyState li + li {
+    margin-top: 4px;
+}
+
+.empty-state-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.empty-state-actions button {
+    padding: 7px 14px;
+    border: 1px solid #666;
+    border-radius: 4px;
+    background: none;
+    color: #ebebeb;
+    font: inherit;
+    cursor: pointer;
+}
+
+.empty-state-actions button.empty-state-primary {
+    border-color: #2196F3;
+    background: #2196F3;
+    color: #fff;
+}
+
+.empty-state-actions button:hover,
+.empty-state-actions button:focus-visible {
+    border-color: #90caf9;
+    outline: none;
+}
+
+/* outline shown while files are dragged over the window */
+#dropOverlay {
+    position: fixed;
+    inset: 8px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed #2196F3;
+    border-radius: 8px;
+    background: rgba(33, 150, 243, 0.12);
+    color: #fff;
+    font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    pointer-events: none;
+    z-index: 10002;
+}
+
+body.file-drag-over #dropOverlay {
+    display: flex;
+}

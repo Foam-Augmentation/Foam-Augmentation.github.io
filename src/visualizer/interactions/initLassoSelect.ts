@@ -74,8 +74,9 @@ export function initLassoSelect(visualizer: Visualizer): void {
 
     // Pointermove event: update the lasso shape.
     canvas.addEventListener('pointermove', (e: PointerEvent) => {
-        // Only proceed if the left mouse button is pressed and the Alt key is held.
-        if ((e.buttons & 1) === 0 || !e.altKey) return;
+        // Draw with the left button while area selection is armed. Alt-drag also draws, armed or
+        // not, as it always has.
+        if ((e.buttons & 1) === 0 || !(e.altKey || visualizer.selectionArmed)) return;
 
         // Disable orbit controls during lasso selection.
         visualizer.orbitControls.enabled = false;

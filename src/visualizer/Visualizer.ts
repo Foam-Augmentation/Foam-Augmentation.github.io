@@ -1,18 +1,28 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import initGUI, { InitGUIResult } from './gui/initGUI';
 import initRenderer, { resizeRenderer } from './renderer/initRenderer';
 import initScene from './renderer/initScene';
 import initTransformControls from './interactions/initTransformControls';
 import { initLassoSelect, LassoState } from './interactions/initLassoSelect';
-import { updateSelection } from './interactions/updateSelection';
+import { regenerateSelectionToolpath, updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
-import { ViewCube } from './gui/ViewCube';
+import { ViewCube, ViewName } from './gui/ViewCube';
+import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
+
+/** The two jobs the app does. Each one ends in its own action (see `Visualizer.applyJob`). */
+export type Job = 'augment' | 'foam';
+
+/** How long to wait after the last parameter edit before regenerating toolpaths (ms). */
+const TOOLPATH_REFRESH_DELAY_MS = 300;
+
+/** Extra room around whatever the camera is framed on (1 = touching the window edge). */
+const FRAME_MARGIN = 1.25;
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
@@ -60,10 +70,17 @@ export default class Visualizer {
     private _selectedModel: EverydayModel | FoamModel | null = null;
 
     /**
-     * True while an area selection is armed, i.e. an Alt-drag on the canvas selects part of
+     * True while an area selection is armed, i.e. a drag on the canvas selects part of
      * the selected model (as foam or sensing area, see `current_selection_type`).
      */
     public selectionArmed: boolean = false;
+
+    /**
+     * What the user is doing: augmenting an object (select an area, then save its G-code) or
+     * printing whole models as foam (Slice Plate). Edited by the "Job" control in the panel;
+     * call `applyJob` after changing it.
+     */
+    public job: Job = 'augment';
 
     /**
      * Model parameters from a preset that was imported while no everyday model was loaded.
@@ -133,6 +150,15 @@ export default class Visualizer {
     public everydayModelListFolder: GUI;
 
     public saveFolder: GUI;
+    /** GUI folder holding the "Slice Plate" action. */
+    public treeSlicerFolder: GUI;
+    /** The "Save Toolpath G-Code" and "Slice Plate" buttons, so they can be enabled and disabled. */
+    private saveButton: Controller;
+    private sliceButton: Controller;
+
+    /** Models whose toolpath preview is waiting to be regenerated after a parameter edit. */
+    private staleToolpathModels = new Set<EverydayModel>();
+    private toolpathRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     /** Id of the pending animation frame of the render loop, or null when it is not running. */
     private animationFrameId: number | null = null;
@@ -255,6 +281,148 @@ export default class Visualizer {
         this.everydayModelListFolder = guiResult.everydayModelListFolder;
         //save folder for the gcode
         this.saveFolder = guiResult.saveFolder;
+        this.treeSlicerFolder = guiResult.treeSlicerFolder;
+        this.saveButton = guiResult.saveButton;
+        this.sliceButton = guiResult.sliceButton;
+
+        // "Fit View" button under the view cube.
+        const fitButton = document.createElement('button');
+        fitButton.type = 'button';
+        fitButton.id = 'fitViewButton';
+        fitButton.textContent = 'Fit View';
+        fitButton.title = 'Frame every model, or the whole bed when there is none';
+        fitButton.addEventListener('click', () => this.fitView());
+        document.body.appendChild(fitButton);
+
+        initEmptyState(this);
+        this.applyJob();
+    }
+
+    // ----- job and action state -----
+
+    /**
+     * Shows the sections that belong to the current job and hides the other job's: augmenting
+     * ends in "Save G-Code", printing a foam model ends in "Foam Slicing".
+     */
+    public applyJob(): void {
+        const augmenting = this.job === 'augment';
+        if (!augmenting) {
+            // Area selection only exists when augmenting.
+            this.clearSelection();
+        }
+        this.saveFolder.show(augmenting);
+        this.treeSlicerFolder.show(!augmenting);
+        this.gui.domElement.classList.toggle('job-foam', !augmenting);
+        this.updateActionStates();
+    }
+
+    /**
+     * Enables the action buttons only while they can do something, and shows the "getting
+     * started" card while no model is loaded. Call after models or toolpaths change.
+     */
+    public updateActionStates(): void {
+        // Called from model-list refreshes that can run before the constructor has finished.
+        if (!this.saveButton || !this.sliceButton) return;
+
+        const hasModels = this.everydayModelList.length > 0;
+        const hasToolpath = this.everydayModelList.some(model => (model.toolpathSamplePoints?.length ?? 0) > 0);
+        this.sliceButton.enable(hasModels);
+        this.saveButton.enable(hasToolpath);
+        setEmptyStateVisible(!hasModels && this.foamModelList.length === 0);
+    }
+
+    // ----- camera framing -----
+
+    /**
+     * Moves the camera so a box fills the view, and makes the box's centre the point the
+     * camera orbits around.
+     *
+     * @param box - What to look at, in world coordinates.
+     * @param view - Look from this side. Omit to keep the current viewing direction.
+     */
+    public frameBox(box: THREE.Box3, view?: ViewName): void {
+        if (box.isEmpty()) return;
+
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        // Fit the sphere in the narrower of the vertical and horizontal fields of view.
+        const halfVertical = THREE.MathUtils.degToRad(this.camera.fov) / 2;
+        const halfHorizontal = Math.atan(Math.tan(halfVertical) * this.camera.aspect);
+        const distance = Math.max(sphere.radius, 1) / Math.sin(Math.min(halfVertical, halfHorizontal)) * FRAME_MARGIN;
+
+        const target = this.orbitControls.target;
+        this.viewCube.cancelCameraAnimation();
+        if (view) {
+            target.copy(sphere.center);
+            this.viewCube.setView(view, distance);
+            return;
+        }
+
+        const direction = this.camera.position.clone().sub(target);
+        if (direction.lengthSq() < 1e-8) direction.set(0, -1, 1);
+        direction.normalize();
+        target.copy(sphere.center);
+        this.camera.position.copy(sphere.center).addScaledVector(direction, distance);
+        this.orbitControls.update();
+    }
+
+    /**
+     * Frames one model.
+     *
+     * @param model - The model to look at.
+     * @param view - Look from this side. Omit to keep the current viewing direction.
+     */
+    public frameModel(model: EverydayModel | FoamModel, view?: ViewName): void {
+        this.frameBox(new THREE.Box3().setFromObject(model.mesh), view);
+    }
+
+    /** Frames every model, or the whole bed when no model is loaded. */
+    public fitView(): void {
+        const box = new THREE.Box3();
+        [...this.everydayModelList, ...this.foamModelList].forEach(model => box.expandByObject(model.mesh));
+        if (box.isEmpty()) {
+            box.set(
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(this.printer.machine_depth, this.printer.machine_depth_y, 0)
+            );
+        }
+        this.frameBox(box);
+    }
+
+    // ----- toolpath preview upkeep -----
+
+    /**
+     * Asks for the toolpath preview to be regenerated because something it depends on changed.
+     * Requests are collected for a moment, so a burst of edits regenerates once.
+     *
+     * Only augmentation toolpaths are previewed live; a model without a selected foam area has
+     * nothing to regenerate.
+     *
+     * @param model - The model that changed. Omit when a global setting changed, to refresh
+     *                every model that has a selected area.
+     */
+    public scheduleToolpathRefresh(model?: EverydayModel): void {
+        if (this.job !== 'augment') return;
+
+        const candidates = model ? [model] : this.everydayModelList;
+        candidates.filter(m => m.selectedRegularFoamMesh).forEach(m => this.staleToolpathModels.add(m));
+        if (this.staleToolpathModels.size === 0) return;
+
+        if (this.toolpathRefreshTimer !== null) clearTimeout(this.toolpathRefreshTimer);
+        this.toolpathRefreshTimer = setTimeout(() => {
+            this.toolpathRefreshTimer = null;
+            // A model can have been deleted, or lost its selection, while the request waited.
+            const models = [...this.staleToolpathModels].filter(
+                m => this.everydayModelList.includes(m) && m.selectedRegularFoamMesh
+            );
+            this.staleToolpathModels.clear();
+            if (models.length === 0) return;
+
+            withBusy('Updating toolpath…', () => {
+                models.forEach(m => regenerateSelectionToolpath(this, m));
+            })
+                .catch(() => { /* withBusy has already shown the error */ })
+                .then(() => this.updateActionStates());
+        }, TOOLPATH_REFRESH_DELAY_MS);
     }
 
     // ----- selection state -----
@@ -304,15 +472,19 @@ export default class Visualizer {
     }
 
     /**
-     * Arms area selection: from now on an Alt-drag on the canvas selects part of this model.
+     * Arms area selection: from now on a drag on the canvas selects part of this model.
+     * The gizmo is released (a drag must draw, not move the model) and the camera goes to
+     * the top view of the model, which is where areas are drawn from.
      *
      * @param model - The everyday model to select on.
      * @param kind - Whether the drawn area becomes a foam area or a sensing area.
      */
     public armSelection(model: EverydayModel, kind: 'foam' | 'sense'): void {
+        this.transformControls.detach();
         this.selectModel(model);
         this.current_selection_type = kind;
         this.selectionArmed = true;
+        this.frameModel(model, 'Top');
         this.updateModeHints();
     }
 
@@ -357,6 +529,13 @@ export default class Visualizer {
         const gizmoModel = gizmoObject ? this.uuid_to_modelObj_Map.get(gizmoObject.uuid) : undefined;
         const armedModel = this.selectionArmed ? this._selectedModel : null;
 
+        // While armed, a left-drag draws the area, so the view rotates with a right-drag instead
+        // (Shift + right-drag pans, as usual for the orbit controls).
+        const mouseButtons = this.orbitControls.mouseButtons as { LEFT?: THREE.MOUSE | null; RIGHT?: THREE.MOUSE | null };
+        mouseButtons.LEFT = armedModel ? null : THREE.MOUSE.ROTATE;
+        mouseButtons.RIGHT = armedModel ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+        this.renderer.domElement.style.cursor = armedModel ? 'crosshair' : '';
+
         renderModeHints(
             {
                 gizmoModelName: gizmoObject ? (gizmoModel?.name ?? 'the model') : null,
@@ -364,7 +543,9 @@ export default class Visualizer {
                     ? { modelName: armedModel.name, kind: this.current_selection_type === 'sense' ? 'sense' : 'foam' }
                     : null,
             },
-            () => this.viewCube.setView('Top')
+            () => {
+                if (armedModel) this.frameModel(armedModel, 'Top');
+            }
         );
     }
 
@@ -413,7 +594,10 @@ export default class Visualizer {
             }
         })
             .catch(() => { /* withBusy has already shown the error */ })
-            .then(() => { this.selectionUpdatePending = false; });
+            .then(() => {
+                this.selectionUpdatePending = false;
+                this.updateActionStates();
+            });
     }
 
     /**
@@ -482,7 +666,12 @@ export default class Visualizer {
             cancelAnimationFrame(this.animationFrameId);
             this.animationFrameId = null;
         }
+        if (this.toolpathRefreshTimer !== null) {
+            clearTimeout(this.toolpathRefreshTimer);
+            this.toolpathRefreshTimer = null;
+        }
         window.removeEventListener('resize', this.handleResize);
+        document.getElementById('fitViewButton')?.remove();
         this.viewCube.dispose();
     }
 

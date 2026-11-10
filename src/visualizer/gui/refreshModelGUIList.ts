@@ -228,7 +228,7 @@ function addSelectedMeshFolder(
     addButton(
         selectionFolder,
         'Select Foam Area',
-        'Arms selection. Then look straight down from the top, hold Alt (Option on Mac) and drag over the model to mark where foam is printed.',
+        'Goes to the top view of the model and arms selection: drag over the model to mark where foam is printed. Press Esc when done.',
         () => {
             ensureHighlightMesh(visualizer, modelObj, 'foam');
             visualizer.armSelection(modelObj, 'foam');
@@ -237,7 +237,7 @@ function addSelectedMeshFolder(
     addButton(
         selectionFolder,
         'Select Sensing Area',
-        'Arms selection of a sensing area inside the foam area: hold Alt (Option on Mac) and drag over the model. Printed with the Sensing Parameters.',
+        'Goes to the top view of the model and arms selection of a sensing area inside the foam area: drag over the model. Printed with the Sensing Parameters.',
         () => {
             if (!hasFoamArea()) return;
             ensureHighlightMesh(visualizer, modelObj, 'sense');
@@ -480,6 +480,11 @@ function buildModelFolder(
 
         // Any edit in this model's folder can change which values differ from the foam ones.
         modelGUIitem.onChange(() => differenceMarkUpdaters.get(modelObj)?.());
+
+        // The preview is drawn from the parameters and placement, so redraw it once an edit is
+        // finished (slider released, value entered); otherwise it would show an older toolpath
+        // than the one that gets saved.
+        modelGUIitem.onFinishChange(() => visualizer.scheduleToolpathRefresh(everydayModel));
     }
 }
 
@@ -520,6 +525,9 @@ export function refreshModelGUIList(
             buildModelFolder(visualizer, guiFolder, modelObj, listType, itemClass);
         }
     });
+
+    // Models came or went: update which actions are available and the getting-started card.
+    visualizer.updateActionStates();
 }
 
 /**

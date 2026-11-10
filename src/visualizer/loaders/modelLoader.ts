@@ -67,37 +67,46 @@ function pickStlFile(onGeometry: (geometry: THREE.BufferGeometry, file: File) =>
     input.addEventListener('change', (event: Event) => {
         const target = event.target as HTMLInputElement;
         if (!target.files || target.files.length === 0) return;
-        const file = target.files[0];
-
-        const reader = new FileReader();
-
-        reader.onerror = () => {
-            console.error(`Failed to read file "${file.name}"`, reader.error);
-            notify(`Could not read "${file.name}".`, 'error');
-        };
-
-        reader.onload = () => {
-            if (!(reader.result instanceof ArrayBuffer) || reader.result.byteLength === 0) {
-                notify(`"${file.name}" is empty.`, 'error');
-                return;
-            }
-
-            const geometry = parseStlGeometry(reader.result, file.name);
-            if (!geometry) return;
-
-            try {
-                onGeometry(geometry, file);
-            } catch (err) {
-                console.error(`Failed to import "${file.name}"`, err);
-                notify(`Could not import "${file.name}": ${err instanceof Error ? err.message : err}`, 'error');
-            }
-        };
-
-        reader.readAsArrayBuffer(file);
+        readStlFile(target.files[0], onGeometry);
     });
 
     // Programmatically trigger the file input.
     input.click();
+}
+
+/**
+ * Reads and parses one STL file and hands the geometry to a callback. Anything that goes wrong
+ * is reported to the user rather than failing silently.
+ *
+ * @param file - The STL file.
+ * @param onGeometry - Called with the parsed geometry (bounding box already computed) and the file.
+ */
+function readStlFile(file: File, onGeometry: (geometry: THREE.BufferGeometry, file: File) => void): void {
+    const reader = new FileReader();
+
+    reader.onerror = () => {
+        console.error(`Failed to read file "${file.name}"`, reader.error);
+        notify(`Could not read "${file.name}".`, 'error');
+    };
+
+    reader.onload = () => {
+        if (!(reader.result instanceof ArrayBuffer) || reader.result.byteLength === 0) {
+            notify(`"${file.name}" is empty.`, 'error');
+            return;
+        }
+
+        const geometry = parseStlGeometry(reader.result, file.name);
+        if (!geometry) return;
+
+        try {
+            onGeometry(geometry, file);
+        } catch (err) {
+            console.error(`Failed to import "${file.name}"`, err);
+            notify(`Could not import "${file.name}": ${err instanceof Error ? err.message : err}`, 'error');
+        }
+    };
+
+    reader.readAsArrayBuffer(file);
 }
 
 /**
@@ -113,7 +122,111 @@ function pickStlFile(onGeometry: (geometry: THREE.BufferGeometry, file: File) =>
  * @param type - The model type to import; must be either 'foam' or 'everyday'.
  */
 export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'): void {
-    pickStlFile((geometry: THREE.BufferGeometry, file: File) => {
+    pickStlFile((geometry, file) => addModelFromGeometry(visualizer, geometry, file.name, type));
+}
+
+/**
+ * Imports STL files that were dropped on the window, each as its own model.
+ * Files that are not STL files are named in one message and skipped.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param files - The dropped files.
+ */
+export function importDroppedFiles(visualizer: Visualizer, files: File[]): void {
+    const stlFiles = files.filter(file => file.name.toLowerCase().endsWith('.stl'));
+    const skipped = files.length - stlFiles.length;
+    if (skipped > 0) {
+        notify(
+            stlFiles.length > 0
+                ? `Imported the STL files only; ${skipped} other file${skipped === 1 ? ' was' : 's were'} skipped.`
+                : 'Only STL files can be imported.',
+            'warning'
+        );
+    }
+    stlFiles.forEach(file => {
+        readStlFile(file, geometry => addModelFromGeometry(visualizer, geometry, file.name, 'everyday'));
+    });
+}
+
+/**
+ * Shape of the built-in example model (mm): a low puck that is slightly narrower at the top.
+ * `ringSpacing` is how far apart the rings of triangles on its flat faces are; the faces are
+ * finely divided so that a small drawn area still catches some triangles.
+ */
+const EXAMPLE_MODEL = { topRadius: 26, bottomRadius: 30, height: 12, segments: 64, ringSpacing: 2 };
+
+/**
+ * Builds the example puck as plain triangles (what an STL file gives): closed, outward-facing,
+ * standing on z = 0 with its axis along Z.
+ *
+ * @returns The geometry, with normals and its bounding box computed.
+ */
+export function createExampleGeometry(): THREE.BufferGeometry {
+    const { topRadius, bottomRadius, height, segments, ringSpacing } = EXAMPLE_MODEL;
+
+    // The outline from the centre of the bottom, out to the rim, up the side and back in to the
+    // centre of the top, as (radius, z) pairs. Spinning it around Z gives the puck.
+    const profile: [number, number][] = [];
+    const bottomRings = Math.ceil(bottomRadius / ringSpacing);
+    for (let i = 0; i <= bottomRings; i++) profile.push([bottomRadius * i / bottomRings, 0]);
+    const sideSteps = Math.ceil(height / ringSpacing);
+    for (let i = 1; i <= sideSteps; i++) {
+        profile.push([bottomRadius + (topRadius - bottomRadius) * i / sideSteps, height * i / sideSteps]);
+    }
+    const topRings = Math.ceil(topRadius / ringSpacing);
+    for (let i = topRings - 1; i >= 0; i--) profile.push([topRadius * i / topRings, height]);
+
+    const positions: number[] = [];
+    const vertex = (profileIndex: number, segment: number): [number, number, number] => {
+        const [radius, z] = profile[profileIndex];
+        // The last segment ends exactly where the first one starts, so the seam is closed.
+        const angle = 2 * Math.PI * (segment % segments) / segments;
+        return [radius * Math.cos(angle), radius * Math.sin(angle), z];
+    };
+    for (let i = 0; i < profile.length - 1; i++) {
+        for (let j = 0; j < segments; j++) {
+            const a = vertex(i, j);
+            const b = vertex(i + 1, j);
+            const c = vertex(i + 1, j + 1);
+            const d = vertex(i, j + 1);
+            // On the axis two corners of the quad coincide, so only one triangle is real.
+            if (profile[i + 1][0] > 0) positions.push(...a, ...c, ...b);
+            if (profile[i][0] > 0) positions.push(...a, ...d, ...c);
+        }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    return geometry;
+}
+
+/**
+ * Adds the built-in example model, so the app can be tried without an STL file at hand.
+ *
+ * @param visualizer - The Visualizer instance.
+ */
+export function loadExampleModel(visualizer: Visualizer): void {
+    addModelFromGeometry(visualizer, createExampleGeometry(), 'example-puck', 'everyday');
+}
+
+/**
+ * Turns a geometry into a model: centres it, places it in the middle of the print bed, adds it
+ * to the scene and the model list, and brings it into view.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param geometry - The model's geometry, with its bounding box computed.
+ * @param name - The model's name (normally the file name).
+ * @param type - Which list the model goes into.
+ */
+export function addModelFromGeometry(
+    visualizer: Visualizer,
+    geometry: THREE.BufferGeometry,
+    name: string,
+    type: 'foam' | 'everyday'
+): void {
+    {
         // Use the bounding box to determine the center.
         const bbox = geometry.boundingBox!;
         const center = new THREE.Vector3();
@@ -122,7 +235,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
         const zOffset = (bbox.max.z - bbox.min.z) / 2;
 
         if (bbox.max.z - bbox.min.z <= 0) {
-            notify(`"${file.name}" is completely flat, so there is nothing to slice.`, 'warning');
+            notify(`"${name}" is completely flat, so there is nothing to slice.`, 'warning');
         }
 
         // Translate geometry so its center is at the origin.
@@ -153,7 +266,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
         // Save the model in the appropriate list and update the uuid mapping.
         if (type === 'foam') {
             const foamModelObj: FoamModel = {
-                name: file.name,
+                name,
                 mesh,
                 geometry,
                 transformType: 'move',
@@ -165,7 +278,7 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
             visualizer.uuid_to_modelObj_Map.set(mesh.uuid, foamModelObj);
         } else {
             const everydayModelObj: EverydayModel = {
-                name: file.name,
+                name,
                 mesh,
                 geometry,
                 transformType: 'move',
@@ -254,7 +367,10 @@ export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'
         } else {
             refreshModelGUIList(visualizer, 'everyday');
         }
-    });
+
+        // Bring every model into view, the new one included.
+        visualizer.fitView();
+    }
 }
 
 

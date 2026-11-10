@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { createPixelGradient, parseStlGeometry, sampleMesh } from './modelLoader';
+import { createExampleGeometry, createPixelGradient, parseStlGeometry, sampleMesh } from './modelLoader';
 
 /** Builds a binary STL file holding the given triangles (9 numbers each). */
 function binaryStl(triangles: number[][]): ArrayBuffer {
@@ -127,5 +127,47 @@ describe('parseStlGeometry (S6)', () => {
     const garbage = new TextEncoder().encode('this is not an stl file').buffer as ArrayBuffer;
     expect(parseStlGeometry(garbage, 'notes.txt')).toBeNull();
     expect(parseStlGeometry(new ArrayBuffer(3), 'tiny.stl')).toBeNull();
+  });
+});
+
+describe('createExampleGeometry (D2)', () => {
+  const position = createExampleGeometry().getAttribute('position');
+  const key = (i: number) => [position.getX(i), position.getY(i), position.getZ(i)].map(v => v.toFixed(4)).join(',');
+
+  it('is closed: every edge is shared by exactly two triangles', () => {
+    const edgeUses = new Map<string, number>();
+    for (let i = 0; i < position.count; i += 3) {
+      for (const [a, b] of [[i, i + 1], [i + 1, i + 2], [i + 2, i]]) {
+        const edge = [key(a), key(b)].sort().join('|');
+        edgeUses.set(edge, (edgeUses.get(edge) ?? 0) + 1);
+      }
+    }
+    expect([...edgeUses.values()].every(uses => uses === 2)).toBe(true);
+  });
+
+  it('faces outwards, with no empty triangles', () => {
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    let volume = 0;
+    let smallestArea = Infinity;
+    for (let i = 0; i < position.count; i += 3) {
+      a.fromBufferAttribute(position, i);
+      b.fromBufferAttribute(position, i + 1);
+      c.fromBufferAttribute(position, i + 2);
+      volume += a.dot(b.clone().cross(c)) / 6;
+      smallestArea = Math.min(smallestArea, b.clone().sub(a).cross(c.clone().sub(a)).length() / 2);
+    }
+    // A frustum 12 mm high with radii 30 and 26 holds about 29,600 mm3.
+    expect(volume).toBeGreaterThan(29000);
+    expect(volume).toBeLessThan(30000);
+    expect(smallestArea).toBeGreaterThan(1e-3);
+  });
+
+  it('stands on z = 0', () => {
+    const box = new THREE.Box3().setFromBufferAttribute(position as THREE.BufferAttribute);
+    expect(box.min.z).toBeCloseTo(0);
+    expect(box.max.z).toBeCloseTo(12);
+    expect(box.max.x).toBeCloseTo(30);
   });
 });

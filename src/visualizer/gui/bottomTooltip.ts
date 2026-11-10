@@ -42,8 +42,8 @@ export function escBarText(state: ModeHintState): string | null {
  */
 export function selectionHintText(selection: NonNullable<ModeHintState['selection']>): string {
   const area = selection.kind === 'foam' ? 'foam area' : 'sensing area';
-  return `Selecting the ${area} of “${selection.modelName}”: look straight down from the top, ` +
-    `then hold Alt (Option on Mac) and drag over the model.`;
+  return `Selecting the ${area} of “${selection.modelName}”: drag over the model to mark it. ` +
+    `Right-drag rotates the view; areas are best drawn looking straight down.`;
 }
 
 /**
@@ -80,7 +80,7 @@ export function updateModeHints(state: ModeHintState, onTopView: () => void): vo
       const topViewButton = document.createElement('button');
       topViewButton.type = 'button';
       topViewButton.className = 'selection-hint-button';
-      topViewButton.textContent = 'Go to Top View';
+      topViewButton.textContent = 'Back to Top View';
       topViewButton.addEventListener('click', onTopView);
       hint.appendChild(topViewButton);
     }
