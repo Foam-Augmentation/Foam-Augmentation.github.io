@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
+import { pointerToNdc } from './pointerToNdc';
 
 /**
  * Represents the state for lasso selection.
@@ -44,18 +45,25 @@ export function initLassoSelect(visualizer: Visualizer): void {
     // Make the selection shape a child of the camera.
     visualizer.camera.add(ls.selectionShape);
 
+    const canvas = visualizer.renderer.domElement;
+
     // Pointerdown event: begin lasso selection.
-    visualizer.renderer.domElement.addEventListener('pointerdown', (e: PointerEvent) => {
+    canvas.addEventListener('pointerdown', (e: PointerEvent) => {
         ls.prevX = e.clientX;
         ls.prevY = e.clientY;
-        ls.startX = (e.clientX / window.innerWidth) * 2 - 1;
-        ls.startY = -((e.clientY / window.innerHeight) * 2 - 1);
+        // Relative to the canvas, so the lasso stays under the cursor after a window resize.
+        const start = pointerToNdc(e, canvas);
+        ls.startX = start.x;
+        ls.startY = start.y;
         ls.selectionPoints.length = 0;
         ls.dragging = true;
     });
 
     // Pointerup event: finish lasso selection.
-    visualizer.renderer.domElement.addEventListener('pointerup', () => {
+    // Listen on the window so a drag that ends outside the canvas (over the panel, or outside
+    // the browser window) still finishes and gives the orbit controls back.
+    window.addEventListener('pointerup', () => {
+        if (!ls.dragging) return;
         visualizer.orbitControls.enabled = true; // Re-enable orbit controls.
         ls.selectionShape.visible = false;
         ls.dragging = false;
@@ -65,7 +73,7 @@ export function initLassoSelect(visualizer: Visualizer): void {
     });
 
     // Pointermove event: update the lasso shape.
-    visualizer.renderer.domElement.addEventListener('pointermove', (e: PointerEvent) => {
+    canvas.addEventListener('pointermove', (e: PointerEvent) => {
         // Only proceed if the left mouse button is pressed and the Alt key is held.
         if ((e.buttons & 1) === 0 || !e.altKey) return;
 
@@ -74,8 +82,7 @@ export function initLassoSelect(visualizer: Visualizer): void {
 
         const ex = e.clientX;
         const ey = e.clientY;
-        const nx = (e.clientX / window.innerWidth) * 2 - 1;
-        const ny = -((e.clientY / window.innerHeight) * 2 - 1);
+        const { x: nx, y: ny } = pointerToNdc(e, canvas);
 
         if (visualizer.config.toolMode === 'box') {
             // For box selection, set exactly 5 corners (15 numbers).

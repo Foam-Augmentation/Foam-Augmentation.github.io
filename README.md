@@ -2,7 +2,7 @@
 
 # How to use
 1. **Import the Model**
-Click `Import Everyday STL Model` and select an `stl` file to import. The app should load the model into the center of the print bed automatically. You can move it around and scale/rotate it however you'd like in the transform folder of the model.
+Click `Import Everyday STL Model` and select an `stl` file to import. The app should load the model into the center of the print bed automatically. You can move it around and scale/rotate it however you'd like in the `Transform` folder of the model.
 <div align="center" style="margin: 20px;">
     <img src="src/images/select-model.png" width="300">
 </div>
@@ -26,7 +26,7 @@ Click `Import Everyday STL Model` and select an `stl` file to import. The app sh
 </div>
 
 3. **Generate the Toolpath**
-- For augmentation, position your camera above the model looking directly down at it, then press `Select Regular Foam Area` under the model you want to augment, then hold `alt` (windows) or `option` (Mac) and draw with left cursor down to use lasso or rectangular selection to select part of the mesh. This may take a second, but after you wait you should see a visualization show up.
+- For augmentation, press `Select Foam Area` in the `Area Selection` folder of the model you want to augment. A hint appears on the canvas: position your camera above the model looking directly down at it (the hint's `Go to Top View` button or the `Top` face of the view cube does this), then hold `alt` (windows) or `option` (Mac) and draw with left cursor down to use lasso or rectangular selection to select part of the mesh. This may take a second, but after you wait you should see a visualization show up. Press `Esc` to stop selecting.
 <div align="center", style="margin: 20px;">
     <img src="src/images/lasso-select.png" width="300">
     <img src="src/images/augmentation.png" width="307">
@@ -40,7 +40,7 @@ Click `Import Everyday STL Model` and select an `stl` file to import. The app sh
 </div>
 
 4. **Save the G-Code**
-- Hit the `Save toolpath G-Code` button under the `Saving` folder to download the gcode file for the foam printing toolpath. The G-Code should have already automatically downloaded if you did foam slicing rather than augmentation.
+- Hit the `Save Toolpath G-Code` button under the `Save G-Code` folder to download the gcode file for the foam printing toolpath. The G-Code should have already automatically downloaded if you did foam slicing rather than augmentation.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/saving.png" width="300">
@@ -66,60 +66,78 @@ You can make foam gradients on the x and y axes using an SVG file. This way, if 
 
 
 # Settings
- - `selection settings` folder:
-    - `toolMode`: asso (free draw); box (rectangular draw)
-    - `selectionMode`: centroid-visible (only select the visible part of the mesh, i.e. front part); intersection/centroid (also selects non-visible mesh)
-    - `selectModel`: If checked, select the whole model
-    - `liveUpdate`: If checked, live update the selected mesh and toolpath when lasso/box selection changes.
-    - `selectWireframe`: If checked, show the selected mesh's wireframe.
-- `printer settings` folder:
-    - `bedTemp`: Bed temperature.
-    - `nozzleLeftTemp`: Left extruder temperature.
-    - `nozzleRightTemp`: Right extruder temperature.
-    - `machineDepth`: The max width (in mm) of the print space.
-    - `machineDepthY`: The max length (in mm) of the print space.
-    - `machineHeight`: The max height (in mm) of the print space.
-    - `dieSwelling`: The die swelling factor.
-    - `nozzleDiameter`: The diameter of the printer's nozzle.
-    - `filamentDiameter`: The diameter of the filament being used.
-    - `nozzleLength`: The length of the nozzle from the tip to the base of the print head.
-    - `printHead Max/Min X/Y`: The corners defining the dimensions of the printHeads width and length (in mm). The coordinates(0, 0) are the position of the nozzle. This is used for collision detection.
-- `slicer settings` folder:
-    - `useFermatSpirals`: If checked, infill patterns will be generated with fermat spirals. If not checked the slicer will generate a rectilinear pattern.
-    - `generateBoundary`: if checked, the printer will print a boundary around the model. If selected when augmenting, the printer will also pause the print after the boundary is made, so you can place your object in the and then resume the augmentation.
-    - `purgeLine`: If checked, the slicer will generate a purge line.
-    - `checkCollisions`: If checked, the slicer will check for collisions when augmenting and give a suggested H* value to avoid collisions. Note that this will make slicing take longer.
-    - `bedLeveling`: If checked, the printer will probe the bed for automatic leveling.
-    - `testSweep`: If checked, the printer will follow the toolpath without heating or extruding, allowing you to test if the print head will collide with your object safely.
+Every control in the panel has a tooltip with the same description as below; hover over it (or focus it with the keyboard).
+ - `Selection Settings` folder:
+    - `Selection Tool`: Lasso (free draw); Box (rectangular draw)
+    - `Selection Mode`: Visible Faces Only (only select the visible part of the mesh, i.e. front part); All Faces Touched / All Faces Inside (also selects non-visible mesh)
+    - `Select Whole Model`: If checked, select the whole model
+    - `Live Update`: If checked, live update the selected mesh and toolpath when lasso/box selection changes.
+    - `Show Selection Wireframe`: If checked, show the selected mesh's wireframe.
+- `Printer Settings` folder:
+    - `Bed Temperature (°C)`: Bed temperature.
+    - `Bed Width X (mm)`: The max width of the print space.
+    - `Bed Depth Y (mm)`: The max length of the print space.
+    - `Build Height Z (mm)`: The max height of the print space.
+    - `Filament Diameter (mm)`: The diameter of the filament being used.
+    - `Print Head Min/Max X/Y (mm)`: The corners defining the dimensions of the print head's width and length. The coordinates (0, 0) are the position of the nozzle. This is used for collision detection.
+    - `Multiple Toolheads`: If checked, the printer is a tool changer and each extruder is its own tool. If not checked, a change of extruder becomes a filament change.
+    - `Purge Tower`: If checked, a purge tower is printed when the tool changes.
+    - `Extruders` folder, one `Extruder N` folder per extruder:
+        - `Nozzle Diameter (mm)`: The diameter of the extruder's nozzle.
+        - `Nozzle Length (mm)`: The length of the nozzle from the tip to the base of the print head.
+        - `Die Swell Factor`: The die swelling factor.
+        - `Print Temperature (°C)`: Nozzle temperature while the extruder is printing.
+        - `Idle Temperature (°C)`: Standby temperature while the extruder is parked.
+        - `Travel Speed (mm/min)`: Print head speed for moves that do not extrude.
+- `Slicer Settings` folder:
+    - `Fermat Spiral Infill`: If checked, infill patterns will be generated with fermat spirals. If not checked the slicer will generate a rectilinear pattern.
+    - `Print Boundary`: if checked, the printer will print a boundary around the model. If selected when augmenting, the printer will also pause the print after the boundary is made, so you can place your object in the and then resume the augmentation.
+    - `Purge Line`: If checked, the slicer will generate a purge line.
+    - `Check Collisions`: If checked, the slicer will check for collisions when augmenting and give a suggested H* value to avoid collisions. Note that this will make slicing take longer.
+    - `Bed Leveling`: If checked, the printer will probe the bed for automatic leveling.
+    - `Test Sweep (Dry Run)`: If checked, the printer will follow the toolpath without heating or extruding, allowing you to test if the print head will collide with your object safely.
 # Print Parameters
-- `params` folder:
-    - `Layer Thickness (deltaZ)`: How far apart each layer should be from one another.
-    - `Delta L`: How far apart infill lines should be from one anotherr
-    - `Grid Size`: How far apart points should be sampled. Loewring this gives better accuracy but slower slicing times.
-    - `V*`: The ratio of print head speed to the speed the thread leaves the nozzle ($V_{movement} / V_{extrude}$). Values below 1 make the thread coil; at 1 and above it is laid down as a straight line or stretched.
-    - `End V*`: When using a gradient, the V* value will get closer to End V* at darker sections on the gradient SVG. It will be closer to the regular V* value at lighter sections.
-    - `H*`: The ratio of extrusion/nozzle height and thread diameter ($H_{nozzle} / D_{thread}$).
-    - `End H*`: When using a gradient, the H* value will get closer to End H* at darker sections on the gradient SVG. It will be closer to the regular H* value at lighter sections.
-    - `Edot`: The filament extrusion rate (in mm/min). Increasing this will increase both the extrusion speed and print head speed because they are in a ratio controlled by V*.
-- `initial params` folder:
-    - Most parameters will be the same as in the params folder, but instead they will control the parameters for the initial few layers.
-    - `Layer Offset`: How far offset outwards the initial layer should be. This is used to potentially create a scaffold around the model when augmenting.
+These are in each everyday model's folder.
+- `Foam Parameters` folder:
+    - `Layer Thickness ΔZ (mm)`: How far apart each layer should be from one another.
+    - `Line Spacing ΔL (mm)`: How far apart infill lines should be from one another.
+    - `Top Line Spacing ΔL (mm)`: The line spacing at the top layer. The spacing changes evenly from Line Spacing at the bottom layer to this value at the top.
+    - `Sampling Grid Size (mm)`: How far apart points should be sampled. Lowering this gives better accuracy but slower slicing times.
+    - `Speed Ratio V*`: The ratio of print head speed to the speed the thread leaves the nozzle ($V_{movement} / V_{extrude}$). Values below 1 make the thread coil; at 1 and above it is laid down as a straight line or stretched.
+    - `Gradient End V*`: When using a gradient, the V* value will get closer to Gradient End V* at darker sections on the gradient SVG. It will be closer to the regular V* value at lighter sections.
+    - `Height Ratio H*`: The ratio of extrusion/nozzle height and thread diameter ($H_{nozzle} / D_{thread}$).
+    - `Gradient End H*`: When using a gradient, the H* value will get closer to Gradient End H* at darker sections on the gradient SVG. It will be closer to the regular H* value at lighter sections.
+    - `Extrusion Rate Edot (mm/min)`: The filament extrusion rate. Increasing this will increase both the extrusion speed and print head speed because they are in a ratio controlled by V*.
+- `Initial Layer Parameters` folder:
+    - Most parameters will be the same as in the Foam Parameters folder, but instead they will control the parameters for the initial few layers. Values that differ from the Foam Parameters are highlighted.
+    - `Outward Offset (mm)`: How far offset outwards the initial layer should be. This is used to potentially create a scaffold around the model when augmenting.
     - `Initial Foam Layers`: How many foam layers should be printing using the initial parameters before switching to the regular parameters.
-- `augment settings` folder:
-    - `Select Augment Model`: This button allows you to choose a model to augment your current model with. This allows you to customize the surface of your augment with any model. This will only work if the "curveAugment" option is selected.
-    - `curveAugment`: If checked, the slicer will generate augmentations that curve into the selected augment model's shape. If checked but no model is selected, it will default to creating a flat surface.
-    - `Foam Layers`: How many layers to generate for augmentations. The total number of layers generated will be Foam Layers + Initial Foam Layers under the initial params folder.
-    - `Max Angle`: The max angle to generate augmentations on. This allows you to only augment on flatter surfaces so you can print lower to the model and get better results.
-    - `Flat Layer Z Offset`: This controls how far above the model the default flat layer is when the curveAugment feature is enabled. This only has any effect when curveAugment is enabled but no augment model has been selected.
+- `Sensing Parameters` folder:
+    - The same parameters as in the Foam Parameters folder, used instead of them inside areas selected as sensing area. Values that differ from the Foam Parameters are highlighted.
+- `Augmentation Settings` folder:
+    - `Select Augment Model`: This button allows you to choose a model to augment your current model with. This allows you to customize the surface of your augment with any model. This will only work if the "Curved Augmentation" option is selected.
+    - `Curved Augmentation`: If checked, the slicer will generate augmentations that curve into the selected augment model's shape. If checked but no model is selected, it will default to creating a flat surface.
+    - `Foam Layers`: How many layers to generate for augmentations. The total number of layers generated will be Foam Layers + Initial Foam Layers under the Initial Layer Parameters folder.
+    - `Max Surface Angle (°)`: The max angle to generate augmentations on. This allows you to only augment on flatter surfaces so you can print lower to the model and get better results.
+    - `Flat Layer Z Offset (mm)`: This controls how far above the model the default flat layer is when the Curved Augmentation feature is enabled. This only has any effect when Curved Augmentation is enabled but no augment model has been selected.
     - `Additional Curve Layers`: How many extra layers of the given curvature should be printed after the path reaches the desired curvature. For example, if you are flattening out a surface, setting this to 3 will print 3 additional flat layers after the path is curved to be totally flat.
-- `bump settings` folder:
+- `Bump Settings` folder:
     - `Select Bump Model`: This button lets you select a model to generate across the surface of your augmentation to improve grip.
-    - `generateBumps`: If checked, generates bumps on the surface of any augmentation you generate.
-    - `Bump Spacing X`: How far apart the center of the bumps are on the x axis (in mm).
-    - `Bump Spacing Y`: How far apart the center of the bumps are on the y axis (in mm).
+    - `Generate Bumps`: If checked, generates bumps on the surface of any augmentation you generate.
+    - `Bump Spacing X (mm)`: How far apart the center of the bumps are on the x axis.
+    - `Bump Spacing Y (mm)`: How far apart the center of the bumps are on the y axis.
     - `Bump Scale`: The scale of the bump model.
-- `gradient settings` folder:
-    - `Select Gradient SVG`: Allows you to select an svg file to define a gradient of foam properties. The color of the svg corresponds to a percentage, with black being 100% and white being 0%. The higher the percentage, the closer the parameters are to End H* and end V* rather than H* and V*. Currently, it's only possible to make gradients across the x and y axis, not the z axis. 
+- `Gradient Settings` folder:
+    - `Select Gradient SVG`: Allows you to select an svg file to define a gradient of foam properties. The color of the svg corresponds to a percentage, with black being 100% and white being 0%. The higher the percentage, the closer the parameters are to Gradient End H* and Gradient End V* rather than H* and V*. Currently, it's only possible to make gradients across the x and y axis, not the z axis. 
+- `Area Selection` folder:
+    - `Select Foam Area`: Arms selection of the area that gets foam. A hint on the canvas explains how to draw it; press `Esc` to stop selecting.
+    - `Select Sensing Area`: Arms selection of a sensing area inside the foam area. It is printed with the Sensing Parameters.
+    - `Add Sensing Box (20 mm)`: Adds a box on top of the model that you can drag across the surface; the triangles inside it become sensing area.
+
+# Presets
+A preset is a plain text file with one `key value` pair per line. It stores every setting above, every extruder, and the parameters of one everyday model (the selected one, or the first one if none is selected). Files start with a `presetVersion` line; older files without it still import.
+
+When a preset is imported, every value is checked first (type, range, allowed options). If any line is invalid the whole file is rejected and nothing changes. Model parameters are applied to the selected everyday model, or to all everyday models if none is selected; if no everyday model is loaded yet, they are applied to the models you import afterwards.
 
 
 > [!IMPORTANT]  

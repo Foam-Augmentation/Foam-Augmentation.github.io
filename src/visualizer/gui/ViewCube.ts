@@ -1,5 +1,6 @@
 // src/visualizer/gui/ViewCube.ts
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export interface ViewCubeOptions {
     size?: number;
@@ -7,39 +8,61 @@ export interface ViewCubeOptions {
     opacity?: number;
 }
 
+/** Names of the six standard views, as shown on the cube's faces. */
+export type ViewName = 'Right' | 'Left' | 'Top' | 'Bottom' | 'Front' | 'Back';
+
+/**
+ * A small orientation cube in the corner of the window. It turns with the main camera, and
+ * clicking a face moves the main camera to look at the scene from that side.
+ *
+ * The cube does not run its own render loop: call `render()` once per frame from the main
+ * loop, and `dispose()` when the view is torn down.
+ */
 export class ViewCube {
     private scene!: THREE.Scene;
     private camera!: THREE.OrthographicCamera;
     private renderer!: THREE.WebGLRenderer;
-    private cube!: THREE.Mesh;
-    private container!: HTMLElement;
+    private cube!: THREE.Mesh<THREE.BoxGeometry, THREE.MeshLambertMaterial[]>;
     private canvas!: HTMLCanvasElement;
-    private raycaster!: THREE.Raycaster;
-    private mouse!: THREE.Vector2;
+    private raycaster: THREE.Raycaster;
+    private mouse: THREE.Vector2;
     private mainCamera: THREE.PerspectiveCamera;
-    private mainControls: any;
+    private mainControls: OrbitControls;
     private size: number;
+    /** Pending frame of the camera move animation, or null when none is running. */
+    private cameraAnimationFrame: number | null = null;
 
-    // Face materials
-    private faces = [
-        { name: 'Right', color: 0xff6b6b, position: new THREE.Vector3(2, 0, 0) },
-        { name: 'Left', color: 0x4ecdc4, position: new THREE.Vector3(-2, 0, 0) },
-        { name: 'Top', color: 0x45b7d1, position: new THREE.Vector3(0, 0, 2) },
-        { name: 'Bottom', color: 0x96ceb4, position: new THREE.Vector3(0, 0, -2) },
-        { name: 'Front', color: 0xfeca57, position: new THREE.Vector3(0, -2, 0) },
-        { name: 'Back', color: 0xff9ff3, position: new THREE.Vector3(0, 2, 0) }
+    /**
+     * The six faces, indexed by the cube's material index.
+     *
+     * BoxGeometry orders its material groups +X, -X, +Y, -Y, +Z, -Z for a Y-up box. The
+     * scene is Z-up, so `setupCube` rotates the geometry a quarter turn about X; after that
+     * the groups face +X, -X, +Z, -Z, -Y, +Y, which is the order below. `direction` is the
+     * side of the scene the camera goes to when the face is clicked.
+     */
+    private faces: { name: ViewName; color: number; direction: THREE.Vector3 }[] = [
+        { name: 'Right', color: 0xff6b6b, direction: new THREE.Vector3(1, 0, 0) },
+        { name: 'Left', color: 0x4ecdc4, direction: new THREE.Vector3(-1, 0, 0) },
+        { name: 'Top', color: 0x45b7d1, direction: new THREE.Vector3(0, 0, 1) },
+        { name: 'Bottom', color: 0x96ceb4, direction: new THREE.Vector3(0, 0, -1) },
+        { name: 'Front', color: 0xfeca57, direction: new THREE.Vector3(0, -1, 0) },
+        { name: 'Back', color: 0xff9ff3, direction: new THREE.Vector3(0, 1, 0) }
     ];
 
+    /**
+     * @param mainCamera - The camera of the main view.
+     * @param mainControls - The orbit controls of the main view.
+     * @param options - Size and position of the cube.
+     */
     constructor(
         mainCamera: THREE.PerspectiveCamera,
-        mainControls: any,
+        mainControls: OrbitControls,
         options: ViewCubeOptions = {}
     ) {
         this.mainCamera = mainCamera;
         this.mainControls = mainControls;
         this.size = options.size || 120;
 
-        // Initialize properties
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
 
@@ -47,9 +70,9 @@ export class ViewCube {
         this.setupScene();
         this.setupCube();
         this.setupEventListeners();
-        this.animate();
     }
 
+    /** Creates the cube's canvas and places it in the corner of the window. */
     private setupCanvas(options: ViewCubeOptions) {
         this.canvas = document.createElement('canvas');
         this.canvas.width = this.size;
@@ -63,13 +86,12 @@ export class ViewCube {
         this.canvas.style.zIndex = '1000';
         this.canvas.style.backgroundColor = 'rgba(0, 0, 0, 0.1)';
         this.canvas.style.backdropFilter = 'blur(10px)';
+        this.canvas.title = 'View cube: click a face to look at the scene from that side';
 
         document.body.appendChild(this.canvas);
-
-        this.raycaster = new THREE.Raycaster();
-        this.mouse = new THREE.Vector2();
     }
 
+    /** Creates the cube's own scene, camera, renderer and lights. */
     private setupScene() {
         this.scene = new THREE.Scene();
 
@@ -82,9 +104,8 @@ export class ViewCube {
             0.1, 100
         );
         this.camera.position.set(4, 4, 4);
-        this.camera.rotation.x = Math.PI / 2;
+        this.camera.up.set(0, 0, 1);
         this.camera.lookAt(0, 0, 0);
-        // this.camera.rotation.x = Math.PI / 2;
 
         // Setup renderer
         this.renderer = new THREE.WebGLRenderer({
@@ -92,6 +113,7 @@ export class ViewCube {
             alpha: true,
             antialias: true
         });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.setSize(this.size, this.size);
         this.renderer.setClearColor(0x000000, 0);
 
@@ -104,29 +126,55 @@ export class ViewCube {
         this.scene.add(directionalLight);
     }
 
+    /**
+     * Draws a face's name on its colour, for use as the face's texture.
+     *
+     * @param name - The text to draw.
+     * @param color - The face colour.
+     * @returns The texture, or null if a 2D canvas is not available.
+     */
+    private createFaceTexture(name: string, color: number): THREE.CanvasTexture | null {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const context = canvas.getContext('2d');
+        if (!context) return null;
+
+        context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = '#1f1f1f';
+        context.font = 'bold 30px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(name, canvas.width / 2, canvas.height / 2);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+    }
+
+    /** Creates the cube with one labelled, coloured material per face. */
     private setupCube() {
         const geometry = new THREE.BoxGeometry(1, 1, 1);
+        // Turn the Y-up box into a Z-up one so the material groups match `faces`
+        // (and the side labels stand upright along Z).
+        geometry.rotateX(Math.PI / 2);
 
-        // Create materials for each face with different colors (NEdd to add fonts to render using fonts)
-        const materials = [
-            new THREE.MeshLambertMaterial({ color: this.faces[0].color }), // Right
-            new THREE.MeshLambertMaterial({ color: this.faces[1].color }), // Left  
-            new THREE.MeshLambertMaterial({ color: this.faces[2].color }), // Top
-            new THREE.MeshLambertMaterial({ color: this.faces[3].color }), // Bottom
-            new THREE.MeshLambertMaterial({ color: this.faces[4].color }), // Front
-            new THREE.MeshLambertMaterial({ color: this.faces[5].color })  // Back
-        ];
+        const materials = this.faces.map(face => {
+            const texture = this.createFaceTexture(face.name, face.color);
+            return texture
+                ? new THREE.MeshLambertMaterial({ map: texture })
+                : new THREE.MeshLambertMaterial({ color: face.color });
+        });
 
         this.cube = new THREE.Mesh(geometry, materials);
         this.scene.add(this.cube);
 
-
-        this.addFaceLabels();
+        this.addCornerMarkers();
     }
 
-    private addFaceLabels() {
-        // const loader = new THREE.FontLoader();
-        // need to load the font (if wanted)
+    /** Adds small spheres on some corners as extra orientation cues. */
+    private addCornerMarkers() {
         const sphereGeometry = new THREE.SphereGeometry(0.05, 8, 8);
         const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
@@ -142,91 +190,69 @@ export class ViewCube {
         });
     }
 
+    /** Hooks up clicking and hovering on the cube. */
     private setupEventListeners() {
-        this.canvas.addEventListener('click', (event) => {
-            this.handleClick(event);
-        });
-
-        this.canvas.addEventListener('mousemove', (event) => {
-            this.handleMouseMove(event);
-        });
+        this.canvas.addEventListener('click', this.handleClick);
+        this.canvas.addEventListener('mousemove', this.handleMouseMove);
     }
 
-    private handleClick(event: MouseEvent) {
+    /**
+     * Finds the cube face under a mouse event.
+     *
+     * @param event - A mouse event on the cube's canvas.
+     * @returns The index into `faces`, or null if the pointer is not over the cube.
+     */
+    private pickFace(event: MouseEvent): number | null {
         const rect = this.canvas.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / this.size) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / this.size) * 2 + 1;
+        this.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        this.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const intersects = this.raycaster.intersectObject(this.cube);
-
-        if (intersects.length > 0) {
-            const face = intersects[0].face;
-            if (face) {
-                this.setMainCameraView(face.materialIndex);
-            }
-        }
+        const materialIndex = intersects[0]?.face?.materialIndex;
+        return materialIndex === undefined ? null : materialIndex;
     }
 
-    private handleMouseMove(event: MouseEvent) {
-        const rect = this.canvas.getBoundingClientRect();
-        this.mouse.x = ((event.clientX - rect.left) / this.size) * 2 - 1;
-        this.mouse.y = -((event.clientY - rect.top) / this.size) * 2 + 1;
-
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObject(this.cube);
-
-        //highlight hovered face
-        if (intersects.length > 0) {
-            this.canvas.style.filter = 'brightness(1.2)';
-        } else {
-            this.canvas.style.filter = 'brightness(1)';
+    private handleClick = (event: MouseEvent) => {
+        const faceIndex = this.pickFace(event);
+        if (faceIndex !== null && this.faces[faceIndex]) {
+            this.setView(this.faces[faceIndex].name);
         }
-    }
+    };
 
-    private setMainCameraView(faceIndex: number) {
-        const face = this.faces[faceIndex];
+    private handleMouseMove = (event: MouseEvent) => {
+        // highlight the cube while a face is hovered
+        this.canvas.style.filter = this.pickFace(event) !== null ? 'brightness(1.2)' : 'brightness(1)';
+    };
+
+    /**
+     * Moves the main camera to one of the six standard views, keeping its distance to the
+     * orbit target.
+     *
+     * @param view - The side to look from, e.g. 'Top' to look straight down.
+     */
+    public setView(view: ViewName) {
+        const face = this.faces.find(f => f.name === view);
         if (!face) return;
 
-        // Calculate camera position based on face
         const distance = Math.max(
             this.mainControls.object.position.distanceTo(this.mainControls.target),
             50
         );
 
-        let newPosition: THREE.Vector3;
-
-        switch (faceIndex) {
-            case 0: // Right
-                newPosition = new THREE.Vector3(distance, 0, 0);
-                break;
-            case 1: // Left
-                newPosition = new THREE.Vector3(-distance, 0, 0);
-                break;
-            case 2: // Top
-                newPosition = new THREE.Vector3(0, 0, distance);
-                break;
-            case 3: // Bottom
-                newPosition = new THREE.Vector3(0, 0, -distance);
-                break;
-            case 4: // Front
-                newPosition = new THREE.Vector3(0, -distance, 0);
-                break;
-            case 5: // Back
-                newPosition = new THREE.Vector3(0, distance, 0);
-                break;
-            default:
-                return;
-        }
-
-        // Add current target position to the new position
-        newPosition.add(this.mainControls.target);
-
-        // move camera
+        const newPosition = face.direction.clone().multiplyScalar(distance).add(this.mainControls.target);
         this.animateCamera(newPosition);
     }
 
+    /**
+     * Glides the main camera to a new position.
+     *
+     * @param targetPosition - Where the camera should end up.
+     */
     private animateCamera(targetPosition: THREE.Vector3) {
+        // A second click replaces the move in progress instead of fighting it.
+        this.cancelCameraAnimation();
+
         const startPosition = this.mainCamera.position.clone();
         const duration = 500; // ms
         const startTime = Date.now();
@@ -241,23 +267,31 @@ export class ViewCube {
             this.mainCamera.position.lerpVectors(startPosition, targetPosition, easeProgress);
             this.mainControls.update();
 
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            }
+            this.cameraAnimationFrame = progress < 1 ? requestAnimationFrame(animate) : null;
         };
 
         animate();
+    }
+
+    /** Stops the camera move animation, if one is running. */
+    private cancelCameraAnimation() {
+        if (this.cameraAnimationFrame !== null) {
+            cancelAnimationFrame(this.cameraAnimationFrame);
+            this.cameraAnimationFrame = null;
+        }
     }
 
     private easeInOutCubic(t: number): number {
         return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
+    /**
+     * Points the cube's camera along the same direction as the main camera.
+     */
     public update() {
         // Keep the cube axis-aligned with the world and orbit the mini camera instead,
         // so the cube is always seen from exactly the same direction as the main camera.
-        const target = this.mainControls?.target ?? new THREE.Vector3();
-        const offset = this.mainCamera.position.clone().sub(target);
+        const offset = this.mainCamera.position.clone().sub(this.mainControls.target);
 
         if (offset.lengthSq() < 1e-8) return;
 
@@ -266,14 +300,32 @@ export class ViewCube {
         this.camera.lookAt(0, 0, 0);
     }
 
-    private animate = () => {
-        requestAnimationFrame(this.animate);
+    /**
+     * Draws the cube. Call once per frame from the main render loop.
+     */
+    public render() {
         this.update();
         this.renderer.render(this.scene, this.camera);
     }
 
+    /**
+     * Stops any running animation, removes the cube from the page and frees its resources.
+     */
     public dispose() {
-        document.body.removeChild(this.canvas);
+        this.cancelCameraAnimation();
+        this.canvas.removeEventListener('click', this.handleClick);
+        this.canvas.removeEventListener('mousemove', this.handleMouseMove);
+        this.canvas.remove();
+
+        this.scene.traverse(child => {
+            const mesh = child as Partial<THREE.Mesh>;
+            mesh.geometry?.dispose();
+            const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            materials.forEach(material => {
+                (material as THREE.MeshLambertMaterial).map?.dispose();
+                material.dispose();
+            });
+        });
         this.renderer.dispose();
     }
 }

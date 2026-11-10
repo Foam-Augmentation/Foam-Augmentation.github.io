@@ -3,13 +3,15 @@ import Visualizer from '../Visualizer';
 import { createSelectedMeshFromHighlight } from './createSelectedMeshFromHighlight';
 import { updateSelectedMeshBoundingBox } from '../toolpath/updateSelectedMeshBoundingBox';
 import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
-import { generateAugmentFoamToolpath, PathPoint } from '../toolpath/generateFoamToolpath';
+import { generateAugmentFoamToolpath } from '../toolpath/generateFoamToolpath';
+import type { PathPoint } from '../toolpath/pathTypes';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { getConvexHull, pointRayCrossesSegments, lineCrossesLine } from '../utils/geometryUtils';
 import { EverydayModel } from '../types/modelTypes';
-import  Printer  from '../../printer/Printer';
-import { saveGcodeToFile } from '../toolpath/saveGcodeToFile';
+import { notify } from '../gui/notify';
 
+/** A line segment in screen space (normalised device coordinates). */
+type ScreenSegment = { start: THREE.Vector2; end: THREE.Vector2 };
 
 /**
  * Updates the selection for a given model object based on the current lasso selection.
@@ -19,13 +21,17 @@ import { saveGcodeToFile } from '../toolpath/saveGcodeToFile';
  * drawRange, creates a new selected mesh, updates the bounding box of the selected mesh, samples the
  * selected mesh, and finally generates a foam toolpath.
  *
+ * While the lasso is still being dragged (live update) only the highlight is refreshed; sampling
+ * and toolpath generation are expensive and wait until the pointer is released. No G-code is
+ * generated here: the G-code for all models is built in one pass when it is saved.
+ *
  * @param visualizer - The Visualizer instance providing access to the scene, camera, etc.
  * @param modelObj - The model object to update. It should include:
  *                   - mesh: THREE.Mesh,
  *                   - toolpathSamplePoints: Array,
  *                   - highlightFoamMesh and highlightSenseMesh: THREE.Mesh,
  *                   - (others as required by the selection logic)
- * @returns An object containing the generated toolpaths with keys 'all', 'foam', and 'sense'.
+ * @returns The generated toolpath, or an empty array if none was generated.
  */
 export function updateSelection(
     visualizer: Visualizer,
@@ -45,8 +51,11 @@ export function updateSelection(
     const boxLines: THREE.Line3[] = new Array(12).fill(null).map(
         () => new THREE.Line3(new THREE.Vector3(), new THREE.Vector3())
     );
-    const lassoSegments: THREE.Line3[] = [];
-    const perBoundsSegments: any = {};
+    const lassoSegments: ScreenSegment[] = [];
+    // The lasso segments that can still matter at each depth of the BVH traversal.
+    const perBoundsSegments: ScreenSegment[][] = [];
+    // Pruning with the BVH is on unless the config explicitly switches it off.
+    const useBoundsTree = (visualizer.config as { useBoundsTree?: boolean }).useBoundsTree !== false;
 
     // Transform the mesh's world matrix into screen space.
     toScreenSpaceMatrix.copy(modelObj.mesh.matrixWorld)
@@ -54,21 +63,19 @@ export function updateSelection(
         .premultiply(visualizer.camera.projectionMatrix);
 
     // Build lassoSegments from the selection points stored in visualizer.lassoState.
+    // One segment per lasso point (three numbers each), closing back to the first point.
     const sp = visualizer.lassoState.selectionPoints;
-    while (lassoSegments.length < sp.length) {
-        lassoSegments.push(new THREE.Line3(new THREE.Vector3(), new THREE.Vector3()));
-    }
-    lassoSegments.length = sp.length;
-    for (let s = 0, len = sp.length; s < len; s += 3) {
-        const line = lassoSegments[s];
+    for (let s = 0, len = sp.length; s + 2 < len; s += 3) {
         const sNext = (s + 3) % len;
-        line.start.x = sp[s];
-        line.start.y = sp[s + 1];
         // Z coordinate is assumed zero.
-        line.end.x = sp[sNext];
-        line.end.y = sp[sNext + 1];
+        lassoSegments.push({
+            start: new THREE.Vector2(sp[s], sp[s + 1]),
+            end: new THREE.Vector2(sp[sNext], sp[sNext + 1]),
+        });
     }
-    console.log("updateSelection called!");
+    if (!lassoSegments.length) {
+        return [];
+    }
     // Compute the camera's local position relative to the mesh.
     invWorldMatrix.copy(modelObj.mesh.matrixWorld).invert();
     camLocalPosition.set(0, 0, 0)
@@ -82,7 +89,7 @@ export function updateSelection(
     }
     modelObj.mesh.geometry.boundsTree.shapecast({
         intersectsBounds: (box: THREE.Box3, _isLeaf: boolean, _score: number | undefined, depth: number) => {
-            if (!(visualizer.config as any).useBoundsTree) {
+            if (!useBoundsTree) {
                 return INTERSECTED;
             }
             const { min, max } = box;
@@ -100,6 +107,13 @@ export function updateSelection(
                         v.z = z === 0 ? min.z : max.z;
                         v.w = 1;
                         v.applyMatrix4(toScreenSpaceMatrix);
+                        if (v.w <= 0) {
+                            // A corner at or behind the camera has no meaningful screen position,
+                            // so the box cannot be pruned: test its contents instead.
+                            return INTERSECTED;
+                        }
+                        // Perspective divide, so x and y are in the same screen space as the lasso.
+                        v.multiplyScalar(1 / v.w);
                         index++;
                         if (v.y < minY) minY = v.y;
                         if (v.y > maxY) maxY = v.y;
@@ -170,7 +184,7 @@ export function updateSelection(
             const b = i3 + 1;
             const c = i3 + 2;
 
-            const segmentsToCheck = (visualizer.config as any).useBoundsTree ? perBoundsSegments[depth] : lassoSegments;
+            const segmentsToCheck = (useBoundsTree && perBoundsSegments[depth]) || lassoSegments;
             if (visualizer.config.selectionMode === 'centroid' || visualizer.config.selectionMode === 'centroid-visible') {
                 centroid.copy(tri.a).add(tri.b).add(tri.c).multiplyScalar(1 / 3);
                 screenCentroid.copy(centroid).applyMatrix4(toScreenSpaceMatrix);
@@ -221,31 +235,10 @@ export function updateSelection(
         }
     });
 
-    console.log('indices', indices);
-
     const indexAttr = modelObj.mesh.geometry.index;
     const newIndexAttr = (visualizer.current_selection_type === 'foam')
         ? modelObj.highlightFoamMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1)
         : modelObj.highlightSenseMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1);
-    // if (indices.length && visualizer.config.selectModel) {
-    //     if (indexAttr) {
-    //         for (let i = 0, l = indexAttr.count; i < l; i++) {
-    //             const i2 = indexAttr.getX(i);
-    //             newIndexAttr.setX(i, i2);
-    //         }
-    //     }
-    //     if (visualizer.current_selection_type === 'foam') {
-    //         if (modelObj.highlightFoamMesh) {
-    //             modelObj.highlightFoamMesh.geometry.drawRange.count = Infinity;
-    //         }
-    //     } else {
-    //         if (modelObj.highlightSenseMesh) {
-    //             modelObj.highlightSenseMesh.geometry.drawRange.count = Infinity;
-    //         }
-    //     }
-    //     newIndexAttr.needsUpdate = true;
-    // } 
-    // else 
     {
         for (let i = 0, l = indices.length; i < l; i++) {
             if (indexAttr) {
@@ -272,74 +265,37 @@ export function updateSelection(
     } else {
         if (modelObj.highlightSenseMesh) {
             modelObj.selectedSenseFoamMesh = createSelectedMeshFromHighlight(modelObj.highlightSenseMesh);
-            // console.log('selectedSenseFoamMesh', modelObj.selectedSenseFoamMesh);
-            // console.log('highlightSenseMesh', modelObj.highlightSenseMesh);
         }
     }
 
     visualizer.currentSelectedModel = modelObj;
 
-    updateSelectedMeshBoundingBox(visualizer, modelObj);
-    sampleSelectedMesh(visualizer, modelObj);
-    console.log("modelob", modelObj);
-    console.log("vis", visualizer);
-    
-    visualizer.printer.updateParameters(modelObj.toolpathConfig);
-
-    const toolpaths = generateAugmentFoamToolpath(visualizer, modelObj);
-    // should hopefully be updating the toolpathgcode in the printer object, unless transfered it wrong
-
-    if(!toolpaths){
-        console.warn('Failed to generate toolpath. Please try again.');
+    // Still dragging: the highlight above is all the live update needs. Sampling and toolpath
+    // generation run once, when the pointer is released.
+    if (visualizer.lassoState.dragging) {
         return [];
     }
-    console.log("Calling generate_foam_gcode...");
 
-    console.log("Toolpaths before generating G-Code:", toolpaths);
-   // visualizer.printer.generate_foam_gcode(toolpaths.foam, 0);
-    //console.log("G-Code after generation:", visualizer.printer.toolpathGcode);
-    
-    // og
-    // const gcode = visualizer.printer.generate_foam_gcode(toolpaths.foam, 1, modelObj.mesh.position);
-    // console.log(gcode);
-    // visualizer.printer.toolpathGcode = gcode;
-
-    // const isFirstModel = !visualizer.printer.toolpathGcode || visualizer.printer.toolpathGcode.trim() === "";
-
-
-    //generate G-code with start G-code only if first model
-    modelObj.gcode = visualizer.printer.generate_foam_gcode(toolpaths);
-    modelObj.extruders = [];
-    let firstExtruder = undefined;
-    for(const point of toolpaths){
-      if(point.extruder !== undefined && modelObj.extruders.indexOf(point.extruder) == -1){
-        modelObj.extruders.push(point.extruder)
-      }
-      if(firstExtruder === undefined && point.extruder !== undefined){
-        firstExtruder = point.extruder 
-      }
+    if (!modelObj.selectedRegularFoamMesh) {
+        notify('Select a foam area first; a sense area is cut out of the foam area.', 'warning');
+        return [];
     }
-    
-    modelObj.firstExtruder = firstExtruder === undefined ? 0 : firstExtruder;
-    
 
-    // Initialize G-code if empty
-    // if (!visualizer.printer.toolpathGcode) {
-    //     visualizer.printer.toolpathGcode = "";
-    // }
+    try {
+        updateSelectedMeshBoundingBox(visualizer, modelObj);
+        sampleSelectedMesh(visualizer, modelObj);
 
-    // Append this model's G-code
-    // visualizer.printer.toolpathGcode += `; === Model: ${modelObj.name || 'Unnamed'} ===\n`;
-    // visualizer.printer.toolpathGcode += `; Parameters: hStar=${modelObj.toolpathConfig.hStar}, vStar=${modelObj.toolpathConfig.vStar}, deltaZ=${modelObj.toolpathConfig.deltaZ}, gridSize=${modelObj.toolpathConfig.gridSize}, edot=${modelObj.toolpathConfig.edot}\n`;
+        visualizer.printer.updateParameters(modelObj.toolpathConfig);
 
-    // visualizer.printer.toolpathGcode += gcode;
-    // visualizer.printer.toolpathGcode += "\n";
-
-    console.log("Model G-Code after generation:\n", modelObj.gcode);
-
-    //saveGcodeToFile(gcode, "toolpath");
-    // generateAugmentFoamToolpath(visualizer, modelObj);
-
-    return toolpaths;
+        const toolpath = generateAugmentFoamToolpath(visualizer, modelObj);
+        if (!toolpath) {
+            notify('No toolpath was generated: the selection has no printable area. Select a larger or flatter area.', 'warning');
+            return [];
+        }
+        return toolpath;
+    } catch (error) {
+        console.error(error);
+        notify(`Could not generate the toolpath: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        return [];
+    }
 }
-

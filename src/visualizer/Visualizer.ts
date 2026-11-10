@@ -1,36 +1,31 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader';
-import { MeshBVH, INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
 import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
-import tippy from 'tippy.js';
 import initGUI, { InitGUIResult } from './gui/initGUI';
-import initRenderer from './renderer/initRenderer';
+import initRenderer, { resizeRenderer } from './renderer/initRenderer';
+import initScene from './renderer/initScene';
 import initTransformControls from './interactions/initTransformControls';
 import { initLassoSelect, LassoState } from './interactions/initLassoSelect';
-import { generateFoamToolpath } from './toolpath/generateFoamToolpath';
-import { sampleSelectedMesh } from './toolpath/sampleSelectedMesh';
-import { updateSelectedMeshBoundingBox } from './toolpath/updateSelectedMeshBoundingBox';
-import { createSelectedMeshFromHighlight } from './interactions/createSelectedMeshFromHighlight';
 import { updateSelection } from './interactions/updateSelection';
 import { FoamModel, EverydayModel } from './types/modelTypes';
 import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
-import { saveGcodeToFile } from './toolpath/saveGcodeToFile';
-import {ViewCube} from './gui/ViewCube';
+import { ViewCube } from './gui/ViewCube';
+import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
+import { notify, withBusy } from './gui/notify';
 
 /**
  * Visualizer class handles the rendering of 3D models, GUI initialization,
  * and user interactions (such as lasso selection and transform controls).
  */
-export default class Visualizer { 
-    /** The container HTML element */ 
-    public container: HTMLElement; 
-    /** Printer instance (used for generating G-code) */ 
-    public printer: Printer;  
-    /** Three.js renderer */ 
-    public renderer: THREE.WebGLRenderer; 
-    /** Three.js scene */ 
+export default class Visualizer {
+    /** The container HTML element */
+    public container: HTMLElement;
+    /** Printer instance (used for generating G-code) */
+    public printer: Printer;
+    /** Three.js renderer */
+    public renderer: THREE.WebGLRenderer;
+    /** Three.js scene */
     public scene: THREE.Scene;
     /** Perspective camera */
     public camera: THREE.PerspectiveCamera;
@@ -55,8 +50,26 @@ export default class Visualizer {
     public toolpathVisualize: THREE.Object3D[] | null;
 
     public showGcodeVisualization: boolean = false;
-    public currentSelectedModel: EverydayModel | null = null;
     public viewCube: ViewCube;
+
+    /**
+     * The one selected model, or null. This is the single source of truth for "the current
+     * model": change it only through `selectModel`, `armSelection` or `clearSelection`.
+     * `current_Obj` and `currentSelectedModel` are views of this field.
+     */
+    private _selectedModel: EverydayModel | FoamModel | null = null;
+
+    /**
+     * True while an area selection is armed, i.e. an Alt-drag on the canvas selects part of
+     * the selected model (as foam or sensing area, see `current_selection_type`).
+     */
+    public selectionArmed: boolean = false;
+
+    /**
+     * Model parameters from a preset that was imported while no everyday model was loaded.
+     * They are applied to each everyday model imported afterwards (see refreshModelGUIList).
+     */
+    public pendingModelPreset: ((model: EverydayModel) => void) | null = null;
 
 
     /**
@@ -77,20 +90,8 @@ export default class Visualizer {
         machineDepth: number;
         machineDepthY: number;
         machineHeight: number;
-        // zOffset: number;
-        // deltaZ: number;
-        //     layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-        // foamLayers: number;
-        // extrusion_speed_when_foam: number;
-        // VStar: number;
-        // HStar: number;
-        // Edot: number;
         filamentDiameter: number;
-        // extrusion_m: number; // This can be used to adjust the extrusion rate if needed.
-        // height: number;
-        showGcodeVisualization: false,
-        currentSelectedModel: EverydayModel | null;
-        useTreeSlicer: boolean;
+        showGcodeVisualization: boolean;
         useFermatSpirals: boolean;
         generateBoundary: boolean;
         purgeLine: boolean;
@@ -117,11 +118,7 @@ export default class Visualizer {
      */
     public lassoState: LassoState & { selectionShape: THREE.Line };
 
-    /** Current selected object's mesh */
-    public current_Obj_mesh?: THREE.Mesh;
-    /** Current selected object (as a Three.js Object3D) */
-    public current_Obj?: EverydayModel | FoamModel;
-    /** Current selection type, e.g. 'foam' or other */
+    /** Current selection type: 'foam' or 'sense'. Only meaningful while `selectionArmed`. */
     public current_selection_type: string;
     /** Bounding box of the bottom of the mesh (used as a constraint) */
     public constrainBounding: THREE.Vector3[];
@@ -136,6 +133,11 @@ export default class Visualizer {
     public everydayModelListFolder: GUI;
 
     public saveFolder: GUI;
+
+    /** Id of the pending animation frame of the render loop, or null when it is not running. */
+    private animationFrameId: number | null = null;
+    /** True while a selection update is waiting for, or running behind, the busy overlay. */
+    private selectionUpdatePending: boolean = false;
 
 
     /**
@@ -161,6 +163,9 @@ export default class Visualizer {
         this.printBaseObjects = printBaseObjects;
         this.viewCube = viewCube;
 
+        // Keep the canvas, camera aspect and pixel density in step with the window.
+        window.addEventListener('resize', this.handleResize);
+
         // Initialize transform controls for model manipulation.
         this.transformControls = initTransformControls(this);
 
@@ -176,7 +181,7 @@ export default class Visualizer {
         this.toolpathVisualize = null;
 
         // Set configuration parameters.
-      
+
         this.config = {
             toolMode: 'lasso',
             selectionMode: 'centroid-visible',
@@ -192,20 +197,8 @@ export default class Visualizer {
             machineDepth: 250,
             machineDepthY: 210,
             machineHeight: 220,
-            // zOffset: 3.38,
-            // deltaZ: 1.7,
-            // height: 20,
-            // layers_cube = int(height_cube/increment_z) + (height_cube % increment_z > 0
-            // foamLayers: 3,
-            // extrusion_speed_when_foam: 758.17,
-            // VStar: 0.15,
-            // HStar: 9,
-            // Edot: 35,
             filamentDiameter: 1.75,
-            // extrusion_m: 0.92,
             showGcodeVisualization: false,
-            currentSelectedModel: null,
-            useTreeSlicer: false,
             useFermatSpirals: false,
             generateBoundary: false,
             purgeLine: true,
@@ -247,10 +240,6 @@ export default class Visualizer {
         // Initialize lasso select functionality.
         initLassoSelect(this);
 
-        // Initialize current selected object and its mesh.
-        // this.current_Obj_mesh = new THREE.Mesh();
-        
-        
         this.current_selection_type = 'foam';
 
         // Initialize constrain bounding box.
@@ -264,15 +253,174 @@ export default class Visualizer {
         this.gui = guiResult.gui;
         this.foamModelListFolder = guiResult.foamModelListFolder;
         this.everydayModelListFolder = guiResult.everydayModelListFolder;
-        //save folder for the gcode 
+        //save folder for the gcode
         this.saveFolder = guiResult.saveFolder;
+    }
+
+    // ----- selection state -----
+
+    /** The selected model, or null when nothing is selected. */
+    public get selectedModel(): EverydayModel | FoamModel | null {
+        return this._selectedModel;
+    }
+
+    /**
+     * The selected model. Alias of `selectedModel`, kept for existing callers.
+     */
+    public get current_Obj(): EverydayModel | FoamModel | undefined {
+        return this._selectedModel ?? undefined;
+    }
+    public set current_Obj(model: EverydayModel | FoamModel | undefined) {
+        this.selectModel(model ?? null);
+    }
+
+    /**
+     * The selected model if it is an everyday model, otherwise null.
+     * Alias of `selectedModel`, kept for existing callers.
+     */
+    public get currentSelectedModel(): EverydayModel | null {
+        const model = this._selectedModel;
+        return model && 'toolpathConfig' in model ? model : null;
+    }
+    public set currentSelectedModel(model: EverydayModel | null) {
+        this.selectModel(model);
+    }
+
+    /**
+     * Makes a model the selected one (or clears the selection with null) and updates the
+     * panel highlight. Selecting a different model disarms any armed area selection, because
+     * that selection belongs to the previous model.
+     *
+     * @param model - The model to select, or null for none.
+     */
+    public selectModel(model: EverydayModel | FoamModel | null): void {
+        if (model === this._selectedModel) return;
+
+        this._selectedModel?.guiItem?.domElement.classList.remove('selectedModel');
+        this._selectedModel = model;
+        this.selectionArmed = false;
+        model?.guiItem?.domElement.classList.add('selectedModel');
+        this.updateModeHints();
+    }
+
+    /**
+     * Arms area selection: from now on an Alt-drag on the canvas selects part of this model.
+     *
+     * @param model - The everyday model to select on.
+     * @param kind - Whether the drawn area becomes a foam area or a sensing area.
+     */
+    public armSelection(model: EverydayModel, kind: 'foam' | 'sense'): void {
+        this.selectModel(model);
+        this.current_selection_type = kind;
+        this.selectionArmed = true;
+        this.updateModeHints();
+    }
+
+    /**
+     * What Esc does: releases the move gizmo, disarms area selection and deselects the model.
+     */
+    public clearSelection(): void {
+        this.transformControls.detach();
+        this.selectionArmed = false;
+        this.selectModel(null);
+        this.updateModeHints();
+    }
+
+    /**
+     * Drops every reference the selection state holds to a model. Used before a model is
+     * deleted (see `disposeModel`).
+     *
+     * @param model - The model that is going away.
+     */
+    public releaseModel(model: EverydayModel | FoamModel): void {
+        if (this.transformControls.object === model.mesh) {
+            this.transformControls.detach();
+        }
+        if (this._selectedModel === model) {
+            this.selectModel(null);
+            // Forget any lasso that was drawn for it, so it cannot be applied afterwards.
+            this.lassoState.selectionPoints.length = 0;
+            this.lassoState.selectionNeedsUpdate = false;
+        }
+        this.updateModeHints();
+    }
+
+    /**
+     * Refreshes the on-canvas hints (selection instructions and the Esc bar) from the
+     * current gizmo and selection state.
+     */
+    public updateModeHints(): void {
+        // Called from event handlers that can fire while the constructor is still running.
+        if (!this.transformControls || !this.uuid_to_modelObj_Map) return;
+
+        const gizmoObject = this.transformControls.object;
+        const gizmoModel = gizmoObject ? this.uuid_to_modelObj_Map.get(gizmoObject.uuid) : undefined;
+        const armedModel = this.selectionArmed ? this._selectedModel : null;
+
+        renderModeHints(
+            {
+                gizmoModelName: gizmoObject ? (gizmoModel?.name ?? 'the model') : null,
+                selection: armedModel
+                    ? { modelName: armedModel.name, kind: this.current_selection_type === 'sense' ? 'sense' : 'foam' }
+                    : null,
+            },
+            () => this.viewCube.setView('Top')
+        );
+    }
+
+    // ----- scene upkeep -----
+
+    /**
+     * Redraws the print-space outline after the printer dimensions changed, replacing (and
+     * disposing) the previous outline.
+     */
+    public rebuildPrintBase(): void {
+        this.printBaseObjects = initScene(
+            this.scene, this.printer, this.printBaseObjects, { setLight: false, setPrintBase: true }
+        );
+    }
+
+    /** Window resize handler. */
+    private handleResize = (): void => {
+        resizeRenderer(this.renderer, this.camera);
+    };
+
+    /**
+     * Applies the drawn lasso/box to the selected model and regenerates its toolpath.
+     * Errors are shown to the user instead of being lost in the console.
+     *
+     * @param model - The everyday model to select on.
+     */
+    private runSelectionUpdate(model: EverydayModel): void {
+        if (this.selectionUpdatePending) return;
+
+        // Live update runs on every pointer move, so it cannot wait for the busy overlay.
+        if (this.lassoState.dragging) {
+            try {
+                updateSelection(this, model);
+            } catch (error) {
+                notify(error instanceof Error ? error.message : String(error), 'error');
+            }
+            return;
+        }
+
+        // Selection and toolpath generation block the main thread; show that it is working.
+        this.selectionUpdatePending = true;
+        withBusy(`Generating toolpath for “${model.name}”…`, () => {
+            // The model can only be the selected one if it still exists.
+            if (this._selectedModel === model) {
+                updateSelection(this, model);
+            }
+        })
+            .catch(() => { /* withBusy has already shown the error */ })
+            .then(() => { this.selectionUpdatePending = false; });
     }
 
     /**
      * The render loop that updates selection shapes and renders the scene.
      */
     public render = (): void => {
-        requestAnimationFrame(this.render);
+        this.animationFrameId = requestAnimationFrame(this.render);
         // Update the selection lasso lines if needed.
         if (this.lassoState.selectionShapeNeedsUpdate) {
             if (this.config.toolMode === 'lasso') {
@@ -303,10 +451,14 @@ export default class Visualizer {
         if (this.lassoState.selectionNeedsUpdate) {
             this.lassoState.selectionNeedsUpdate = false;
             if (this.lassoState.selectionPoints.length > 0) {
-                if (this.current_Obj) {
-                    if (this.current_Obj && 'toolpathConfig' in this.current_Obj) {
-                        updateSelection(this, this.current_Obj as EverydayModel);
-                    }
+                const model = this._selectedModel;
+                if (this.selectionArmed && model && 'toolpathConfig' in model) {
+                    this.runSelectionUpdate(model);
+                } else if (!this.lassoState.dragging) {
+                    notify(
+                        'Nothing to select on yet: open an everyday model in the panel and press “Select Foam Area” first.',
+                        'info'
+                    );
                 }
             }
         }
@@ -317,19 +469,21 @@ export default class Visualizer {
         // update the orbit controls
         this.orbitControls.update();
 
-        // Render the scene.
+        // Render the scene, then the view cube (it has no loop of its own).
         this.renderer.render(this.scene, this.camera);
+        this.viewCube.render();
     }
 
-    public saveGcodeToFile(gcode: string, name: string): void {
-        console.log("G-code content:", this.printer);
-        console.log("G-code content:", gcode);
-        console.log("saveToolpathGcodeToFile called");
-        if (gcode) {
-            // this.printer.toolpathGcode += this.printer.end_gcode;
-            // saveGcodeToFile(this.printer.toolpathGcode, name);  //originally was just gcode but didnt getupdated stuff
-            saveGcodeToFile(gcode, name);
+    /**
+     * Stops the render loop and releases what the Visualizer registered globally.
+     */
+    public dispose(): void {
+        if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
         }
+        window.removeEventListener('resize', this.handleResize);
+        this.viewCube.dispose();
     }
 
 
@@ -387,11 +541,11 @@ export default class Visualizer {
      */
     public removeExtruder(index: number): boolean {
         if (this.config.extruders.length <= 1) {
-            console.warn("Cannot remove the last extruder.");
+            notify('The last extruder cannot be removed.', 'warning');
             return false;
         }
         if (index < 0 || index >= this.config.extruders.length) {
-            console.warn(`No extruder at index ${index}.`);
+            notify(`There is no extruder ${index} to remove.`, 'warning');
             return false;
         }
         this.config.extruders.splice(index, 1);

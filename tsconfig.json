@@ -1,23 +1,22 @@
 {
     "compilerOptions": {
-      "target": "es5",
+      "target": "es2019",
       "module": "es6",
       "moduleResolution": "node",
-      "downlevelIteration": true,
       "strict": true,
-      "jsx": "react",
-      "allowJs": true,
-      "checkJs": false,
       "sourceMap": true,
       "outDir": "./dist",
       "esModuleInterop": true,
+      "skipLibCheck": true,
       "typeRoots": [
-      "node_modules/@types",
-      "src/types"
-    ]
+        "node_modules/@types",
+        "src/types"
+      ]
     },
     "include": [
-      "src/**/*",
-      "src/types/**/*.d.ts"
+      "src/**/*"
+    ],
+    "exclude": [
+      "src/**/*.test.ts"
     ]
 }

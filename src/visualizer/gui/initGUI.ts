@@ -1,15 +1,13 @@
 // src/visualizer/gui/initGUI.ts
 import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import tippy from 'tippy.js';
-import initScene from '../renderer/initScene';
 import Visualizer from '../Visualizer';
-import * as THREE from 'three';
 import { importSTLModel } from '../loaders/modelLoader';
-import { generateFoamToolpath, generateNonplanarFoamToolpath, generateTrialToolpath } from '../toolpath/generateFoamToolpath';
-import { sliceMeshIntoLayers } from '../utils/TreeSlicer';
+import { saveAugmentGcode, slicePlateAndSave } from '../toolpath/gcodeActions';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
-import {EverydayModel} from '../types/modelTypes';
 import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
+import { refreshModelControls } from './refreshModelGUIList';
+import { addButton, addFolderWithTip, addParam, folderTitleElement, initTooltips, setTip } from './guiHelpers';
+import { SETTING_SPECS, SettingKey } from './paramSpecs';
 
 /**
  * Represents the GUI elements created by initGUI.
@@ -18,121 +16,117 @@ export interface InitGUIResult {
   gui: GUI;
   foamModelListFolder: GUI;        // Folder for foam models list.
   everydayModelListFolder: GUI;    // Folder for everyday models list.
-  saveFolder: GUI;
-  treeSlicerFolder: GUI;          // New folder for TreeSlicer operations
-  presetFolder: GUI;    
+  saveFolder: GUI;                 // Folder for the "Save Toolpath G-Code" action.
+  treeSlicerFolder: GUI;          // Folder for the "Slice Plate" action.
+  presetFolder: GUI;
+}
+
+/**
+ * Adds an icon in front of a top-level folder's title and gives the title its heading style.
+ *
+ * @param folder - The folder to decorate.
+ * @param iconUrl - URL of the icon image.
+ */
+function decorateSectionTitle(folder: GUI, iconUrl: string): void {
+  const title = folderTitleElement(folder);
+  if (!title) return;
+  title.classList.add('lil-gui-2nd-title');
+  const icon = document.createElement('img');
+  icon.src = iconUrl;
+  icon.alt = '';
+  icon.className = 'lil-gui-icon';
+  title.prepend(icon);
 }
 
 /**
  * Initializes the GUI for the visualizer.
  *
- * This function creates a new GUI, sets a custom title, adds folders for foam models and everyday models,
- * and sets up various parameter folders. It returns an object containing the new GUI instance along with
- * references to the foam and everyday model list folders.
+ * The top-level folders follow the order of the workflow: import models (and, inside each
+ * model, set its parameters and select the area to cover), slice, save the G-code, and
+ * finally presets and settings.
  *
  * @param visualizer - An instance of Visualizer (exported as default from Visualizer.ts).
- * @returns An object containing { gui, foamModelListFolder, everydayModelListFolder }.
+ * @returns The GUI instance and the folders other code needs to reach.
  */
 export default function initGUI(visualizer: Visualizer): InitGUIResult {
-
-  console.log('initGUI function called');
   // Create a new GUI instance.
-  const gui = new GUI();
-  // Change the top-level GUI title.
-  const titleElement = gui.domElement.querySelector('.title');
-  console.log('Title Element:', titleElement);
-  if (titleElement) {
-    titleElement.textContent = 'AugPrint Design Tool';
-    titleElement.classList.add('lil-gui-1st-title');
-  }
+  const gui = new GUI({ title: 'AugPrint Foam Slicer' });
+  folderTitleElement(gui)?.classList.add('lil-gui-1st-title');
 
-  // ----- Foam Slicing Model Folder -----
-  const modelFolder = gui.addFolder('Models for Foam Slicing');
-  const modelFolderTitle = modelFolder.domElement.querySelector('.title') as HTMLElement;
-  if (modelFolderTitle) {
-    // cast to HTMLElement
-    modelFolderTitle.classList.add('lil-gui-2nd-title');
-    // Add an icon to the title.
-    modelFolderTitle.innerHTML = `<img src="./assets/icons/foam_model.svg" alt="icon" class="lil-gui-icon" />` + modelFolderTitle.innerHTML;
-    modelFolderTitle.style.pointerEvents = 'auto';
-    // Initialize tooltip using Tippy.js.
-    tippy(modelFolderTitle, {
-      content: 'models to be printed with foam structure',
-      placement: 'right',
-      theme: 'light-border',
-      interactive: true,
-      arrow: true,
-    });
-  }
-  const foamModelListFolder = modelFolder.addFolder('foam model list');
   const importControls = {
     importFoamModel: () => importSTLModel(visualizer, 'foam'),
     importEverydayModel: () => importSTLModel(visualizer, 'everyday'),
   };
-  foamModelListFolder.add(importControls, 'importFoamModel').name('Import Foam STL Model');
 
-  const foamModelSliceParamFolder = modelFolder.addFolder('slice params');
-  foamModelSliceParamFolder.close();
+  // ----- 1. Everyday Object Models: import, parameters and area selection per model -----
+  // The model folders are added straight into this folder (see refreshModelGUIList).
+  const everydayModelFolder = addFolderWithTip(
+    gui,
+    'Everyday Object Models',
+    'Objects to print foam on or to slice into foam. Import an STL, set its parameters, then select the area to cover.'
+  );
+  decorateSectionTitle(everydayModelFolder, './assets/icons/bottle.svg');
+  const everydayModelListFolder = everydayModelFolder;
+  addButton(
+    everydayModelFolder,
+    'Import Everyday STL Model',
+    'Load an STL file. It is placed in the middle of the print bed.',
+    importControls.importEverydayModel
+  );
+
+  // ----- 2. Models for Foam Slicing -----
+  const modelFolder = addFolderWithTip(
+    gui,
+    'Models for Foam Slicing',
+    'Models to be printed with a foam structure.'
+  );
+  decorateSectionTitle(modelFolder, './assets/icons/foam_model.svg');
+  const foamModelListFolder = modelFolder;
+  addButton(
+    modelFolder,
+    'Import Foam STL Model',
+    'Load an STL file. It is placed in the middle of the print bed.',
+    importControls.importFoamModel
+  );
   modelFolder.close();
-  // (Additional slice parameter controls can be added here.)
 
-  // ----- Everyday Object Model Folder -----
-  const everydayModelFolder = gui.addFolder('Everyday Object Models');
-  const everydayModelFolderTitle = everydayModelFolder.domElement.querySelector('.title') as HTMLElement;
-  if (everydayModelFolderTitle) {
-    everydayModelFolderTitle.classList.add('lil-gui-2nd-title');
-    everydayModelFolderTitle.innerHTML = `<img src="./assets/icons/bottle.svg" alt="icon" class="lil-gui-icon" />` + everydayModelFolderTitle.innerHTML;
-    everydayModelFolderTitle.style.pointerEvents = 'auto';
-    tippy(everydayModelFolderTitle, {
-      content: 'models to be printed with foam structure',
-      placement: 'right',
-      theme: 'light-border',
-      interactive: true,
-      arrow: true,
-    });
-  }
-  const everydayModelListFolder = everydayModelFolder.addFolder('everyday object model list');
-  everydayModelListFolder.add(importControls, 'importEverydayModel').name('Import Everyday STL Model!');
+  // ----- 3. Foam Slicing and 4. Save G-Code -----
+  // Created here so they sit in workflow order; their buttons are added further down.
+  const treeSlicerFolder = addFolderWithTip(
+    gui,
+    'Foam Slicing',
+    'Slice the everyday models on the plate into a foam toolpath.'
+  );
+  const saveFolder = addFolderWithTip(
+    gui,
+    'Save G-Code',
+    'Download the G-code of the toolpaths generated by selecting areas.'
+  );
 
-
-
-  // const displayFolder = everydayModelFolder.addFolder('display');
-  // displayFolder.add(visualizer.config, 'objectWireframe');
-  // displayFolder.add(visualizer.config, 'objectBoundingBox')
-  //   .onChange(toggleObjectBoundingBoxVisibility.bind(visualizer));
-  // displayFolder.add(visualizer.config, 'selectBoundingBox')
-  //   .onChange((v: boolean) => {
-  //     if (v) {
-  //       visualizer.scene.add(visualizer.selectedRegularFoamMeshBoundingBoxHelper);
-  //     } else {
-  //       visualizer.scene.remove(visualizer.selectedRegularFoamMeshBoundingBoxHelper);
-  //     }
-  //   });
-  // displayFolder.close();
-
+  // ----- 5. Presets -----
   // Assigned further down, once the printer settings folder exists. Importing a preset can change
   // the extruder count, so the import handler needs to be able to rebuild these folders.
   let extrudersFolder: GUI | undefined;
 
-  const presetFolder = gui.addFolder('Presets');
-  presetFolder.add({ exportPreset: () => {
-    if (!visualizer.currentSelectedModel) {
-      visualizer.currentSelectedModel = visualizer.everydayModelList[0];
-      console.log("Set selected model to first model in list");
-    }
-
-    exportPresetToFile(visualizer)
-  } }, 'exportPreset').name('Export Preset');
-
-
-  presetFolder.add({ 
-    importPreset: async () => {
-      if (!visualizer.currentSelectedModel) {
-        visualizer.currentSelectedModel = visualizer.everydayModelList[0];
-        console.log("Set selected model to first model in list");
-      }
-
+  const presetFolder = addFolderWithTip(
+    gui,
+    'Presets',
+    'Save every setting and model parameter to a file, or load them back.'
+  );
+  addButton(
+    presetFolder,
+    'Export Preset',
+    'Download all settings, plus the parameters of the selected (or first) everyday model, as a text file.',
+    () => exportPresetToFile(visualizer)
+  );
+  addButton(
+    presetFolder,
+    'Import Preset',
+    'Load a preset file. Model parameters go to the selected everyday model, or to all of them if none is selected. A file with any invalid value is rejected as a whole.',
+    async () => {
       const filename = await importPresetFromFile(visualizer);
+      if (!filename) return;
+
       // The preset may have added or removed extruders, so rebuild those folders before refreshing.
       if (extrudersFolder) {
         refreshExtruderFolders(visualizer, extrudersFolder);
@@ -140,229 +134,91 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       gui.controllersRecursive().forEach(controller => {
         controller.updateDisplay();
       });
-      
-      const titleElement = presetFolder.domElement.querySelector('.title');
-      if (titleElement && filename) {
-        titleElement.textContent = `Presets (applied: ${filename})`;
+      refreshModelControls(visualizer);
+
+      const titleElement = folderTitleElement(presetFolder);
+      if (titleElement) {
+        titleElement.textContent = `Presets (Applied: ${filename})`;
       }
     }
-  }, 'importPreset').name('Import Preset');
+  );
+  presetFolder.close();
 
-  // -----  Settings Folder -----
-  const settingFolder = gui.addFolder('Settings');
+  // ----- 6. Settings -----
+  const settingFolder = addFolderWithTip(gui, 'Settings', 'Selection, printer and slicer settings.');
 
-  // Add additional folders for selection, display, printer settings, etc.
-  const selectionFolder = settingFolder.addFolder('selection settings');
-  selectionFolder.add(visualizer.config, 'toolMode', ['lasso', 'box']);
-  selectionFolder.add(visualizer.config, 'selectionMode', ['centroid-visible', 'intersection', 'centroid']);
-  selectionFolder.add(visualizer.config, 'selectModel');
-  selectionFolder.add(visualizer.config, 'liveUpdate');
-  selectionFolder.add(visualizer.config, 'selectWireframe');
+  // Every setting is edited on visualizer.config and then mirrored onto the printer in one go.
+  const syncPrinter = () => visualizer.syncConfigToPrinter();
+  const syncPrinterAndRedrawBed = () => {
+    visualizer.syncConfigToPrinter();
+    visualizer.rebuildPrintBase();
+  };
+  /** Adds controls for the given config keys, each with the given change handler. */
+  const addSettings = (folder: GUI, keys: SettingKey[], onChange?: () => void) => {
+    keys.forEach(key => {
+      const controller = addParam(folder, visualizer.config, key, SETTING_SPECS[key]);
+      if (onChange) controller.onChange(onChange);
+    });
+  };
+
+  const selectionFolder = addFolderWithTip(
+    settingFolder,
+    'Selection Settings',
+    'How drawing on the canvas with Alt (Option on Mac) held selects part of a model.'
+  );
+  addSettings(selectionFolder, ['toolMode', 'selectionMode', 'selectModel', 'liveUpdate', 'selectWireframe']);
   selectionFolder.close();
 
-  const printerFolder = settingFolder.addFolder('printer settings');
-  printerFolder.add(visualizer.config, 'bedTemp', 0, 110, 1)
-    .onChange((v: number) => { visualizer.printer.material_bed_temperature = v; });
-  printerFolder.add(visualizer.config, 'machineDepth', 0, 1000, 1)
-    .onChange((v: number) => {
-      visualizer.printer.machine_depth = v;
-      // Note: call to initScene here might need proper parameters.
-      initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
-    });
-  printerFolder.add(visualizer.config, 'machineDepthY', 0, 1000, 1)
-    .onChange((v: number) => {
-      visualizer.printer.machine_depth_y = v;
-      // Note: call to initScene here might need proper parameters.
-      initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
-    });
-  printerFolder.add(visualizer.config, 'machineHeight', 0, 2000, 1)
-    .onChange((v: number) => {
-      visualizer.printer.machine_height = v;
-      initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
-    });
-  printerFolder.add(visualizer.config, 'filamentDiameter', 0, 5, 0.01)
-    .onChange((v: number) => { visualizer.printer.diameter_filament = v; });
-  printerFolder.add(visualizer.config, 'printHeadMinX', -100, 0, 0.01)
-    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setX(v); });
-  printerFolder.add(visualizer.config, 'printHeadMinY', -100, 0, 0.01)
-    .onChange((v: number) => { visualizer.printer.printHeadDims.min.setY(v); });
-  printerFolder.add(visualizer.config, 'printHeadMaxX', 0, 100, 0.01)
-    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setX(v); });
-  printerFolder.add(visualizer.config, 'printHeadMaxY', 0, 100, 0.01)
-    .onChange((v: number) => { visualizer.printer.printHeadDims.max.setY(v); });
-  printerFolder.add(visualizer.config, 'multipleToolheads').name('Multiple Toolheads')
-    .onChange((v: boolean) => { visualizer.printer.multipleToolheads = v; });
-  printerFolder.add(visualizer.config, 'purgeTower').name('Purge Tower')
-    .onChange((v: boolean) => { visualizer.printer.purgeTower = v; });
+  const printerFolder = addFolderWithTip(
+    settingFolder,
+    'Printer Settings',
+    'The printer: bed, print space, filament, print head and extruders.'
+  );
+  addSettings(printerFolder, ['bedTemp'], syncPrinter);
+  addSettings(printerFolder, ['machineDepth', 'machineDepthY', 'machineHeight'], syncPrinterAndRedrawBed);
+  addSettings(
+    printerFolder,
+    ['filamentDiameter', 'printHeadMinX', 'printHeadMinY', 'printHeadMaxX', 'printHeadMaxY', 'multipleToolheads', 'purgeTower'],
+    syncPrinter
+  );
 
   // Per-extruder parameters, plus the button to add another extruder.
   extrudersFolder = addExtrudersFolder(visualizer, printerFolder);
 
   printerFolder.close();
 
-  const slicerFolder = settingFolder.addFolder('slicer settings');
-  slicerFolder.add(visualizer.config, 'useFermatSpirals').onChange((v: boolean) => {visualizer.printer.globalVTPSettings.useFermatSpirals = v});
-  slicerFolder.add(visualizer.config, 'generateBoundary').onChange((v: boolean) => {visualizer.printer.generateBoundary = v});
-  slicerFolder.add(visualizer.config, 'purgeLine').onChange((v: boolean) => {visualizer.printer.purgeLine = v});
-  slicerFolder.add(visualizer.config, 'checkCollisions').onChange((v: boolean) => {visualizer.printer.checkCollisions = v});
-  slicerFolder.add(visualizer.config, 'bedLeveling').onChange((v: boolean) => {visualizer.printer.bedLeveling = v});
-  slicerFolder.add(visualizer.config, 'testSweep').onChange((v: boolean) => {visualizer.printer.testSweep = v});
+  const slicerFolder = addFolderWithTip(
+    settingFolder,
+    'Slicer Settings',
+    'How toolpaths and G-code are generated.'
+  );
+  addSettings(
+    slicerFolder,
+    ['useFermatSpirals', 'generateBoundary', 'purgeLine', 'checkCollisions', 'bedLeveling', 'testSweep'],
+    syncPrinter
+  );
   slicerFolder.close();
+  settingFolder.close();
 
-  // const testParamsFolder = settingFolder.addFolder('test params');
-  // testParamsFolder.add(visualizer.config, 'startHStarTest', 0, 200, 0.01);
-  // testParamsFolder.add(visualizer.config, 'endHStarTest', 0, 200, 0.01);
-  // testParamsFolder.add(visualizer.config, 'startVStarTest', 0, 10, 0.01);
-  // testParamsFolder.add(visualizer.config, 'endVStarTest', 0, 10, 0.01);
-  // testParamsFolder.add(visualizer.config, 'testDeltaL', 0, 40, 0.01);
-  // testParamsFolder.add(visualizer.config, 'testSize', 0, 100, 0.01);
-  // testParamsFolder.close();
+  // ----- Save G-Code button (folder created above) -----
+  // Every model's toolpath and G-code body is generated at save time, in one pass (see gcodeActions.ts).
+  saveFolder.add({ saveGcode: () => saveAugmentGcode(visualizer) }, 'saveGcode').name('Save Toolpath G-Code');
 
-  // Update parameter calculation.
-  // const updateParamCalculation = () => {
-  //   visualizer.config.VStar = (visualizer.config.printHead_speed_when_foam / visualizer.config.extrusion_speed_when_foam).toFixed(2);
-  //   visualizer.config.HStar = (visualizer.config.zOffset / (visualizer.config.nozzleDiameter * visualizer.config.dieSwelling)).toFixed(2);
-  // };
-  // updateParamCalculation();
+  // ----- Slice Plate button (folder created above) -----
+  treeSlicerFolder.add({ sliceModel: () => slicePlateAndSave(visualizer) }, 'sliceModel').name('Slice Plate');
 
-  // adding a save folder for the save gcode for the toolpath output
+  // Tooltips for the two buttons above (looked up by position so their handlers stay untouched).
+  setTip(
+    saveFolder.controllers[0]?.domElement,
+    'Download one G-code file with the toolpath of every model that has a selected area. Select an area first.'
+  );
+  setTip(
+    treeSlicerFolder.controllers[0]?.domElement,
+    'Slice every everyday model on the plate, show the toolpath and download the G-code. Large models can take a while.'
+  );
 
-  // const paramsFolder = settingFolder.addFolder('parameters');
-//   paramsFolder.add(visualizer.config, 'VStar', 0, 2000, 0.01)
-//     .onChange((v: number) => {
-//       visualizer.printer.V_Star = v;
-//       visualizer.config.VStar = v;
-//     });
-//   paramsFolder.add(visualizer.config, 'Edot', 0, 2000, 0.01)
-//     .onChange((v: number) => {
-//       visualizer.printer.Edot = v;
-//       visualizer.config.Edot = v;
-//   });
-//   paramsFolder.add(visualizer.config, 'diameter_filament', 0, 2000, 0.01)
-//   .onChange((v: number) => {
-//     visualizer.printer.diameter_filament = v;
-//     visualizer.config.diameter_filament = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'zOffset', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.ZOffset = v;
-//   visualizer.config.zOffset = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'deltaZ', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.deltaZ = v;
-//   visualizer.config.deltaZ = v;
-// });
-// // layer height
-// // H Star
-// // Z Offset
-
-// paramsFolder.add(visualizer.config, 'extrusion_m', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.extrusion_m = v;
-//   visualizer.config.extrusion_m = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'HStar', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.printer.H_star = v;
-//   visualizer.config.HStar = v;
-// });
-
-// paramsFolder.add(visualizer.config, 'height', 0, 2000, 0.01)
-// .onChange((v: number) => {
-//   visualizer.config.height = v;
-//   visualizer.config.foamLayers = (v/visualizer.config.deltaZ) + (v % visualizer.config.deltaZ > 0 ? 1 : 0);
-// });
-
-//   //Math.floor(heightCube / incrementZ) + (heightCube % incrementZ > 0 ? 1 : 0);
-//   paramsFolder.add(visualizer.config, 'showGcodeVisualization')
-//     .name('Show G-code Visualization')
-//     .onChange((value: boolean) => {
-//         // Regenerate toolpath visualization when toggle changes
-//         if (visualizer.currentSelectedModel) {
-//             generateFoamToolpath(visualizer, visualizer.currentSelectedModel);
-//         }
-//     });
-  
-  const saveFolder = gui.addFolder('Saving');
-  // visualizer.printer.toolpathGcode += visualizer.printer.end_gcode; // need to test this 100%
-    saveFolder.add({ saveGcode: () => {
-    const usedExtruders: number[] = []
-    let firstExtruder = null;
-    for(const model of visualizer.everydayModelList){
-      if(!model.extruders) continue;
-      for(const n of model.extruders){
-        if(usedExtruders.indexOf(n) == -1){
-          usedExtruders.push(n)
-        }
-      }
-      if(firstExtruder === null || firstExtruder === undefined){
-        firstExtruder = model.firstExtruder
-      }
-    }
-    if(!visualizer.everydayModelList || firstExtruder === null){
-      console.warn("no gcode to save")
-      return;
-    }
-    console.log("Using Extruders", usedExtruders);
-    console.log("first extruder",firstExtruder)
-    console.log("Extruders:",visualizer.printer.extruders);
-    const gcode = visualizer.printer.build_start_gcode(firstExtruder!,usedExtruders) + 
-                  visualizer.everydayModelList.map(model => model.gcode).join("\n; Moving to next model\n") + 
-                  visualizer.printer.build_end_gcode(usedExtruders);
-
-    visualizer.saveGcodeToFile(gcode, "toolpath")
-  } }, 'saveGcode').name('Save Toolpath G-Code');
-  // saveFolder.add({ generateTestGcode: () => {
-  //   visualizer.everydayModelList[0].gcode = visualizer.printer.generate_foam_gcode(generateTrialToolpath(visualizer.config.testDeltaL, new THREE.Vector3(100, 100, 0), visualizer.config.testSize, 6, 10, 
-  //     visualizer.printer.nozzleDiameter * visualizer.printer.dieSwelling, visualizer.config.startHStarTest, visualizer.config.endHStarTest, visualizer.config.startVStarTest, 
-  //     visualizer.config.endVStarTest), 1);
-  //   }}, 'generateTestGcode').name("Make Test Gcode");
-  // saveFolder.add({ generateTestGcode: () => {
-  //   const model = visualizer.everydayModelList[0];
-  //   model.gcode = visualizer.printer.generate_foam_gcode(generateNonplanarFoamToolpath(visualizer, model, model.toolpathConfig.initialFoamLayerCount).all, 1);
-  // }}, 'generateTestGcode').name("Make Nonplanar Gcode");
-  saveFolder.close();
-  
-
-  // Create TreeSlicer folder
-  const treeSlicerFolder = gui.addFolder('Foam Slicing');
-  treeSlicerFolder.add({ sliceModel: () => {
-    console.log('Slice Plate button clicked');
-
-    const models: EverydayModel[] = visualizer.everydayModelList.map(model => model as EverydayModel);
-    
-    // Generate toolpath
-    console.log('Generating toolpath...');
-    const toolpath = generateFoamToolpath(visualizer, models);
-    console.log('Generated toolpath:', toolpath);
-    
-    if (!toolpath) {
-        console.warn('Failed to generate toolpath. Please try again.');
-        return;
-    }
-    const usedExtruders: number[] = []
-    for(const point of toolpath){
-      if(point.extruder !== undefined && usedExtruders.indexOf(point.extruder) == -1){
-        usedExtruders.push(point.extruder)
-      }
-    }
-    // Create G-code
-    console.log('Creating G-code...');
-    const gcode = visualizer.printer.build_start_gcode(toolpath[0].extruder !== undefined ? toolpath[0].extruder: 0,usedExtruders) + 
-                  visualizer.printer.generate_foam_gcode(toolpath) + 
-                  visualizer.printer.build_end_gcode(usedExtruders); //TODO: Why is printer end_gcode added twice? This might be a mistake.
-    console.log('Generated G-code:', gcode);
-    
-    // Save G-code file
-    console.log('Saving G-code file...');
-    visualizer.saveGcodeToFile(gcode, "toolpath");
-    console.log('G-code file saved successfully');
-  }}, 'sliceModel').name('Slice Plate');
-  treeSlicerFolder.close();
+  // Turn on tooltips for every control in the panel, including ones added later.
+  initTooltips(gui.domElement);
 
   // Open the GUI.
   gui.open();

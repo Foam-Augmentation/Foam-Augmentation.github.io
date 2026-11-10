@@ -5,19 +5,24 @@ import { createSelectedMeshFromHighlight } from '../interactions/createSelectedM
 import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import { generateAugmentFoamToolpath } from './generateFoamToolpath';
+import { notify } from '../gui/notify';
 
 /**
  * Adds a sensing intersection geometry to an EverydayModel.
  *
- * 创建一个 sensing 对象（box 或 cylinder），并将其添加到 modelObj.sensingIntersectModelList 与场景中。
- * 拖拽时更新 sensingObj 位置，同时调用 _updateSenseIntersectionRegion，
- * 计算 modelObj.mesh 与所有 sensing 对象（联合区域）的交集，将结果更新到 highlightSenseMesh 与 selectedSenseFoamMesh 中，
- * 并调用后续处理函数（创建选中网格、更新边界盒、采样、生成工具路径）。
+ * Creates a sensing object (a box or a cylinder), adds it to modelObj.sensingIntersectModelList
+ * and to the scene, and lets the user drag it over the model's surface. While it is dragged the
+ * sense highlight follows it; when it is dropped the selection is sampled again and the toolpath
+ * regenerated.
  *
- * @param modelObj - EverydayModel 对象
- * @param type - sensing 对象的类型 ('cylinder' 或 'box')
- * @param size - 当 type 为 box 时为边长；为 cylinder 时为直径
- * @param visualizer - Visualizer 实例（包含 scene、camera、renderer、orbitControls 等）
+ * The sensing object registers pointer listeners on the canvas. Call
+ * `sensingObj.userData.dispose()` when removing the object to unregister them and free its
+ * geometry and material.
+ *
+ * @param modelObj - The EverydayModel to add the sensing object to.
+ * @param type - The shape of the sensing object ('cylinder' or 'box').
+ * @param size - The edge length for a box; the diameter (and height) for a cylinder.
+ * @param visualizer - The Visualizer instance (scene, camera, renderer, orbitControls, ...).
  */
 export function addSensingIntersectionGeo(
   modelObj: EverydayModel,
@@ -74,9 +79,11 @@ export function addSensingIntersectionGeo(
   visualizer.scene.add(sensingObj);
 
   // 拖拽事件
+  const canvas = visualizer.renderer.domElement;
   let isDragging = false;
+  let movedWhileDragging = false;
   const onPointerDown = (event: PointerEvent) => {
-    const rect = visualizer.renderer.domElement.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
@@ -86,7 +93,7 @@ export function addSensingIntersectionGeo(
     const hits = rc.intersectObject(sensingObj);
     if (hits.length > 0) {
       isDragging = true;
-      console.log('Dragging sensing object');
+      movedWhileDragging = false;
       visualizer.orbitControls.enabled = false;
       event.stopPropagation();
     }
@@ -94,7 +101,7 @@ export function addSensingIntersectionGeo(
 
   const onPointerMove = (event: PointerEvent) => {
     if (!isDragging) return;
-    const rect = visualizer.renderer.domElement.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
@@ -117,33 +124,55 @@ export function addSensingIntersectionGeo(
         sensingObj.quaternion.copy(quaternion);
       }
       // 更新交集区域：遍历 sensingIntersectModelList 中所有 sensing 对象的联合区域
-      _updateSenseIntersectionRegion(visualizer, modelObj, type, size);
+      // Only the highlight follows the drag; sampling and the toolpath wait for the drop.
+      movedWhileDragging = _updateSenseIntersectionRegion(modelObj, type, size) || movedWhileDragging;
     }
   };
 
   const onPointerUp = () => {
+    if (!isDragging) return;
     isDragging = false;
     visualizer.orbitControls.enabled = true;
+    if (movedWhileDragging) {
+      movedWhileDragging = false;
+      _regenerateAfterSenseChange(visualizer, modelObj);
+    }
   };
 
-  visualizer.renderer.domElement.addEventListener('pointerdown', onPointerDown);
-  visualizer.renderer.domElement.addEventListener('pointermove', onPointerMove);
-  visualizer.renderer.domElement.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+
+  // Lets whoever removes the sensing object also remove its listeners and free its resources.
+  sensingObj.userData.dispose = () => {
+    canvas.removeEventListener('pointerdown', onPointerDown);
+    canvas.removeEventListener('pointermove', onPointerMove);
+    canvas.removeEventListener('pointerup', onPointerUp);
+    visualizer.scene.remove(sensingObj);
+    geometry.dispose();
+    material.dispose();
+    const list = modelObj.sensingIntersectModelList;
+    const index = list ? list.indexOf(sensingObj) : -1;
+    if (list && index !== -1) {
+      list.splice(index, 1);
+    }
+  };
 }
 
 /**
- * 检查一个世界坐标点是否落在某个 sensing 对象内部。
+ * Checks whether a point in world coordinates lies inside a sensing object.
  *
- * 对于 box：有效区域为 sensing 对象局部坐标的 x,y,z ∈ [–size/2, size/2]
- * 对于 cylinder：假设沿局部 z 轴，要求 |z| <= size/2 且 sqrt(x^2+y^2) <= size/2
+ * For a box the valid region is x, y, z ∈ [–size/2, size/2] in the object's local coordinates.
+ * For a cylinder it is |y| <= size/2 and sqrt(x^2 + z^2) <= size/2: THREE.CylinderGeometry runs
+ * along its local Y axis.
  *
- * @param point - 世界坐标下的点
- * @param sensingObj - sensing 对象
- * @param type - sensing 类型 ('box' 或 'cylinder')
- * @param size - 尺寸参数
- * @returns 是否在内部
+ * @param point - The point, in world coordinates.
+ * @param sensingObj - The sensing object.
+ * @param type - The shape of the sensing object ('box' or 'cylinder').
+ * @param size - The size the sensing object was created with.
+ * @returns Whether the point is inside.
  */
-function pointInsideSensing(
+export function pointInsideSensing(
   point: THREE.Vector3,
   sensingObj: THREE.Mesh,
   type: 'box' | 'cylinder',
@@ -159,66 +188,58 @@ function pointInsideSensing(
       Math.abs(localPoint.z) <= half
     );
   } else {
-    const radial = Math.sqrt(localPoint.x * localPoint.x + localPoint.y * localPoint.y);
-    return Math.abs(localPoint.z) <= half && radial <= half;
+    const radial = Math.sqrt(localPoint.x * localPoint.x + localPoint.z * localPoint.z);
+    return Math.abs(localPoint.y) <= half && radial <= half;
   }
 }
 
 /**
- * 更新 sensing 区域的交集。
+ * Updates the sense highlight to the area covered by the model's sensing objects.
  *
- * 遍历 modelObj.mesh 的所有三角形，若任一顶点落在 modelObj.sensingIntersectModelList 中任一 sensing 对象内部，
- * 则认为该三角形属于交集区域，将该三角形的原始索引记录到 indices 数组中，
- * 最后根据 indices 数组更新 highlightSenseMesh 的 geometry.index 和 drawRange，
- * 并调用 createSelectedMeshFromHighlight、updateSelectedMeshBoundingBox、sampleSelectedMesh、generateFoamToolpath 等后续处理函数。
+ * Every triangle of modelObj.mesh with at least one vertex inside any sensing object counts as
+ * part of the sensing area. Those triangles are written into highlightSenseMesh's index and
+ * drawRange, and selectedSenseFoamMesh is rebuilt from them.
  *
- * @param visualizer - Visualizer 实例
- * @param modelObj - EverydayModel 对象
- * @param type - sensing 类型 ('box' 或 'cylinder')
- * @param size - 尺寸参数
+ * @param modelObj - The EverydayModel whose sense area is updated.
+ * @param type - The shape of the sensing objects ('box' or 'cylinder').
+ * @param size - The size the sensing objects were created with.
+ * @returns Whether the highlight could be updated (false if the model has no sense highlight mesh).
  */
 function _updateSenseIntersectionRegion(
-  visualizer: Visualizer,
   modelObj: EverydayModel,
   type: 'box' | 'cylinder',
   size: number
-): void {
+): boolean {
+  const highlightMesh = modelObj.highlightSenseMesh;
+  const newIndexAttr = highlightMesh?.geometry.index;
+  if (!highlightMesh || !newIndexAttr) {
+    return false;
+  }
+
   const posAttr = modelObj.mesh.geometry.getAttribute('position');
   const indexAttr = modelObj.mesh.geometry.index;
   const indices: number[] = [];
 
+  // The sensing objects were just moved; their world matrices are otherwise only refreshed on render.
+  modelObj.mesh.updateMatrixWorld();
+  const sensingObjects = modelObj.sensingIntersectModelList ?? [];
+  sensingObjects.forEach(sensing => sensing.updateMatrixWorld());
+
   // 判断某顶点是否落在任一 sensing 对象内部
-  const isInsideAny = (vertex: THREE.Vector3): boolean => {
-    if (modelObj.sensingIntersectModelList) {
-      for (const sensing of modelObj.sensingIntersectModelList) {
-        if (pointInsideSensing(vertex, sensing, type, size)) {
-          return true;
-        }
-      }
-    }
-    return false;
-  };
+  const isInsideAny = (vertex: THREE.Vector3): boolean =>
+    sensingObjects.some(sensing => pointInsideSensing(vertex, sensing, type, size));
 
   if (indexAttr) {
-    for (let i = 0; i < indexAttr.count; i += 3) {
+    const v0 = new THREE.Vector3();
+    const v1 = new THREE.Vector3();
+    const v2 = new THREE.Vector3();
+    for (let i = 0; i + 2 < indexAttr.count; i += 3) {
       const idx0 = indexAttr.getX(i);
       const idx1 = indexAttr.getX(i + 1);
       const idx2 = indexAttr.getX(i + 2);
-      const v0 = new THREE.Vector3(
-        posAttr.getX(idx0),
-        posAttr.getY(idx0),
-        posAttr.getZ(idx0)
-      ).applyMatrix4(modelObj.mesh.matrixWorld);
-      const v1 = new THREE.Vector3(
-        posAttr.getX(idx1),
-        posAttr.getY(idx1),
-        posAttr.getZ(idx1)
-      ).applyMatrix4(modelObj.mesh.matrixWorld);
-      const v2 = new THREE.Vector3(
-        posAttr.getX(idx2),
-        posAttr.getY(idx2),
-        posAttr.getZ(idx2)
-      ).applyMatrix4(modelObj.mesh.matrixWorld);
+      v0.fromBufferAttribute(posAttr, idx0).applyMatrix4(modelObj.mesh.matrixWorld);
+      v1.fromBufferAttribute(posAttr, idx1).applyMatrix4(modelObj.mesh.matrixWorld);
+      v2.fromBufferAttribute(posAttr, idx2).applyMatrix4(modelObj.mesh.matrixWorld);
       // 若任一顶点在 sensing 区域内，则记录该三角形的原始索引
       if (isInsideAny(v0) || isInsideAny(v1) || isInsideAny(v2)) {
         indices.push(idx0, idx1, idx2);
@@ -227,31 +248,36 @@ function _updateSenseIntersectionRegion(
   }
 
   // 更新 highlightSenseMesh 的 geometry.index 和 drawRange
-  let highlightMesh: THREE.Mesh = modelObj.highlightSenseMesh || new THREE.Mesh();
-  if (!highlightMesh) {
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', posAttr.clone());
-    if (indexAttr) {
-      geom.setIndex(indexAttr.clone());
-    }
-    highlightMesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
-    modelObj.highlightSenseMesh = highlightMesh;
-    visualizer.scene.add(highlightMesh);
-  }
-  const newIndexAttr = highlightMesh.geometry.index!;
-  // 将 indices 数组复制到 newIndexAttr 中
-  for (let i = 0, l = indices.length; i < l; i++) {
+  const count = Math.min(indices.length, newIndexAttr.count);
+  for (let i = 0; i < count; i++) {
     newIndexAttr.setX(i, indices[i]);
   }
-  highlightMesh.geometry.drawRange.count = indices.length;
+  highlightMesh.geometry.drawRange.count = count;
   newIndexAttr.needsUpdate = true;
 
   // 生成选中区域 Mesh
-  if (highlightMesh) {
-    modelObj.selectedSenseFoamMesh = createSelectedMeshFromHighlight(highlightMesh);
+  modelObj.selectedSenseFoamMesh = createSelectedMeshFromHighlight(highlightMesh);
+  return true;
+}
+
+/**
+ * Samples the model's selection again and regenerates its toolpath after the sense area changed.
+ * Problems are shown to the user instead of being thrown into an event handler.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param modelObj - The EverydayModel whose sense area changed.
+ */
+function _regenerateAfterSenseChange(visualizer: Visualizer, modelObj: EverydayModel): void {
+  if (!modelObj.selectedRegularFoamMesh) {
+    notify('Select a foam area on the model first; the sensing area is cut out of it.', 'warning');
+    return;
   }
-  
-  updateSelectedMeshBoundingBox(visualizer, modelObj);
-  sampleSelectedMesh(visualizer, modelObj);
-  generateAugmentFoamToolpath(visualizer, modelObj);
+  try {
+    updateSelectedMeshBoundingBox(visualizer, modelObj);
+    sampleSelectedMesh(visualizer, modelObj);
+    generateAugmentFoamToolpath(visualizer, modelObj);
+  } catch (error) {
+    console.error(error);
+    notify(`Could not update the toolpath: ${error instanceof Error ? error.message : String(error)}`, 'error');
+  }
 }

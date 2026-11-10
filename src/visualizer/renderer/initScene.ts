@@ -7,10 +7,11 @@ import Printer from '../../printer/Printer';
  *
  * @param {THREE.Scene} scene - The Three.js scene to which objects will be added.
  * @param {Printer} printer - An instance of the Printer class, providing machine dimensions.
+ * @param {THREE.Object3D[]} printBaseObjects - The array returned by the previous call; these objects are removed and disposed.
  * @param {object} options - Configuration options.
  * @param {boolean} [options.setLight=true] - Whether to add lighting.
  * @param {boolean} [options.setPrintBase=true] - Whether to draw the printer base.
- * @returns {THREE.Object3D[]} An array of objects added to the scene for potential later removal or cleanup.
+ * @returns {THREE.Object3D[]} The print base objects now in the scene. Store this and pass it to the next call.
  */
 export default function initScene(
   scene: THREE.Scene,
@@ -18,8 +19,6 @@ export default function initScene(
   printBaseObjects: THREE.Object3D[] = [],
   { setLight = true, setPrintBase = true }: { setLight?: boolean; setPrintBase?: boolean }
 ): THREE.Object3D[] {
-  // const printBaseObjects: THREE.Object3D[] = [];
-
   // Add lighting
   if (setLight) {
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -32,9 +31,19 @@ export default function initScene(
     scene.add(ambientLight);
   }
 
-  // remove printBaseObjects
+  // Remove the previous print base objects and free their GPU resources.
+  // Callers must keep the returned array and pass it back in next time,
+  // otherwise the old outline, origin marker and axes stay in the scene.
   printBaseObjects.forEach((object) => {
     scene.remove(object);
+    const drawable = object as Partial<Pick<THREE.Mesh, 'geometry' | 'material'>>;
+    drawable.geometry?.dispose();
+    const material = drawable.material;
+    if (Array.isArray(material)) {
+      material.forEach((m) => m.dispose());
+    } else {
+      material?.dispose();
+    }
   });
   printBaseObjects = [];
 

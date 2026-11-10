@@ -1,305 +1,181 @@
 // src/visualizer/gui/presetManager.ts
+/**
+ * Exporting presets to, and importing them from, a file.
+ *
+ * The file format, validation and (de)serialisation live in presetFormat.ts, which is pure
+ * and unit-tested; this module only deals with the browser (file dialogs, downloads) and
+ * with committing a validated preset to the Visualizer.
+ */
 import Visualizer from '../Visualizer';
-import initScene from '../renderer/initScene';
-import { EverydayModel, ToolpathConfig } from '../types/modelTypes';
-import { Extruder, createDefaultExtruder } from '../../printer/Printer';
+import { EverydayModel } from '../types/modelTypes';
+import { createDefaultExtruder } from '../../printer/Printer';
+import { defaultDownloadName } from './downloadName';
+import { notify } from './notify';
+import {
+  ParsedPreset,
+  applyPresetToModel,
+  applyPresetToSettings,
+  hasModelSection,
+  parsePreset,
+  serializePreset,
+} from './presetFormat';
 
-/** Extruder fields written out by the preset, one line each. */
-const EXTRUDER_KEYS: (keyof Extruder)[] = [
-  'nozzleDiameter',
-  'nozzleLength',
-  'dieSwelling',
-  'printHead_speed_when_free_move',
-  'print_temp_extruder',
-  'idle_temp_extruder',
-  'color'
-];
+/** How many problem lines to quote in a message before summarising the rest. */
+const MAX_LISTED_PROBLEMS = 3;
 
 /**
- * Serializes every extruder as `extruder<i>.<field> <value>` lines, preceded by the count
- * so the importer knows how many extruders to create.
+ * Joins the first few problems into one message.
  *
- * @param visualizer - The Visualizer instance.
- * @returns The preset lines describing the extruders.
+ * @param problems - The individual problem descriptions.
+ * @returns The first few problems, plus a count of the rest.
  */
-function serializeExtruders(visualizer: Visualizer): string[] {
-  const lines = [`extruderCount ${visualizer.config.extruders.length}`];
-  visualizer.config.extruders.forEach((extruder, index) => {
-    EXTRUDER_KEYS.forEach(key => {
-      lines.push(`extruder${index}.${key} ${extruder[key]}`);
-    });
-  });
-  return lines;
+function summarize(problems: string[]): string {
+  const listed = problems.slice(0, MAX_LISTED_PROBLEMS).join('; ');
+  const rest = problems.length - MAX_LISTED_PROBLEMS;
+  return rest > 0 ? `${listed}; and ${rest} more` : listed;
 }
 
 /**
- * Applies an extruder-related preset line.
- * Handles both `extruderCount` (which resizes the extruder list) and
- * `extruder<i>.<field>` (which sets a single field).
+ * Exports the current settings as a preset file.
+ *
+ * Global settings and extruders are always written. Model parameters come from the selected
+ * everyday model, or the first everyday model if none is selected; with no everyday model
+ * loaded the preset simply has no model section.
  *
  * @param visualizer - The Visualizer instance.
- * @param key - The preset key.
- * @param rawValue - The raw string value from the preset file.
- * @returns True if the key was an extruder key and was handled.
+ * @param baseName - Start of the filename; a timestamp and `.txt` are appended.
  */
-function applyExtruderParameter(visualizer: Visualizer, key: string, rawValue: string): boolean {
-  if (key === 'extruderCount') {
-    const count = Number(rawValue);
-    if (!isFinite(count) || count < 1) {
-      console.warn(`Invalid extruderCount "${rawValue}"`);
-      return true;
-    }
-    const extruders = visualizer.config.extruders;
-    while (extruders.length > count) extruders.pop();
-    while (extruders.length < count) {
-      const last = extruders[extruders.length - 1];
-      extruders.push(last ? { ...last } : createDefaultExtruder());
-    }
-    return true;
-  }
+export function exportPresetToFile(visualizer: Visualizer, baseName: string = 'augprint-preset'): void {
+  const model: EverydayModel | null = visualizer.currentSelectedModel ?? visualizer.everydayModelList[0] ?? null;
+  const content = serializePreset(visualizer.config, model);
+  const filename = defaultDownloadName(baseName, 'txt');
 
-  const match = key.match(/^extruder(\d+)\.(.+)$/);
-  if (!match) return false;
-
-  const index = Number(match[1]);
-  const field = match[2] as keyof Extruder;
-  if (EXTRUDER_KEYS.indexOf(field) === -1) {
-    console.warn(`Unknown extruder field "${field}"`);
-    return true;
-  }
-  // extruderCount is written before the per-extruder lines, so the slot should already exist.
-  if (index >= visualizer.config.extruders.length) {
-    console.warn(`Preset references extruder ${index} but only ${visualizer.config.extruders.length} exist`);
-    return true;
-  }
-
-  const value = Number(rawValue);
-  if (!isFinite(value)) {
-    console.warn(`Invalid value "${rawValue}" for ${key}`);
-    return true;
-  }
-  visualizer.config.extruders[index][field] = value;
-  return true;
-}
-
-// can add more params
-/**
- * Exports current settings to a simple text format
- */
-export function exportPresetToFile(visualizer: Visualizer, filename: string = 'foam_printer_preset'): void {
-  if (!visualizer.currentSelectedModel) {
-    console.warn("No Selected Model");
-  }
-  const config = visualizer.currentSelectedModel!.toolpathConfig;
-  const lines = [
-    `bedTemp ${visualizer.config.bedTemp}`,
-    `machineDepth ${visualizer.config.machineDepth}`,
-    `machineDepthY ${visualizer.config.machineDepthY}`,
-    `machineHeight ${visualizer.config.machineHeight}`,
-    `filamentDiameter ${visualizer.config.filamentDiameter}`,
-    `printHeadMinX ${visualizer.config.printHeadMinX}`,
-    `printHeadMinY ${visualizer.config.printHeadMinY}`,
-    `printHeadMaxX ${visualizer.config.printHeadMaxX}`,
-    `printHeadMaxY ${visualizer.config.printHeadMaxY}`,
-    `useFermatSpirals ${visualizer.config.useFermatSpirals}`,
-    `generateBoundary ${visualizer.config.generateBoundary}`,
-    `purgeLine ${visualizer.config.purgeLine}`,
-    `checkCollisions ${visualizer.config.checkCollisions}`,
-    `bedLeveling ${visualizer.config.bedLeveling}`,
-    `testSweep ${visualizer.config.testSweep}`,
-    `multipleToolheads ${visualizer.config.multipleToolheads}`,
-    `purgeTower ${visualizer.config.purgeTower}`,
-    ...serializeExtruders(visualizer),
-    `startHStarTest ${visualizer.config.startHStarTest}`,
-    `endHStarTest ${visualizer.config.endHStarTest}`,
-    `startVStarTest ${visualizer.config.startVStarTest}`,
-    `endVStarTest ${visualizer.config.endVStarTest}`,
-    `testDeltaL ${visualizer.config.testDeltaL}`,
-    `testSize ${visualizer.config.testSize}`,
-    `toolMode ${visualizer.config.toolMode}`,
-    `selectionMode ${visualizer.config.selectionMode}`,
-    `selectModel ${visualizer.config.selectModel}`,
-    `liveUpdate ${visualizer.config.liveUpdate}`,
-    `selectWireframe ${visualizer.config.selectWireframe}`,
-    `hStar ${config.hStar}`,
-    `hStarEnd ${config.hStarEnd}`,
-    `vStar ${config.vStar}`,
-    `vStarEnd ${config.vStarEnd}`,
-    `deltaZ ${config.deltaZ}`,
-    `deltaL ${config.deltaL}`,
-    `edot ${config.edot}`,
-    `gridSize ${config.gridSize}`,
-    `initialFoamLayerCount ${config.initialFoamLayerCount}`,
-    `bumpSpacingX ${config.bumpSpacingX}`,
-    `bumpSpacingY ${config.bumpSpacingY}`,
-    `bumpScale ${config.bumpScale}`,
-  ];
-  
-  const content = lines.join('\n');
-  
   const blob = new Blob([content], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
-  
+
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${filename}.txt`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  
-  URL.revokeObjectURL(url);
-  console.log(`Preset exported to ${filename}.txt`);
+
+  // Give the browser a moment to start the download before the URL goes away.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  notify(
+    model
+      ? `Preset saved as ${filename} (model parameters from “${model.name}”).`
+      : `Preset saved as ${filename}. No everyday model is loaded, so it holds printer and slicer settings only.`,
+    'success'
+  );
 }
 
-
-
-export function importPresetFromFile(visualizer: Visualizer): Promise<string | null> {
-    return new Promise((resolve) => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.txt';
-      
-      input.onchange = (event: Event) => {
-        const target = event.target as HTMLInputElement;
-        const file = target.files?.[0];
-        
-        if (!file) {
-          console.warn('No file selected');
-          resolve(null);
-          return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = (e: ProgressEvent<FileReader>) => {
-          try {
-            const content = e.target?.result as string;
-            parseAndApplyPreset(visualizer, content);
-            console.log('Preset imported and applied successfully');
-            resolve(file.name);
-            
-          } catch (error) {
-            console.error('Error importing preset:', error);
-            alert('Error importing preset. Please check the file format.');
-            resolve(null);
-          }
-        };
-        
-        reader.readAsText(file);
-      };
-      
-      input.click();
-    });
-  }
-
 /**
- * Parses text content and applies settings to visualizer
+ * Commits a validated preset: global settings and extruders, the printer mirror, the print
+ * space outline, and the model parameters.
+ *
+ * Model parameters go to the selected everyday model, or to every everyday model if none is
+ * selected. With no everyday model loaded they are kept and applied to models imported later.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param preset - A parsed preset with no errors.
+ * @returns A short description of where the model parameters went, for the user.
  */
-function parseAndApplyPreset(visualizer: Visualizer, content: string): void {
-  if (!visualizer.currentSelectedModel) {
-    console.warn("No Selected Model");
-  }
-  const modelObj = visualizer.currentSelectedModel!;
-
-  const lines = content.split('\n');
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;    
-    
-    const parts = trimmed.split(' ');
-    if (parts.length < 2) continue;
-    
-    const key = parts[0];
-    const value = parts.slice(1).join(' '); 
-    
-    if (applyExtruderParameter(visualizer, key, value)) {
-      continue;
-    } else if (isVisualizerKey(visualizer, key)) {
-      applyVisualizerParameter(visualizer, key, value);
-    } else if (isModelKey(modelObj.toolpathConfig, key)) {
-      applyModelParameter(modelObj.toolpathConfig, key, value);
-    }
-  }
-
+export function commitPreset(visualizer: Visualizer, preset: ParsedPreset): string {
+  applyPresetToSettings(preset, visualizer.config, createDefaultExtruder);
   visualizer.syncConfigToPrinter();
+  visualizer.rebuildPrintBase();
 
-  
-  initScene(visualizer.scene, visualizer.printer, visualizer.printBaseObjects, { setLight: false, setPrintBase: true });
-}
+  if (!hasModelSection(preset)) {
+    return 'It has no model parameters.';
+  }
 
-function isVisualizerKey(
-  visualizer: Visualizer,
-  key: string
-): key is keyof Visualizer['config'] {
-  return key in visualizer.config;
-}
+  const selected = visualizer.currentSelectedModel;
+  const targets = selected ? [selected] : visualizer.everydayModelList;
+  if (targets.length === 0) {
+    visualizer.pendingModelPreset = (model: EverydayModel) => applyPresetToModel(preset, model);
+    return 'Its model parameters will be applied to everyday models you import from now on.';
+  }
 
-function isModelKey(
-  config: ToolpathConfig,
-  key: string
-): key is keyof ToolpathConfig {
-  return key in config;
+  visualizer.pendingModelPreset = null;
+  targets.forEach(model => applyPresetToModel(preset, model));
+  if (selected) {
+    return `Model parameters applied to the selected model “${selected.name}”.`;
+  }
+  return targets.length === 1
+    ? `Model parameters applied to “${targets[0].name}”.`
+    : `Model parameters applied to all ${targets.length} everyday models.`;
 }
 
 /**
- * Applies a single parameter to the visualizer
+ * Parses, validates and (only if everything is valid) applies the text of a preset file,
+ * telling the user what happened.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param content - The file contents.
+ * @param filename - The file's name, for messages.
+ * @returns True if the preset was applied; false if it was rejected and nothing changed.
  */
-function applyVisualizerParameter<K extends keyof Visualizer['config']>(
-  visualizer: Visualizer,
-  key: K,
-  rawValue: string
-): void {
-  const current = visualizer.config[key];
-  let newVal: string | number | boolean;
+export function applyPresetText(visualizer: Visualizer, content: string, filename: string): boolean {
+  const preset = parsePreset(content);
 
-  if (typeof current === 'number') {
-    const n = Number(rawValue);
-    newVal = n;
-  } else if (typeof current === 'boolean') {
-    const l = rawValue.trim().toLowerCase();
-    if (l === 'true') {
-      newVal = true;
-    } else if (l === 'false') {
-      newVal = false;
-    } else {
-      console.warn("Invalid boolean");
-      newVal = false;
-    }
-  } else {
-    newVal = rawValue;
+  if (preset.errors.length > 0) {
+    notify(`Preset ${filename} was not applied. ${summarize(preset.errors)}.`, 'error');
+    return false;
   }
 
-  visualizer.config[key] = newVal as Visualizer['config'][K];
+  const modelNote = commitPreset(visualizer, preset);
+  notify(`Preset ${filename} applied. ${modelNote}`, 'success');
+  if (preset.warnings.length > 0) {
+    notify(`Preset ${filename}: ${summarize(preset.warnings)}.`, 'warning');
+  }
+  return true;
 }
 
 /**
- * Applies a single parameter to the model config
+ * Lets the user pick a preset file and applies it.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @returns The name of the applied file, or null if the dialog was cancelled, the file could
+ *          not be read, or the preset was rejected. The promise always settles.
  */
-function applyModelParameter<K extends keyof ToolpathConfig>(
-  toolpathConfig: ToolpathConfig,
-  key: K,
-  value: string,
-): void {
-  const current = toolpathConfig[key];
-  let newVal: number | boolean;
+export function importPresetFromFile(visualizer: Visualizer): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,text/plain';
 
-  if (typeof current === 'number') {
-    const n = Number(value);
-    newVal = n;
-  } else if (typeof current === 'boolean') {
-    const l = value.trim().toLowerCase();
-    if (l === 'true') {
-      newVal = true;
-    } else if (l === 'false') {
-      newVal = false;
-    } else {
-      console.warn("Invalid boolean");
-      newVal = false;
-    }
-  } else {
-    console.warn("Unable to find correct type");
-    newVal = 0;
-  }
+    // Closing the dialog without choosing a file fires `cancel`, not `change`.
+    input.addEventListener('cancel', () => resolve(null));
 
-  toolpathConfig[key] = newVal as ToolpathConfig[K];
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onerror = () => {
+        notify(`Could not read ${file.name}.`, 'error');
+        resolve(null);
+      };
+      reader.onload = () => {
+        try {
+          const applied = applyPresetText(visualizer, String(reader.result ?? ''), file.name);
+          resolve(applied ? file.name : null);
+        } catch (error) {
+          notify(
+            `Preset ${file.name} could not be applied: ${error instanceof Error ? error.message : String(error)}`,
+            'error'
+          );
+          resolve(null);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    input.click();
+  });
 }

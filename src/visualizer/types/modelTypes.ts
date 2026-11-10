@@ -8,6 +8,8 @@ import { Gradient } from '../loaders/modelLoader'
 export interface GUIItem {
     /** The DOM element of the GUI item. */
     domElement: HTMLElement;
+    /** Removes the GUI item and its controllers (lil-gui `destroy()`). */
+    destroy?: () => void;
 }
 
 /**
@@ -30,8 +32,6 @@ export interface BasicModel {
     transformZ: { z: number };
     /** Associated GUI item. */
     guiItem?: GUIItem;
-
-    gcode?: string;
 
     // nozzle
     /** nozzle diameter for regular TPU */
@@ -165,6 +165,4 @@ export interface EverydayModel extends BasicModel {
     /** segments of sensing area */
     sense_area_segments?: PointCloudPoint[][];
 
-    extruders?: number[]
-    firstExtruder?: number
 }

@@ -11,7 +11,10 @@ import { ViewCube } from '../gui/ViewCube';
  *
  * @param container - The container element with a <canvas> for rendering.
  * @param {Printer} printer - An instance of the Printer class, providing machine dimensions.
- * @returns {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, orbitControls: OrbitControls, printBaseObjects: THREE.Object3D[] }}
+ * The caller owns the render loop (it must also call `viewCube.render()` each frame) and is
+ * responsible for resizing: see `resizeRenderer`.
+ *
+ * @returns {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, orbitControls: OrbitControls, printBaseObjects: THREE.Object3D[], viewCube: ViewCube }}
  */
 export default function initRenderer(container: HTMLElement, printer: Printer) {
     // Retrieve the canvas element from the container.
@@ -24,10 +27,10 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
         antialias: true,
         alpha: true,
     });
+    // Render at the display's pixel density (capped at 2 to keep large windows fast).
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x262626, 1);
-
-    
 
     // Create a new Three.js Scene.
     const scene = new THREE.Scene();
@@ -65,4 +68,23 @@ export default function initRenderer(container: HTMLElement, printer: Printer) {
     });
 
     return { renderer, scene, camera, orbitControls, printBaseObjects, viewCube };
+}
+
+/**
+ * Fits the renderer and camera to the current window size.
+ * Call this from a window `resize` listener.
+ *
+ * @param renderer - The main renderer.
+ * @param camera - The main camera.
+ */
+export function resizeRenderer(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera): void {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    if (width === 0 || height === 0) return;
+
+    // The pixel ratio changes when the window moves to another display or the page is zoomed.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(width, height);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
 }

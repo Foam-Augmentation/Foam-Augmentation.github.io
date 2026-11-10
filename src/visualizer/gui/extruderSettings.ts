@@ -1,34 +1,44 @@
 // src/visualizer/gui/extruderSettings.ts
 import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Visualizer from '../Visualizer';
+import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips } from './guiHelpers';
+import { EXTRUDER_SPECS, ExtruderKey } from './paramSpecs';
+import { notify } from './notify';
+
+/** Extruder fields shown in the panel, in display order. */
+const EXTRUDER_CONTROL_KEYS: ExtruderKey[] = [
+  'nozzleDiameter',
+  'nozzleLength',
+  'dieSwelling',
+  'print_temp_extruder',
+  'idle_temp_extruder',
+  'printHead_speed_when_free_move',
+];
 
 /**
  * Creates the delete button shown in an extruder folder's title bar.
- * Clicking it removes that extruder and rebuilds the extruder folder list.
+ * Pressing it asks for confirmation, removes that extruder and rebuilds the extruder folders.
  *
  * @param visualizer - The Visualizer instance.
  * @param extrudersFolder - The parent folder holding every extruder folder.
  * @param index - The index of the extruder this button belongs to.
- * @returns The HTML span element acting as the delete button.
+ * @returns The delete button element.
  */
 function createExtruderDeleteBtn(
   visualizer: Visualizer,
   extrudersFolder: GUI,
   index: number
-): HTMLSpanElement {
-  const deleteBtn = document.createElement('span');
-  deleteBtn.innerHTML = `<img src="./assets/icons/delete.svg" alt="delete" class="delete-icon" />`;
-  deleteBtn.style.cursor = 'pointer';
-  deleteBtn.style.marginLeft = '10px';
-  deleteBtn.title = 'delete extruder';
-  deleteBtn.addEventListener('click', (e: Event) => {
-    // Stop the click from also toggling the folder open/closed.
-    e.stopPropagation();
+): HTMLButtonElement {
+  return createDeleteButton(`Delete extruder ${index}`, () => {
+    const confirmed = window.confirm(
+      `Delete extruder ${index}?\n\nThe extruders after it move down by one number. This cannot be undone.`
+    );
+    if (!confirmed) return;
     if (visualizer.removeExtruder(index)) {
       refreshExtruderFolders(visualizer, extrudersFolder);
+      notify(`Deleted extruder ${index}.`, 'info');
     }
   });
-  return deleteBtn;
 }
 
 /**
@@ -43,16 +53,18 @@ function createExtruderDeleteBtn(
  * @param extrudersFolder - The folder that contains one sub-folder per extruder.
  */
 export function refreshExtruderFolders(visualizer: Visualizer, extrudersFolder: GUI): void {
+  hideTooltips();
+
   // Tear down the existing folders/controllers (copy first, destroy() mutates children).
   [...extrudersFolder.children].forEach(child => child.destroy());
 
   visualizer.config.extruders.forEach((extruder, index) => {
-    const extruderFolder = extrudersFolder.addFolder(`extruder ${index}`);
+    const extruderFolder = extrudersFolder.addFolder(`Extruder ${index}`);
     extruderFolder.domElement.classList.add('extruder-item');
 
     // Only offer deletion while there is more than one extruder left.
     if (visualizer.config.extruders.length > 1) {
-      const titleElem = extruderFolder.domElement.querySelector('.title');
+      const titleElem = folderTitleElement(extruderFolder);
       if (titleElem) {
         titleElem.appendChild(createExtruderDeleteBtn(visualizer, extrudersFolder, index));
       }
@@ -60,13 +72,9 @@ export function refreshExtruderFolders(visualizer: Visualizer, extrudersFolder: 
 
     const sync = () => visualizer.syncExtrudersToPrinter();
 
-    extruderFolder.add(extruder, 'nozzleDiameter', 0, 2, 0.01).name('Nozzle Diameter').onChange(sync);
-    extruderFolder.add(extruder, 'nozzleLength', 0, 100, 0.01).name('Nozzle Length').onChange(sync);
-    extruderFolder.add(extruder, 'dieSwelling', 0, 2, 0.01).name('Die Swelling').onChange(sync);
-    extruderFolder.add(extruder, 'print_temp_extruder', 0, 300, 1).name('Nozzle Temp').onChange(sync);
-    extruderFolder.add(extruder, 'idle_temp_extruder', 0, 300, 1).name('Idle Temp').onChange(sync);
-    extruderFolder.add(extruder, 'printHead_speed_when_free_move', 0, 10000, 1)
-      .name('Free Move Speed').onChange(sync);
+    EXTRUDER_CONTROL_KEYS.forEach(key => {
+      addParam(extruderFolder, extruder, key, EXTRUDER_SPECS[key]).onChange(sync);
+    });
 
     extruderFolder.close();
   });
@@ -80,21 +88,23 @@ export function refreshExtruderFolders(visualizer: Visualizer, extrudersFolder: 
  * This contains one folder per extruder plus the button used to add another one.
  *
  * @param visualizer - The Visualizer instance.
- * @param printerFolder - The 'printer settings' GUI folder.
+ * @param printerFolder - The 'Printer Settings' GUI folder.
  * @returns The folder holding the per-extruder folders.
  */
 export function addExtrudersFolder(visualizer: Visualizer, printerFolder: GUI): GUI {
-  const extrudersFolder = printerFolder.addFolder('extruders');
+  const extrudersFolder = addFolderWithTip(
+    printerFolder,
+    'Extruders',
+    'Nozzle, temperature and speed settings of each extruder (tool).'
+  );
 
   refreshExtruderFolders(visualizer, extrudersFolder);
 
-  printerFolder.add({
-    addExtruder: () => {
-      visualizer.addExtruder();
-      refreshExtruderFolders(visualizer, extrudersFolder);
-      extrudersFolder.open();
-    }
-  }, 'addExtruder').name('Add Extruder');
+  addButton(printerFolder, 'Add Extruder', 'Add another extruder, starting as a copy of the last one.', () => {
+    visualizer.addExtruder();
+    refreshExtruderFolders(visualizer, extrudersFolder);
+    extrudersFolder.open();
+  });
 
   return extrudersFolder;
 }

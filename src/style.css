@@ -1,6 +1,7 @@
 /* add tab space to 2nd folders */
 .lil-gui .children {
-    margin-left: 20px;
+    /* kept small so deeply nested controls still have room */
+    margin-left: 12px;
     /* 或者使用 padding-left */
 }
 
@@ -28,14 +29,23 @@
 .lil-gui.root {
     width: 20vw;
     min-width: 300px;
+    /* labels carry units now, so give them half the row */
+    --name-width: 52%;
+}
+
+/* let long labels wrap onto a second line instead of squeezing the slider */
+.lil-gui .controller:not(.function) .name {
+    width: var(--name-width);
+    white-space: normal;
+    line-height: 1.25;
 }
 
 /* lil gui icon style */
 .lil-gui-icon {
     width: 16px;
     height: 16px;
-    margin-right: 4px;
-    margin-bottom: 4px;
+    margin: 0 6px 0 0;
+    vertical-align: -3px;
 }
 
 
@@ -44,11 +54,53 @@
     font-size: 12px;
 }
 
-/* model delete */
+/* delete buttons in folder title bars (models, extruders) */
 .delete-icon {
     width: 16px;
     height: 16px;
     vertical-align: middle;
+}
+
+/* `.lil-gui button` makes every button a full-width widget, so the selector has to out-rank it */
+.lil-gui .delete-btn {
+    flex: none;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    margin: 0 4px 0 auto;
+    padding: 2px;
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    line-height: 0;
+    cursor: pointer;
+}
+
+.lil-gui .delete-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.lil-gui .delete-btn:focus-visible {
+    outline: 2px solid #2196F3;
+    outline-offset: 1px;
+}
+
+/* model name in a model folder's title bar */
+.model-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* a value in the initial-layer or sensing parameters that differs from the foam parameter */
+.lil-gui .controller.differs-from-foam .name {
+    color: #ffb74d;
+}
+
+.lil-gui .controller.differs-from-foam .name::after {
+    content: " \2022";
 }
 
 /* selected model highlight in GUI */
@@ -84,45 +136,130 @@
 }
 
 
-/* transform panel style */
-.transform-inputs {
-    display: flex;
-}
-
-.transform-modes {
-    display: flex;
-}
-
-.transform-panel {
-    display: flex;
-    flex-direction: column;
-}
-
-.model-info {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-/* set initial transform panel to non visible */
-.transform-panel {
-    display: none;
-}
-
 .controller-wrapper {
     width: 100%;
 }
 
-.everyday-model-item > .title{
+/* title bars that end in a delete button: text on the left, button pushed to the right */
+.everyday-model-item > .title,
+.foam-model-item > .title,
+.extruder-item > .title {
     display: flex;
-    justify-content: space-between;
+    align-items: center;
 }
 
-.foam-model-item > .title{
-    display: flex;
-    justify-content: space-between;
+.lil-gui .transform-folder {
+    --name-width: 20%;
+}
+/* page layout: the canvas fills the window, so the page itself never scrolls */
+html,
+body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #262626;
 }
 
-.transform-folder .name {
-    --name-width: 10%;
+#myCanvasContainer canvas {
+    display: block;
+}
+
+/* bottom bar that says what Esc will do right now (see gui/bottomTooltip.ts) */
+#escDiv {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    text-align: center;
+    padding: 5px;
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    z-index: 9999;
+}
+
+/* toast messages (see gui/notify.ts) */
+#toastContainer {
+    position: fixed;
+    right: 16px;
+    bottom: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    z-index: 10000;
+    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.toast-message {
+    padding: 10px 14px;
+    border-radius: 4px;
+    border-left: 4px solid #2196F3;
+    background: #1f1f1f;
+    color: #ebebeb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+
+.toast-success { border-left-color: #4caf50; }
+.toast-warning { border-left-color: #ffb300; }
+.toast-error { border-left-color: #f44336; }
+
+/* blocking overlay shown while slicing / generating (see gui/notify.ts) */
+#busyOverlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font: 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    z-index: 10001;
+    cursor: progress;
+}
+
+/* instructions shown on the canvas while area selection is armed (see gui/bottomTooltip.ts) */
+#selectionHint {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    max-width: min(560px, 40vw);
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-left: 4px solid #ff9800;
+    border-radius: 4px;
+    background: rgba(31, 31, 31, 0.92);
+    color: #ebebeb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    z-index: 9998;
+}
+
+.selection-hint-button {
+    flex: none;
+    padding: 5px 10px;
+    border: 1px solid #ff9800;
+    border-radius: 3px;
+    background: none;
+    color: #ffb74d;
+    font: inherit;
+    cursor: pointer;
+}
+
+.selection-hint-button:hover,
+.selection-hint-button:focus-visible {
+    background: rgba(255, 152, 0, 0.2);
+    outline: none;
+}
+
+/* long folder titles (e.g. "Presets (Applied: <file name>)") are cut off instead of wrapping
+   onto the folder below */
+.lil-gui .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }

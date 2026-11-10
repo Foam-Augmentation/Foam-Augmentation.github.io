@@ -3,8 +3,13 @@ import * as THREE from 'three';
 /**
  * Computes the convex hull of a set of 2D points using the Graham scan algorithm.
  *
+ * The hull starts at the lowest point (the leftmost one if several are equally low) and goes
+ * round counter clockwise. Points lying on an edge of the hull are left out. The input array
+ * is not modified; the hull holds references to the input's points.
+ *
  * @param points - An array of THREE.Vector2 representing the input points.
- * @returns The convex hull as an array of THREE.Vector2, or null if not enough points.
+ * @returns The convex hull as an array of THREE.Vector2, or null if the points don't span an
+ *          area (fewer than three distinct points, or all of them on one line).
  */
 export function getConvexHull(points: THREE.Vector2[]): THREE.Vector2[] | null {
     // Helper: returns orientation of triplet (p, q, r).
@@ -19,52 +24,47 @@ export function getConvexHull(points: THREE.Vector2[]): THREE.Vector2[] | null {
         return (p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2;
     }
 
+    if (points.length < 3) return null;
+
     // Choose p0 as the lowest y (and then lowest x if needed)
-    let lowestY = Infinity;
-    let lowestIndex = -1;
-    for (let i = 0, l = points.length; i < l; i++) {
+    let p0 = points[0];
+    for (let i = 1, l = points.length; i < l; i++) {
         const p = points[i];
-        if (p.y < lowestY) {
-            lowestY = p.y;
-            lowestIndex = i;
+        if (p.y < p0.y || (p.y === p0.y && p.x < p0.x)) {
+            p0 = p;
         }
     }
-    if (lowestIndex === -1) return null;
 
-    // Swap p0 with first point.
-    const p0 = points[lowestIndex];
-    [points[0], points[lowestIndex]] = [points[lowestIndex], points[0]];
-
-    // Sort the remaining points based on polar angle with p0.
-    points = points.sort((p1, p2) => {
+    // Sort the other points by polar angle around p0, on a copy so the caller's array is left
+    // alone. Copies of p0 itself are dropped: they have no angle and would confuse the sort.
+    const others = points.filter(p => p !== p0 && distSq(p0, p) > 0);
+    others.sort((p1, p2) => {
         const o = orientation(p0, p1, p2);
         if (o === 0) {
             // If colinear, the closer point comes first.
-            return distSq(p0, p2) >= distSq(p0, p1) ? -1 : 1;
+            return distSq(p0, p1) - distSq(p0, p2);
         }
         return o === 2 ? -1 : 1;
     });
 
-    // Remove colinear duplicates.
-    let m = 1;
-    const n = points.length;
-    for (let i = 1; i < n; i++) {
-        while (i < n - 1 && orientation(p0, points[i], points[i + 1]) === 0) {
+    // Of the points on the same ray from p0, keep only the farthest.
+    const candidates: THREE.Vector2[] = [p0];
+    for (let i = 0; i < others.length; i++) {
+        while (i < others.length - 1 && orientation(p0, others[i], others[i + 1]) === 0) {
             i++;
         }
-        points[m] = points[i];
-        m++;
+        candidates.push(others[i]);
     }
 
-    if (m < 3) return null; // Not enough points for a hull.
+    if (candidates.length < 3) return null; // Not enough points for a hull.
 
     // Build the convex hull using a stack.
-    const hull: THREE.Vector2[] = [points[0], points[1], points[2]];
-    for (let i = 3; i < m; i++) {
-        while (hull.length >= 2 && orientation(hull[hull.length - 2], hull[hull.length - 1], points[i]) !== 2) {
+    const hull: THREE.Vector2[] = [candidates[0], candidates[1], candidates[2]];
+    for (let i = 3; i < candidates.length; i++) {
+        while (hull.length >= 2 && orientation(hull[hull.length - 2], hull[hull.length - 1], candidates[i]) !== 2) {
             hull.pop();
         }
-        hull.push(points[i]);
+        hull.push(candidates[i]);
     }
     return hull;
 }
@@ -114,12 +114,14 @@ export function pointRayCrossesLine(
  *
  * @param point - A THREE.Vector2 representing the point (ray origin).
  * @param segments - An array of line segments, each with a 'start' and 'end' property (THREE.Vector2).
- * @returns The number of segments that the ray crosses.
+ * @returns The number of segments that the ray crosses. Zero if there are no segments.
  */
 export function pointRayCrossesSegments(
     point: THREE.Vector2,
     segments: { start: THREE.Vector2; end: THREE.Vector2 }[]
 ): number {
+    if (segments.length === 0) return 0;
+
     let crossings = 0;
     const firstSeg = segments[segments.length - 1];
     let prevDirection = firstSeg.start.y > firstSeg.end.y;

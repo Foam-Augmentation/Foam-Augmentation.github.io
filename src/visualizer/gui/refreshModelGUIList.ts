@@ -1,19 +1,15 @@
 import * as THREE from 'three';
-import { updateEscDiv } from './bottomTooltip';
-import { visualize_All_Layers, generateFoamToolpath } from '../toolpath/generateFoamToolpath';
-import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
+import { MeshBVH } from 'three-mesh-bvh';
+import { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import Visualizer from '../Visualizer';
+import { EverydayModel } from '../types/modelTypes';
+import { visualize_All_Layers } from '../toolpath/generateFoamToolpath';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
 import { importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
-
-// Extend Object3D to include highlightFoamMesh and highlightSenseMesh properties
-declare module 'three' {
-    interface Object3D {
-        highlightFoamMesh?: THREE.Mesh;
-        highlightSenseMesh?: THREE.Mesh;
-    }
-}
-
-import { MeshBVH } from 'three-mesh-bvh';
+import { AnyModel, disposeModel, syncAuxTransforms } from './modelActions';
+import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips, setTip } from './guiHelpers';
+import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, MODEL_SPECS, InitialKey, ModelKey } from './paramSpecs';
+import { notify } from './notify';
 
 // Extend BufferGeometry to include boundsTree property
 declare module 'three' {
@@ -22,73 +18,48 @@ declare module 'three' {
     }
 }
 
-import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
-import Visualizer from '../Visualizer';
-import { EverydayModel, FoamModel } from '../types/modelTypes';
+/** CSS class put on a control whose value differs from the matching foam parameter. */
+const DIFFERS_CLASS = 'differs-from-foam';
+
+/** Size of the box added by "Add Sensing Box", in mm. */
+const SENSING_BOX_SIZE = 20;
+
+/** Sensing parameter → the foam parameter it overrides. */
+const SENSE_TO_FOAM: [ModelKey, ModelKey][] = [
+    ['senseDeltaZ', 'deltaZ'],
+    ['senseDeltaL', 'deltaL'],
+    ['senseDeltaLEnd', 'deltaLEnd'],
+    ['senseVStar', 'vStar'],
+    ['SenseVStarEnd', 'vStarEnd'],
+    ['senseHStar', 'hStar'],
+    ['senseHStarEnd', 'hStarEnd'],
+    ['senseEdot', 'edot'],
+];
+
+/** Initial-layer parameters that override the foam parameter of the same name. */
+const INITIAL_OVERRIDES: InitialKey[] = [
+    'deltaZ', 'deltaL', 'deltaLEnd', 'gridSize', 'vStar', 'vStarEnd', 'hStar', 'hStarEnd', 'edot',
+];
+
+/** Per model: re-evaluates which controls differ from the foam parameters. */
+const differenceMarkUpdaters = new WeakMap<AnyModel, () => void>();
 
 /**
- * Creates a delete button element for a given model object.
- * When clicked, it removes the model from the scene and refreshes both GUI lists.
+ * Deletes a model after asking for confirmation, then refreshes both GUI lists.
  *
- * @param modelObj - The model object to delete.
- * @param index - The index of the model object in the list.
  * @param visualizer - The Visualizer instance.
- * @param itemClass - The CSS class used to identify the model type folder.
- * @returns The HTML span element acting as the delete button.
+ * @param modelObj - The model object to delete.
  */
-function createDeleteBtn(
-    modelObj: EverydayModel | FoamModel,
-    index: number,
-    visualizer: Visualizer,
-    itemClass: string
-): HTMLSpanElement {
-    const deleteBtn = document.createElement('span');
-    deleteBtn.innerHTML = `<img src="./assets/icons/delete.svg" alt="delete" class="delete-icon" />`;
-    deleteBtn.style.cursor = 'pointer';
-    deleteBtn.style.marginRight = '10px';
-    deleteBtn.style.marginLeft = '10px';
-    deleteBtn.title = 'delete';
-    deleteBtn.addEventListener('click', (e: Event) => {
-        e.stopPropagation(); // Prevent event bubbling to GUI selection events
+function confirmAndDeleteModel(visualizer: Visualizer, modelObj: AnyModel): void {
+    const confirmed = window.confirm(
+        `Delete “${modelObj.name}”?\n\nIts selections, parameters and generated toolpath are removed too. This cannot be undone.`
+    );
+    if (!confirmed) return;
 
-        // If TransformControls is attached to this model, detach it.
-        if (visualizer.transformControls.object === modelObj.mesh) {
-            visualizer.transformControls.detach();
-            updateEscDiv(visualizer.transformControls);
-        }
-
-        // Remove the model's mesh and any associated highlights or auxiliary meshes.
-        visualizer.scene.remove(modelObj.mesh);
-        if ('highlightFoamMesh' in modelObj && modelObj.highlightFoamMesh) {
-            visualizer.scene.remove(modelObj.highlightFoamMesh);
-        }
-        if ('highlightSenseMesh' in modelObj && modelObj.highlightSenseMesh) {
-            visualizer.scene.remove(modelObj.highlightSenseMesh);
-        }
-        if ('pointsMesh_foam' in modelObj && modelObj.pointsMesh_foam) {
-            visualizer.scene.remove(modelObj.pointsMesh_foam);
-        }
-        if ('pointsMesh_sense' in modelObj && modelObj.pointsMesh_sense) {
-            visualizer.scene.remove(modelObj.pointsMesh_sense);
-        }
-        if ('toolpathVisualizationObject' in modelObj && modelObj.toolpathVisualizationObject) {
-            visualizer.scene.remove(modelObj.toolpathVisualizationObject);
-        }
-
-        visualizer.currentSelectedModel = null;
-
-        // Remove the model from the corresponding list.
-        if (itemClass === 'foam-model-item') {
-            visualizer.foamModelList.splice(index, 1);
-        } else {
-            visualizer.everydayModelList.splice(index, 1);
-        }
-
-        // Refresh both GUI lists.
-        refreshModelGUIList(visualizer, 'foam');
-        refreshModelGUIList(visualizer, 'everyday');
-    });
-    return deleteBtn;
+    disposeModel(visualizer, modelObj);
+    refreshModelGUIList(visualizer, 'foam');
+    refreshModelGUIList(visualizer, 'everyday');
+    notify(`Deleted “${modelObj.name}”.`, 'info');
 }
 
 /**
@@ -101,108 +72,135 @@ function createDeleteBtn(
  */
 function addTransformFolder(
     modelGUIitem: GUI,
-    modelObj: EverydayModel | FoamModel,
+    modelObj: AnyModel,
     visualizer: Visualizer
 ): void {
-    const transformFolder = modelGUIitem.addFolder('transform');
+    const transformFolder = addFolderWithTip(modelGUIitem, 'Transform', 'Move, rotate or scale the model on the bed.');
     transformFolder.domElement.classList.add('transform-folder');
 
-    const transformType = { type: 'move' };
-    modelObj.transformType = 'move';
-    const transformTypeController = transformFolder.add(transformType, 'type', ['move', 'rotate', 'scale']);
+    const mesh = modelObj.mesh;
 
-    // Create objects for transform values.
-    const transformX = { x: modelObj.mesh.position.x };
-    const transformY = { y: modelObj.mesh.position.y };
-    const transformZ = { z: modelObj.mesh.position.z };
-    modelObj.transformX = transformX;
-    modelObj.transformY = transformY;
-    modelObj.transformZ = transformZ;
-    const transformXController = transformFolder.add(transformX, 'x').name('X').listen();
-    const transformYController = transformFolder.add(transformY, 'y').name('Y').listen();
-    const transformZController = transformFolder.add(transformZ, 'z').name('Z').listen();
+    // The X/Y/Z fields show whichever quantity the current mode edits.
+    const transformX = modelObj.transformX ?? (modelObj.transformX = { x: mesh.position.x });
+    const transformY = modelObj.transformY ?? (modelObj.transformY = { y: mesh.position.y });
+    const transformZ = modelObj.transformZ ?? (modelObj.transformZ = { z: mesh.position.z });
 
-    // Update the transform type and corresponding controller values on change.
-    transformTypeController.onChange((value: string) => {
-        modelObj.transformType = value as 'move' | 'rotate' | 'scale';
-        switch (value) {
+    /** Copies the mesh's position, rotation or scale (per the current mode) into the fields. */
+    const showCurrentValues = (): void => {
+        switch (modelObj.transformType) {
             case 'move':
-                transformX.x = modelObj.mesh.position.x;
-                transformY.y = modelObj.mesh.position.y;
-                transformZ.z = modelObj.mesh.position.z;
-                visualizer.transformControls.setMode('translate');
+                transformX.x = mesh.position.x;
+                transformY.y = mesh.position.y;
+                transformZ.z = mesh.position.z;
                 break;
             case 'rotate':
-                transformX.x = (180 / Math.PI) * modelObj.mesh.rotation.x;
-                transformY.y = (180 / Math.PI) * modelObj.mesh.rotation.y;
-                transformZ.z = (180 / Math.PI) * modelObj.mesh.rotation.z;
-                visualizer.transformControls.setMode('rotate');
+                transformX.x = THREE.MathUtils.radToDeg(mesh.rotation.x);
+                transformY.y = THREE.MathUtils.radToDeg(mesh.rotation.y);
+                transformZ.z = THREE.MathUtils.radToDeg(mesh.rotation.z);
                 break;
             case 'scale':
-                transformX.x = modelObj.mesh.scale.x;
-                transformY.y = modelObj.mesh.scale.y;
-                transformZ.z = modelObj.mesh.scale.z;
-                visualizer.transformControls.setMode('scale');
+                transformX.x = mesh.scale.x;
+                transformY.y = mesh.scale.y;
+                transformZ.z = mesh.scale.z;
                 break;
-        }
-    });
-
-    // Update model's mesh properties when the controllers change.
-    transformXController.onChange((value: number) => {
-        if (transformType.type === 'move') {
-            modelObj.mesh.position.x = value;
-        } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.x = value * (Math.PI / 180);
-        } else if (transformType.type === 'scale') {
-            modelObj.mesh.scale.x = value;
-        }
-    });
-    transformYController.onChange((value: number) => {
-        if (transformType.type === 'move') {
-            modelObj.mesh.position.y = value;
-        } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.y = value * (Math.PI / 180);
-        } else if (transformType.type === 'scale') {
-            modelObj.mesh.scale.y = value;
-        }
-    });
-    transformZController.onChange((value: number) => {
-        if (transformType.type === 'move') {
-            modelObj.mesh.position.z = value;
-        } else if (transformType.type === 'rotate') {
-            modelObj.mesh.rotation.z = value * (Math.PI / 180);
-        } else if (transformType.type === 'scale') {
-            modelObj.mesh.scale.z = value;
-        }
-    });
-
-    const moveFunctions = {
-        snapToPlate: () => {
-            modelObj.mesh.geometry.computeBoundingBox();
-            const bbox = modelObj.mesh.geometry.boundingBox!;
-            modelObj.mesh.position.setZ((bbox.max.z - bbox.min.z) * modelObj.mesh.scale.z / 2);
-            if (transformType.type === 'move') {
-                transformZ.z = modelObj.mesh.position.z;
-            }
-        },
-        center: () => {
-            modelObj.mesh.position.setX(visualizer.printer.machine_depth / 2);
-            modelObj.mesh.position.setY(visualizer.printer.machine_depth_y / 2);
-            if (transformType.type === 'move') {
-                transformX.x = modelObj.mesh.position.x;
-                transformY.y = modelObj.mesh.position.y;
-            }
         }
     };
 
-    transformFolder.add(moveFunctions, 'snapToPlate').name("Snap Model To Plate");
-    transformFolder.add(moveFunctions, 'center').name("Center Model");
+    /** Writes one field back to the mesh and moves the auxiliary meshes along with it. */
+    const applyAxis = (axis: 'x' | 'y' | 'z', value: number): void => {
+        switch (modelObj.transformType) {
+            case 'move':
+                mesh.position[axis] = value;
+                break;
+            case 'rotate':
+                mesh.rotation[axis] = THREE.MathUtils.degToRad(value);
+                break;
+            case 'scale':
+                mesh.scale[axis] = value;
+                break;
+        }
+        syncAuxTransforms(modelObj);
+    };
+
+    const modeController = transformFolder
+        .add(modelObj, 'transformType', { 'Move (mm)': 'move', 'Rotate (°)': 'rotate', 'Scale (Factor)': 'scale' })
+        .name('Mode');
+    setTip(modeController.domElement, 'What the X, Y and Z fields and the on-canvas gizmo change: position, rotation or scale.');
+    modeController.onChange((value: 'move' | 'rotate' | 'scale') => {
+        showCurrentValues();
+        // Only switch the gizmo if it is on this model; another model keeps its own mode.
+        if (visualizer.transformControls.object === mesh) {
+            visualizer.transformControls.setMode(value === 'move' ? 'translate' : value);
+        }
+    });
+
+    const axisTip = 'Position in mm, rotation in degrees or scale factor, depending on Mode.';
+    const xController = transformFolder.add(transformX, 'x').name('X').listen();
+    const yController = transformFolder.add(transformY, 'y').name('Y').listen();
+    const zController = transformFolder.add(transformZ, 'z').name('Z').listen();
+    xController.onChange((value: number) => applyAxis('x', value));
+    yController.onChange((value: number) => applyAxis('y', value));
+    zController.onChange((value: number) => applyAxis('z', value));
+    [xController, yController, zController].forEach(controller => setTip(controller.domElement, axisTip));
+
+    addButton(transformFolder, 'Snap Model to Plate', 'Move the model down (or up) so it rests on the print bed.', () => {
+        mesh.geometry.computeBoundingBox();
+        const bbox = mesh.geometry.boundingBox!;
+        mesh.position.setZ((bbox.max.z - bbox.min.z) * mesh.scale.z / 2);
+        syncAuxTransforms(modelObj);
+        showCurrentValues();
+    });
+    addButton(transformFolder, 'Center Model', 'Move the model to the middle of the print bed.', () => {
+        mesh.position.setX(visualizer.printer.machine_depth / 2);
+        mesh.position.setY(visualizer.printer.machine_depth_y / 2);
+        syncAuxTransforms(modelObj);
+        showCurrentValues();
+    });
+
+    showCurrentValues();
     transformFolder.close();
 }
 
 /**
- * Adds a mesh selection folder to a model's GUI item.
- * This folder provides buttons for selecting either the regular foam area or the sense area.
+ * Makes sure the model has the overlay mesh used to highlight a selected area, creating it
+ * (lined up with the model, with nothing highlighted yet) if needed.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param modelObj - The everyday model object.
+ * @param kind - Which overlay: the foam area or the sensing area.
+ */
+function ensureHighlightMesh(visualizer: Visualizer, modelObj: EverydayModel, kind: 'foam' | 'sense'): void {
+    if (!modelObj.mesh.geometry.boundsTree) {
+        modelObj.mesh.geometry.boundsTree = new MeshBVH(modelObj.geometry);
+    }
+    if (kind === 'foam' ? modelObj.highlightFoamMesh : modelObj.highlightSenseMesh) {
+        return;
+    }
+
+    const geometry = modelObj.mesh.geometry.clone();
+    geometry.drawRange.count = 0;
+    const material = new THREE.MeshBasicMaterial({
+        opacity: kind === 'foam' ? 0.3 : 0.6,
+        transparent: true,
+        depthWrite: false,
+        wireframe: false,
+    });
+    material.color.set(kind === 'foam' ? 0xff9800 : 0x000000).convertSRGBToLinear();
+
+    const highlight = new THREE.Mesh(geometry, material);
+    highlight.renderOrder = kind === 'foam' ? 2 : 1;
+    if (kind === 'foam') {
+        modelObj.highlightFoamMesh = highlight;
+    } else {
+        modelObj.highlightSenseMesh = highlight;
+    }
+    syncAuxTransforms(modelObj);
+    visualizer.scene.add(highlight);
+}
+
+/**
+ * Adds the area selection folder to a model's GUI item.
+ * Its buttons arm selection of the foam area or the sensing area, or add a sensing box.
  *
  * @param modelGUIitem - The GUI folder for the model.
  * @param modelObj - The everyday model object.
@@ -213,140 +211,55 @@ function addSelectedMeshFolder(
     modelObj: EverydayModel,
     visualizer: Visualizer,
 ): void {
-    const selectedMeshFolder = modelGUIitem.addFolder('mesh selection');
-    selectedMeshFolder.domElement.classList.add('mesh-selection-folder');
+    const selectionFolder = addFolderWithTip(
+        modelGUIitem,
+        'Area Selection',
+        'Choose which part of the model gets foam. The toolpath is generated from the current parameters as soon as an area is drawn.'
+    );
+    selectionFolder.domElement.classList.add('mesh-selection-folder');
 
-    /**
-     * Selects the regular foam mesh for the model.
-     *
-     * @param modelObj - The everyday model object.
-     */
-    const selectFoamMesh = (modelObj: EverydayModel): void => {
-        if (!modelObj.mesh.geometry.boundsTree) {
-            modelObj.mesh.geometry.boundsTree = new MeshBVH(modelObj.geometry);
-        }
-        visualizer.current_Obj = modelObj;
-        visualizer.current_selection_type = 'foam';
-        if (!modelObj.highlightFoamMesh) {
-            modelObj.highlightFoamMesh = new THREE.Mesh();
-            modelObj.highlightFoamMesh.geometry = modelObj.mesh.geometry.clone();
-            modelObj.highlightFoamMesh.geometry.drawRange.count = 0;
-            modelObj.highlightFoamMesh.material = new THREE.MeshBasicMaterial({
-                opacity: 0.3,
-                transparent: true,
-                depthWrite: false,
-                wireframe: false,
-            });
-            (modelObj.highlightFoamMesh.material as THREE.MeshBasicMaterial)
-                .color.set(0xff9800)
-                .convertSRGBToLinear();
-            modelObj.highlightFoamMesh.renderOrder = 2;
-            modelObj.highlightFoamMesh.position.copy(modelObj.mesh.position);
-            modelObj.highlightFoamMesh.rotation.copy(modelObj.mesh.rotation);
-            modelObj.highlightFoamMesh.scale.copy(modelObj.mesh.scale);
-            visualizer.scene.add(modelObj.highlightFoamMesh);
-        }
+    /** Sensing areas are sampled inside the foam area, so one has to exist first. */
+    const hasFoamArea = (): boolean => {
+        if (modelObj.selectedRegularFoamMesh) return true;
+        notify('Select a foam area on this model first; sensing areas are placed inside it.', 'warning');
+        return false;
     };
 
-    /**
-     * Selects the sense mesh for the model.
-     *
-     * @param modelObj - The everyday model object.
-     */
-    const selectSenseMesh = (modelObj: EverydayModel): void => {
-        if (!modelObj.mesh.geometry.boundsTree) {
-            modelObj.mesh.geometry.boundsTree = new MeshBVH(modelObj.geometry);
+    addButton(
+        selectionFolder,
+        'Select Foam Area',
+        'Arms selection. Then look straight down from the top, hold Alt (Option on Mac) and drag over the model to mark where foam is printed.',
+        () => {
+            ensureHighlightMesh(visualizer, modelObj, 'foam');
+            visualizer.armSelection(modelObj, 'foam');
         }
-        visualizer.current_Obj = modelObj;
-        visualizer.current_selection_type = 'sense';
-        if (!modelObj.highlightSenseMesh) {
-            modelObj.highlightSenseMesh = new THREE.Mesh();
-            modelObj.highlightSenseMesh.geometry = modelObj.mesh.geometry.clone();
-            modelObj.highlightSenseMesh.geometry.drawRange.count = 0;
-            modelObj.highlightSenseMesh.material = new THREE.MeshBasicMaterial({
-                opacity: 0.6,
-                transparent: true,
-                depthWrite: false,
-                wireframe: false,
-            });
-            (modelObj.highlightSenseMesh.material as THREE.MeshBasicMaterial)
-                .color.set(0x000000)
-                .convertSRGBToLinear();
-            modelObj.highlightSenseMesh.renderOrder = 1;
-            modelObj.highlightSenseMesh.position.copy(modelObj.mesh.position);
-            modelObj.highlightSenseMesh.rotation.copy(modelObj.mesh.rotation);
-            modelObj.highlightSenseMesh.scale.copy(modelObj.mesh.scale);
-            visualizer.scene.add(modelObj.highlightSenseMesh);
+    );
+    addButton(
+        selectionFolder,
+        'Select Sensing Area',
+        'Arms selection of a sensing area inside the foam area: hold Alt (Option on Mac) and drag over the model. Printed with the Sensing Parameters.',
+        () => {
+            if (!hasFoamArea()) return;
+            ensureHighlightMesh(visualizer, modelObj, 'sense');
+            visualizer.armSelection(modelObj, 'sense');
         }
-    };
-
-    /**
-     * use intersection to select the sense mesh for the model.
-     *
-     * @param modelObj - The everyday model object.
-     */
-    const selectSenseMeshByIntersection = (modelObj: EverydayModel): void => {
-        if (!modelObj.mesh.geometry.boundsTree) {
-            modelObj.mesh.geometry.boundsTree = new MeshBVH(modelObj.geometry);
+    );
+    addButton(
+        selectionFolder,
+        `Add Sensing Box (${SENSING_BOX_SIZE} mm)`,
+        'Adds a box on top of the model. Drag it across the surface: the triangles inside it become sensing area.',
+        () => {
+            if (!hasFoamArea()) return;
+            ensureHighlightMesh(visualizer, modelObj, 'sense');
+            addSensingIntersectionGeo(modelObj, 'box', SENSING_BOX_SIZE, visualizer);
         }
-        // visualizer.current_Obj = modelObj;
-        // visualizer.current_selection_type = 'sense';
-        if (!modelObj.highlightSenseMesh) {
-            modelObj.highlightSenseMesh = new THREE.Mesh();
-            modelObj.highlightSenseMesh.geometry = modelObj.mesh.geometry.clone();
-            modelObj.highlightSenseMesh.geometry.drawRange.count = 0;
-            modelObj.highlightSenseMesh.material = new THREE.MeshBasicMaterial({
-                opacity: 0.6,
-                transparent: true,
-                depthWrite: false,
-                wireframe: false,
-            });
-            (modelObj.highlightSenseMesh.material as THREE.MeshBasicMaterial)
-                .color.set(0x000000)
-                .convertSRGBToLinear();
-            modelObj.highlightSenseMesh.renderOrder = 1;
-            modelObj.highlightSenseMesh.position.copy(modelObj.mesh.position);
-            modelObj.highlightSenseMesh.rotation.copy(modelObj.mesh.rotation);
-            modelObj.highlightSenseMesh.scale.copy(modelObj.mesh.scale);
-            visualizer.scene.add(modelObj.highlightSenseMesh);
-        }
-
-        addSensingIntersectionGeo(modelObj, 'box', 20, visualizer) 
-    }
-
-
-    const selectMeshBtn = {
-        selectFoamMesh: () => selectFoamMesh(modelObj),
-        selectSenseMesh: () => selectSenseMesh(modelObj),
-        selectSenseMeshByIntersection: () => selectSenseMeshByIntersection(modelObj),
-    };
-
-    /** select regular foam mesh folder */
-    const selectRegularFoamMeshFolder = selectedMeshFolder.addFolder('select regular foam mesh');
-    selectRegularFoamMeshFolder.add(selectMeshBtn, 'selectFoamMesh').name('Select Regular Foam Area');
-
-    /** select sense foam mesh folder */
-    const selectSenseMeshFolder = selectedMeshFolder.addFolder('select sense foam mesh');
-    // add a drop down to selectSenseMeshFolder: selected mesh / geometry intersection
-    const selectionType = { type: 'selected mesh' };
-    const selectionTypeController = selectSenseMeshFolder.add(selectionType, 'type', ['selected mesh', 'geometry intersection']);
-
-    selectionTypeController.onChange((value: string) => {
-        if (value === 'selected mesh') {
-            // Handle selected mesh logic
-        } else if (value === 'geometry intersection') {
-            // Handle geometry intersection logic
-        }
-    });
-
-    selectSenseMeshFolder.add(selectMeshBtn, 'selectSenseMesh').name('Select Sense Foam Area');
-    selectSenseMeshFolder.add(selectMeshBtn, 'selectSenseMeshByIntersection').name('Add Sensing Intersection Cylinder');
+    );
 }
 
 /**
- * Adds a parameters folder to an everyday model's GUI item for toolpath configuration.
- * This folder includes controllers for various toolpath parameters such as deltaZ, zOffset, gridSize,
- * dieSwell, foam layer counts, extrusion speeds, print head speeds, temperatures, and nozzle sizes.
+ * Adds the three parameter folders to an everyday model's GUI item: the foam parameters, the
+ * initial-layer parameters and the sensing parameters. Controls in the last two that differ
+ * from the matching foam parameter are highlighted.
  *
  * @param modelGUIitem - The GUI folder for the model.
  * @param modelObj - The everyday model object.
@@ -357,168 +270,225 @@ export function addParamsFolder_EverydayModel(
     modelObj: EverydayModel,
     visualizer: Visualizer
 ): void {
-    const paramsFolder = modelGUIitem.addFolder('params');
+    const redrawLayers = (): void => visualize_All_Layers(visualizer, modelObj);
+
+    // ----- foam parameters -----
+    const paramsFolder = addFolderWithTip(
+        modelGUIitem,
+        'Foam Parameters',
+        'The main print parameters, used for every foam layer after the initial layers.'
+    );
     paramsFolder.domElement.classList.add('params-folder');
 
-    paramsFolder.add(modelObj.toolpathConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
+    const foamKeys: ModelKey[] = ['deltaZ', 'deltaL', 'deltaLEnd', 'gridSize', 'vStar', 'vStarEnd', 'hStar', 'hStarEnd', 'edot'];
+    foamKeys.forEach(key => {
+        const controller = addParam(paramsFolder, modelObj.toolpathConfig, key, MODEL_SPECS[key]);
+        if (key === 'deltaZ') controller.onChange(redrawLayers);
     });
-    paramsFolder.add(modelObj.toolpathConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
-    paramsFolder.add(modelObj.toolpathConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L'); 
-    paramsFolder.add(modelObj.toolpathConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
-    paramsFolder.add(modelObj.toolpathConfig, 'vStar', 0.01, 5, 0.01).name('V*');
-    paramsFolder.add(modelObj.toolpathConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
-    paramsFolder.add(modelObj.toolpathConfig, 'hStar', 0.01, 100, 0.01).name('H*');
-    paramsFolder.add(modelObj.toolpathConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
-    paramsFolder.add(modelObj.toolpathConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
-    // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
+    // Controls that override a foam parameter, paired with a check for "differs from foam".
+    const overrides: { controller: Controller; differs: () => boolean }[] = [];
 
-    const paramsFolderInitial = modelGUIitem.addFolder('initial params');
+    // ----- initial-layer parameters -----
+    const paramsFolderInitial = addFolderWithTip(
+        modelGUIitem,
+        'Initial Layer Parameters',
+        'Used instead of the Foam Parameters for the first few layers (see Initial Foam Layers). Highlighted values differ from the Foam Parameters.'
+    );
     paramsFolderInitial.domElement.classList.add('params-folder-initial');
 
-    paramsFolderInitial.add(modelObj.initialConfig, 'deltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
+    addParam(paramsFolderInitial, modelObj.initialConfig, 'initialFoamLayerCount', INITIAL_SPECS.initialFoamLayerCount)
+        .onChange(redrawLayers);
+    addParam(paramsFolderInitial, modelObj, 'initialOffset', INITIAL_OFFSET_SPEC);
+    INITIAL_OVERRIDES.forEach(key => {
+        const controller = addParam(paramsFolderInitial, modelObj.initialConfig, key, INITIAL_SPECS[key]);
+        if (key === 'deltaZ') controller.onChange(redrawLayers);
+        overrides.push({ controller, differs: () => modelObj.initialConfig[key] !== modelObj.toolpathConfig[key] });
     });
-    paramsFolderInitial.add(modelObj.initialConfig, 'deltaL', 0.2, 100, 0.01).name('Delta L');
-    paramsFolderInitial.add(modelObj.initialConfig, 'deltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
-    paramsFolderInitial.add(modelObj.initialConfig, 'gridSize', 0.2, 100, 0.01).name('Grid Size')
-    paramsFolderInitial.add(modelObj.initialConfig, 'vStar', 0.01, 5, 0.01).name('V*');
-    paramsFolderInitial.add(modelObj.initialConfig, 'vStarEnd', 0.01, 5, 0.01).name('End V*');
-    paramsFolderInitial.add(modelObj.initialConfig, 'hStar', 0.01, 100, 0.01).name('H*');
-    paramsFolderInitial.add(modelObj.initialConfig, 'hStarEnd', 0.01, 100, 0.01).name('End H*');
-    paramsFolderInitial.add(modelObj.initialConfig, 'edot', 0.01, 1000, 0.01).name('Edot');
-    // paramsFolder.add(modelObj.toolpathConfig, 'dieSwell', 1, 2, 0.01).name('Die Swell');
 
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Print Head Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeRegularFoam', 0, 5, 0.1).name('Regular Foam Nozzle Size');
-    paramsFolderInitial.add(modelObj, 'initialOffset', 0, 50, 0.01).name('Layer Offset');
-
-    paramsFolderInitial.add(modelObj.initialConfig, 'initialFoamLayerCount', 0, 20, 1).name('Initial Foam Layers').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
-    });
-    // paramsFolderPLA.add(modelObj.plaConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers').onChange(() => {
-    //     visualize_All_Layers(visualizer, modelObj);
-    // });
-    // paramsFolderPLA.add(modelObj.plaConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers').onChange(() => {
-    //     visualize_All_Layers(visualizer, modelObj);
-    // });
-
-    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
-    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
-
-    const paramsFolderSense = modelGUIitem.addFolder('sense params');
+    // ----- sensing parameters -----
+    const paramsFolderSense = addFolderWithTip(
+        modelGUIitem,
+        'Sensing Parameters',
+        'Used instead of the Foam Parameters inside areas selected as sensing area. Highlighted values differ from the Foam Parameters.'
+    );
     paramsFolderSense.domElement.classList.add('params-folder-sense');
 
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaZ', 0, 20, 0.01).name('Layer Thickness (deltaZ)').onChange(() => {
-        visualize_All_Layers(visualizer, modelObj);
+    SENSE_TO_FOAM.forEach(([senseKey, foamKey]) => {
+        const controller = addParam(paramsFolderSense, modelObj.toolpathConfig, senseKey, MODEL_SPECS[senseKey]);
+        if (senseKey === 'senseDeltaZ') controller.onChange(redrawLayers);
+        overrides.push({
+            controller,
+            differs: () => modelObj.toolpathConfig[senseKey] !== modelObj.toolpathConfig[foamKey],
+        });
     });
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaL', 0.2, 100, 0.01).name('Delta L');
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseDeltaLEnd', 0.01, 10, 0.01).name('End Delta L');  
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseVStar', 0.01, 5, 0.01).name('V*');
-    paramsFolderSense.add(modelObj.toolpathConfig, 'SenseVStarEnd', 0.01, 5, 0.01).name('End V*');
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStar', 0.01, 100, 0.01).name('H*');
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseHStarEnd', 0.01, 100, 0.01).name('End H*');
-    paramsFolderSense.add(modelObj.toolpathConfig, 'senseEdot', 0.01, 1000, 0.01).name('Edot');
-    
+
+    const updateDifferenceMarks = (): void => {
+        overrides.forEach(({ controller, differs }) => {
+            controller.domElement.classList.toggle(DIFFERS_CLASS, differs());
+        });
+    };
+    differenceMarkUpdaters.set(modelObj, updateDifferenceMarks);
+    updateDifferenceMarks();
+
     paramsFolder.close();
     paramsFolderInitial.close();
     paramsFolderSense.close();
 }
 
-
 /**
- * Adds a parameters folder to an everyday model's GUI item for toolpath configuration.
- * This folder includes controllers for various toolpath parameters such as deltaZ, zOffset, gridSize,
- * dieSwell, foam layer counts, extrusion speeds, print head speeds, temperatures, and nozzle sizes.
+ * Adds the augmentation folder to an everyday model's GUI item: the augment model and the
+ * parameters that shape a (curved) augmentation.
  *
  * @param modelGUIitem - The GUI folder for the model.
  * @param modelObj - The everyday model object.
- * @param visualizer - The Visualizer instance.
+ */
+export function addAugmentFolder(
+    modelGUIitem: GUI,
+    modelObj: EverydayModel,
+): void {
+    const augmentFolder = addFolderWithTip(
+        modelGUIitem,
+        'Augmentation Settings',
+        'How many layers an augmentation gets and what shape its top surface takes.'
+    );
+    augmentFolder.domElement.classList.add('augment-folder');
+
+    addButton(
+        augmentFolder,
+        'Select Augment Model',
+        'Choose an STL whose shape the top of the augmentation follows. Only used when Curved Augmentation is on.',
+        () => importAugmentSTL(modelObj)
+    );
+    const keys: ModelKey[] = ['curveAugment', 'initialFoamLayerCount', 'steepnessThreshold', 'flatLayerZOffset', 'additionalCurveLayers'];
+    keys.forEach(key => addParam(augmentFolder, modelObj.toolpathConfig, key, MODEL_SPECS[key]));
+
+    augmentFolder.close();
+}
+
+/**
+ * Adds the bump folder to an everyday model's GUI item: the bump model and how the bumps
+ * are spread over the surface of an augmentation.
+ *
+ * @param modelGUIitem - The GUI folder for the model.
+ * @param modelObj - The everyday model object.
  */
 export function addBumpsFolder(
     modelGUIitem: GUI,
     modelObj: EverydayModel,
 ): void {
-    const bumpFolder = modelGUIitem.addFolder('bump settings');
+    const bumpFolder = addFolderWithTip(
+        modelGUIitem,
+        'Bump Settings',
+        'Add a pattern of bumps to the surface of an augmentation to improve grip.'
+    );
     bumpFolder.domElement.classList.add('bump-folder');
 
-    const selectBump = {
-        selectBumpSTL: () => importBumpMesh(modelObj),
-    };
-
-    bumpFolder.add(selectBump, 'selectBumpSTL').name("Select Bump Model");
-
-    bumpFolder.add(modelObj.toolpathConfig, 'generateBumps');
-    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacingX', 0, 100, 0.01).name("Bump Spacing X");
-    bumpFolder.add(modelObj.toolpathConfig, 'bumpSpacingY', 0, 100, 0.01).name("Bump Spacing Y");
-    bumpFolder.add(modelObj.toolpathConfig, 'bumpScale', 0, 100, 0.01).name("Bump Scale");
-    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedRegularFoam', 0, 1000, 1).name('Regular Foam Extrusion Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'extrusionSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Extrusion Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadSpeedSensingFoam', 0, 1000, 1).name('Sensing Foam Print Head Speed');
-    // paramsFolder.add(modelObj.toolpathConfig, 'printHeadTempSensingFoam', 0, 300, 1).name('Sensing Foam Print Head Temp');
-    // paramsFolder.add(modelObj.toolpathConfig, 'nozzleSizeSensingFoam', 0, 5, 0.1).name('Sensing Foam Nozzle Size');
+    addButton(
+        bumpFolder,
+        'Select Bump Model',
+        'Choose the STL that is repeated across the surface as a bump.',
+        () => importBumpMesh(modelObj)
+    );
+    const keys: ModelKey[] = ['generateBumps', 'bumpSpacingX', 'bumpSpacingY', 'bumpScale'];
+    keys.forEach(key => addParam(bumpFolder, modelObj.toolpathConfig, key, MODEL_SPECS[key]));
 
     bumpFolder.close();
 }
 
-
-export function addAugmentFolder(
-    modelGUIitem: GUI,
-    modelObj: EverydayModel,
-): void {
-    const augmentFolder = modelGUIitem.addFolder('augment settings');
-    augmentFolder.domElement.classList.add('augment-folder');
-
-    const selectAugmentModel = {
-        selectAugmentModel: () => importAugmentSTL(modelObj),
-    };
-
-    augmentFolder.add(selectAugmentModel, 'selectAugmentModel').name("Select Augment Model")
-
-    augmentFolder.add(modelObj.toolpathConfig, 'curveAugment');
-    augmentFolder.add(modelObj.toolpathConfig, 'initialFoamLayerCount', 0, 20, 1).name('Foam Layers');
-    augmentFolder.add(modelObj.toolpathConfig, 'steepnessThreshold', 0, 90, 0.01).name('Max Angle');
-    augmentFolder.add(modelObj.toolpathConfig, 'flatLayerZOffset', 0, 100, 0.01).name("Flat Layer Z Offset");
-    augmentFolder.add(modelObj.toolpathConfig, 'additionalCurveLayers', 0, 100, 1).name("Additional Curve Layers");
-    // augmentFolder.add(modelObj.toolpathConfig, 'middleSenseLayerCount', 0, 10, 1).name('Middle Sense Layers');
-    // augmentFolder.add(modelObj.toolpathConfig, 'finalFoamLayerCount', 0, 10, 1).name('Final Foam Layers');
-    
-    augmentFolder.close();
-}
-
-
-
+/**
+ * Adds the gradient folder to an everyday model's GUI item.
+ *
+ * @param modelGUIitem - The GUI folder for the model.
+ * @param modelObj - The everyday model object.
+ */
 export function addGradientFolder(
     modelGUIitem: GUI,
     modelObj: EverydayModel,
 ): void {
-    const gradientFolder = modelGUIitem.addFolder('gradient settings');
+    const gradientFolder = addFolderWithTip(
+        modelGUIitem,
+        'Gradient Settings',
+        'Vary the foam across X and Y with an SVG image.'
+    );
     gradientFolder.domElement.classList.add('gradient-folder');
 
-    const selectGradient = {
-        selectGradientSVG: () => importSvgGradient(modelObj),
-    };
-
-    gradientFolder.add(selectGradient, 'selectGradientSVG').name("Select Gradient SVG");
+    addButton(
+        gradientFolder,
+        'Select Gradient SVG',
+        'Choose an SVG that sets the foam properties by position: white uses V* and H*, black uses Gradient End V* and Gradient End H*, greys blend between them.',
+        () => importSvgGradient(modelObj)
+    );
     gradientFolder.close();
 }
 
+/**
+ * Builds the GUI folder for one model: title bar with a delete button, the transform folder
+ * and, for everyday models, the parameter, feature and area selection folders.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param guiFolder - The list folder to add the model's folder to.
+ * @param modelObj - The model.
+ * @param listType - Which list the model belongs to.
+ * @param itemClass - The CSS class that marks a model folder of this list.
+ */
+function buildModelFolder(
+    visualizer: Visualizer,
+    guiFolder: GUI,
+    modelObj: AnyModel,
+    listType: 'foam' | 'everyday',
+    itemClass: string
+): void {
+    // A preset imported before any everyday model existed applies to models added later.
+    if (listType === 'everyday' && visualizer.pendingModelPreset) {
+        visualizer.pendingModelPreset(modelObj as EverydayModel);
+    }
 
+    const modelGUIitem = guiFolder.addFolder('');
+    modelGUIitem.domElement.classList.add(itemClass);
+    // Bind the GUI item to the model object.
+    modelObj.guiItem = modelGUIitem;
+    if (visualizer.selectedModel === modelObj) {
+        modelGUIitem.domElement.classList.add('selectedModel');
+    }
 
+    // Title bar: the file name (as text, never as HTML) and the delete button.
+    const titleElem = folderTitleElement(modelGUIitem);
+    if (titleElem) {
+        const nameElem = document.createElement('span');
+        nameElem.className = 'model-name';
+        nameElem.textContent = modelObj.name;
+        nameElem.title = modelObj.name;
+        titleElem.textContent = '';
+        titleElem.appendChild(nameElem);
+        titleElem.appendChild(
+            createDeleteButton(`Delete model “${modelObj.name}”`, () => confirmAndDeleteModel(visualizer, modelObj))
+        );
+    }
+
+    addTransformFolder(modelGUIitem, modelObj, visualizer);
+
+    // Everyday models: parameters first, because drawing an area generates the toolpath
+    // from whatever the parameters are at that moment.
+    if (listType === 'everyday') {
+        const everydayModel = modelObj as EverydayModel;
+        addParamsFolder_EverydayModel(modelGUIitem, everydayModel, visualizer);
+        addAugmentFolder(modelGUIitem, everydayModel);
+        addBumpsFolder(modelGUIitem, everydayModel);
+        addGradientFolder(modelGUIitem, everydayModel);
+        addSelectedMeshFolder(modelGUIitem, everydayModel, visualizer);
+
+        // Any edit in this model's folder can change which values differ from the foam ones.
+        modelGUIitem.onChange(() => differenceMarkUpdaters.get(modelObj)?.());
+    }
+}
 
 /**
- * Refreshes the model list displayed in the GUI.
+ * Brings the model list in the GUI in line with the model list in the Visualizer.
  *
- * This function clears the existing GUI items for the specified model type and
- * creates new GUI folders and controllers for each model in the corresponding list.
- * It sets up delete buttons, transform folders, and—for everyday models—mesh selection
- * and parameter folders.
+ * Only what changed is touched: folders of models that are gone are destroyed (with their
+ * controllers), and folders are built for models that do not have one yet. Existing folders
+ * are left alone, so their open/closed state, transform mode and selection highlight survive.
  *
  * @param visualizer - An instance of Visualizer that contains properties such as:
  *                     foamModelList, everydayModelList, foamModelListFolder, everydayModelListFolder,
@@ -526,49 +496,42 @@ export function addGradientFolder(
  * @param listType - The type of model list to refresh; either 'foam' or 'everyday'.
  */
 export function refreshModelGUIList(
-    visualizer: Visualizer, 
+    visualizer: Visualizer,
     listType: 'foam' | 'everyday'
 ): void {
-    let modelList: (EverydayModel | FoamModel)[] = [];
-    let guiFolder: GUI;
-    let itemClass: string = '';
-    if (listType === 'foam') {
-        modelList = visualizer.foamModelList;
-        guiFolder = visualizer.foamModelListFolder;
-        itemClass = 'foam-model-item';
-    } else if (listType === 'everyday') {
-        modelList = visualizer.everydayModelList;
-        guiFolder = visualizer.everydayModelListFolder;
-        itemClass = 'everyday-model-item';
-    }
+    const modelList: AnyModel[] = listType === 'foam' ? visualizer.foamModelList : visualizer.everydayModelList;
+    const guiFolder: GUI = listType === 'foam' ? visualizer.foamModelListFolder : visualizer.everydayModelListFolder;
+    const itemClass = listType === 'foam' ? 'foam-model-item' : 'everyday-model-item';
 
-    // Clear existing GUI items with the specified item class.
-    const items = document.querySelectorAll('.' + itemClass);
-    items.forEach(item => item.remove());
+    hideTooltips();
 
-    // Iterate over each model in the list and create a corresponding GUI folder.
-    modelList.forEach((modelObj: EverydayModel | FoamModel, index: number) => {
-        const modelGUIitem = guiFolder.addFolder(modelObj.name);
-        modelGUIitem.domElement.classList.add(itemClass);
-        // Bind the GUI item to the model object.
-        modelObj.guiItem = modelGUIitem;
-
-        // Append the delete button to the GUI title element.
-        const titleElem = modelGUIitem.domElement.querySelector('.title');
-        if (titleElem) {
-            titleElem.appendChild(createDeleteBtn(modelObj, index, visualizer, itemClass));
+    // Destroy the folders of models that are no longer in the list (copy first: destroy() mutates).
+    [...guiFolder.folders].forEach(folder => {
+        const isModelFolder = folder.domElement.classList.contains(itemClass);
+        if (isModelFolder && !modelList.some(model => model.guiItem === folder)) {
+            folder.destroy();
         }
+    });
 
-        // Add the transform folder.
-        addTransformFolder(modelGUIitem, modelObj, visualizer);
-
-        // For everyday models, add additional folders for mesh selection and parameters.
-        if (listType === 'everyday') {
-            addSelectedMeshFolder(modelGUIitem, modelObj as EverydayModel, visualizer);
-            addParamsFolder_EverydayModel(modelGUIitem, modelObj as EverydayModel, visualizer);
-            addAugmentFolder(modelGUIitem, modelObj as EverydayModel);
-            addBumpsFolder(modelGUIitem, modelObj as EverydayModel);
-            addGradientFolder(modelGUIitem, modelObj as EverydayModel);
+    // Build folders for models that do not have one yet.
+    modelList.forEach(modelObj => {
+        const hasFolder = guiFolder.folders.some(folder => folder === modelObj.guiItem);
+        if (!hasFolder) {
+            buildModelFolder(visualizer, guiFolder, modelObj, listType, itemClass);
         }
+    });
+}
+
+/**
+ * Re-reads every model control from its model, e.g. after a preset changed the values
+ * behind the GUI's back.
+ *
+ * @param visualizer - The Visualizer instance.
+ */
+export function refreshModelControls(visualizer: Visualizer): void {
+    const models: AnyModel[] = [...visualizer.foamModelList, ...visualizer.everydayModelList];
+    models.forEach(model => {
+        (model.guiItem as GUI | undefined)?.controllersRecursive().forEach(controller => controller.updateDisplay());
+        differenceMarkUpdaters.get(model)?.();
     });
 }

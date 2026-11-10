@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import { generateBoundaryContours } from "../visualizer/utils/TreeSlicer";
-import { ToolpathConfig } from "../visualizer/types/modelTypes";
-import { PathPoint } from "../visualizer/toolpath/generateFoamToolpath";
-import Visualizer from "../visualizer/Visualizer";
+import type { ToolpathConfig } from "../visualizer/types/modelTypes";
+import type { PathPoint } from "../visualizer/toolpath/pathTypes";
+import { PURGE_LINE_LIFT } from "../visualizer/toolpath/toolpathConstants";
 
 export interface Extruder {
   /** Nozzle diameter (in mm) */
@@ -34,30 +33,50 @@ export function createDefaultExtruder(): Extruder {
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
-    color: 0x00ff00
+    color: 0x5fd38d
   };
 }
 
 export interface VTPSettings {
   V_Star: number;
-  vStarEnd: number; 
+  vStarEnd: number;
   Edot: number;
   deltaZ: number; // deltaZ (thickness of a single foam layer)
-  deltaLEnd: number; 
+  deltaLEnd: number;
   ZOffset: number; // zOffset (distance between the nozzle and the layer under to allow VTP)
   H_star: number; // H_star (height of the foam layer)
-  hStarEnd: number; 
+  hStarEnd: number;
   useFermatSpirals: boolean;
   deltaL: number,
 }
+
+/**
+ * Everything the G-code emitter has to remember between points. It is passed in and out
+ * explicitly, rather than living on the Printer, so that several toolpaths emitted one after the
+ * other carry on from where the previous one really left off.
+ */
+export interface EmitterState {
+  /** The extruder that is currently picked (or, on a single-head machine, whose material is loaded). Null if none. */
+  extruder: number | null;
+  /**
+   * For each tool, whether the "initial foam layers" material is what is loaded in it right now.
+   * A tool with no entry has not printed anything that cares yet. Single-head machines only use key 0.
+   */
+  initialMaterialLoaded: Map<number, boolean>;
+}
+
+/** Temperature (°C) everything is held at during a test sweep, i.e. cold. */
+const TEST_SWEEP_TEMPERATURE = 20;
+/** Fraction of the regular flow used for an ironing pass. */
+const IRONING_FLOW = 0.2;
+/** Head speed (mm/min) of an ironing pass. */
+const IRONING_SPEED = 1500;
 
 /**
  * Printer class is used to generate G-code for a 3D printer,
  * including generating base (boundary) G-code and foam toolpath G-code.
  */
 export default class Printer {
-  /** Current cumulative extruded amount */
-  public extrudedAmount: number;
   public material_bed_temperature: number;
   public extruders: Extruder[];
   /** Machine depth (maximum x/y axis length) */
@@ -66,10 +85,6 @@ export default class Printer {
   public machine_depth_y: number;
   /** Machine height (maximum z axis length) */
   public machine_height: number;
-  /** Stores the generated boundary G-code */
-  // public boundaryGcode: string;
-  /** Stores the generated toolpath G-code */
-  // public toolpathGcode: string;
 
   public diameter_filament: number;
   public globalVTPSettings: VTPSettings;
@@ -80,7 +95,7 @@ export default class Printer {
   public checkCollisions: boolean;
 
   public printHeadDims: { min: THREE.Vector2, max: THREE.Vector2 };
-  
+
   public bedLeveling: boolean;
   public testSweep: boolean;
 
@@ -89,18 +104,24 @@ export default class Printer {
    * When false, the single toolhead swaps materials with an M600 filament change instead.
    */
   public multipleToolheads: boolean;
-  /** Index of the currently active extruder. Drives nozzle geometry for every extrude/move. */
+  /**
+   * Index of the extruder the start G-code picked / the last emitted toolpath ended on.
+   * Only used to seed {@link createEmitterState}; emission itself runs on an explicit EmitterState.
+   */
   public activeExtruder: number;
   /** Filament retracted before parking a tool and pushed back after picking one (in mm) */
   public toolchangeRetract: number;
 
   public purgeTower: boolean;
+  /** Outer radius of the purge tower (in mm) */
+  public purgeTowerRadius: number;
+  /** Distance kept between the bed edges and the purge line / purge tower (in mm) */
+  public bedMargin: number;
 
   /**
    * Creates a new Printer instance and initializes default parameters and end G-code.
    */
   constructor() {
-    this.extrudedAmount = 0;
     this.material_bed_temperature = 60; // bed temperature
     this.extruders = [
       {// TPU extruder
@@ -110,7 +131,7 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 230,
         idle_temp_extruder: 70,
-        color: 0x00FF00
+        color: 0x5fd38d
       },
       {//conductive TPU extruder
         nozzleDiameter: 0.4,
@@ -119,15 +140,15 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 240,
         idle_temp_extruder: 70,
-        color: 0xFF0000
+        color: 0xf2a65a
       }
     ];
     this.purgeTower = true;
+    this.purgeTowerRadius = 10;
+    this.bedMargin = 5;
     this.machine_depth = 250; // machine depth (max x)
     this.machine_depth_y = 210; // machine y axis length
     this.machine_height = 220; // machine height (max z)
-    // this.boundaryGcode = ""; // initialize boundary G-code
-    // this.toolpathGcode = ""; // initialize toolpath G-code
     this.diameter_filament = 1.75;
     this.globalVTPSettings = {
       V_Star: 0.15,
@@ -167,7 +188,7 @@ export default class Printer {
 
   /**
    * Updates the printers parameters.
-   * 
+   *
    * @param {ToolpathConfig} toolpathConfig The toolpath config to update the parameters to.
    */
   public updateParameters(
@@ -208,6 +229,41 @@ export default class Printer {
   }
 
   /**
+   * The layer height regular (non-VTP) extrusions are sliced and printed at: half the nozzle
+   * diameter. Shells and the purge tower use this, so it follows the nozzle instead of assuming
+   * a 0.4 mm one. Falls back to extruder 0 if the index doesn't exist.
+   *
+   * @param {number} extruder The extruder index.
+   * @returns {number} The layer height in mm.
+   */
+  public regularLayerHeight(extruder: number = 0): number {
+    const e = this.extruders[extruder] ?? this.extruders[0];
+    return e.nozzleDiameter / 2;
+  }
+
+  /**
+   * Where the purge tower stands: in the far corner of the bed (maximum x and y), one bed margin
+   * in from both edges. On the default 250 x 210 bed that is (235, 195).
+   *
+   * @returns {THREE.Vector2} The center of the purge tower.
+   */
+  public purgeTowerCenter(): THREE.Vector2 {
+    const inset = this.bedMargin + this.purgeTowerRadius;
+    return new THREE.Vector2(this.machine_depth - inset, this.machine_depth_y - inset);
+  }
+
+  /**
+   * The temperature an extruder prints at. During a test sweep nothing is extruded, so every
+   * tool stays cold.
+   *
+   * @param {number} extruder The extruder index.
+   * @returns {number} The temperature in °C.
+   */
+  public printTemperature(extruder: number): number {
+    return this.testSweep ? TEST_SWEEP_TEMPERATURE : this.requireExtruder(extruder).print_temp_extruder;
+  }
+
+  /**
    * Returns a copy of the VTP settings for an extruder (0 = regular foam, otherwise sensing).
    * Callers get their own object, so later updateParameters calls don't change it.
    *
@@ -219,21 +275,36 @@ export default class Printer {
   }
 
   /**
-   * Builds the ending G-code that shuts the printer down after a print.
-   * On a multi-toolhead machine every tool that was picked gets switched off individually and the
-   * last one is parked; on a single-head machine the one nozzle is switched off.
+   * Looks an extruder up by index, failing loudly instead of emitting G-code for a tool that
+   * does not exist.
    *
-   * @param {number[]} usedExtruders The indices of the extruders this print actually used.
+   * @param {number} extruder The extruder index.
+   * @returns {Extruder} The extruder's settings.
+   */
+  private requireExtruder(extruder: number): Extruder {
+    const e = this.extruders[extruder];
+    if (!e) {
+      throw new Error(`The toolpath uses extruder ${extruder}, but the printer only has ${this.extruders.length} extruder(s).`);
+    }
+    return e;
+  }
+
+  /**
+   * Builds the ending G-code that shuts the printer down after a print.
+   * On a multi-toolhead machine every tool is switched off individually, whether or not this
+   * print used it: a tool the print never picked may still be hot from the start G-code or from
+   * an earlier print, and an extra M104 S0 costs nothing. The last picked tool is then parked.
+   * On a single-head machine the one nozzle is switched off.
+   *
    * @returns {string} The ending G-code string.
    */
-  public build_end_gcode(usedExtruders: number[]): string {
+  public build_end_gcode(): string {
     const lines: string[] = ["", "G4 S5; Dwell for 5 Second(s)"];
 
     if (this.multipleToolheads) {
-      // Tools never picked were already switched off in the start G-code, so only these are hot.
-      for (const n of usedExtruders) {
+      this.extruders.forEach((_, n) => {
         lines.push(`M104 T${n} S0 ; turn off tool ${n}`);
-      }
+      });
     } else {
       lines.push("M104 S0 ; turn off temperature");
     }
@@ -274,9 +345,9 @@ export default class Printer {
    * @returns {string} The starting G-code string.
    */
   public build_start_gcode(firstExtruder: number, usedExtruders: number[]): string {
-    const first = this.extruders[firstExtruder];
-    const printTemp = (n: number) => this.testSweep ? 20 : this.extruders[n].print_temp_extruder;
-    const bedTemp = this.testSweep ? 20 : this.material_bed_temperature;
+    const first = this.requireExtruder(firstExtruder);
+    usedExtruders.forEach(n => this.requireExtruder(n));
+    const bedTemp = this.testSweep ? TEST_SWEEP_TEMPERATURE : this.material_bed_temperature;
 
     // The caller derives usedExtruders from the toolpath, which may not name the starting tool.
     const used = usedExtruders.indexOf(firstExtruder) !== -1
@@ -306,9 +377,9 @@ export default class Printer {
 
       heaterLines.push(
         "",
-        `M104 T${firstExtruder} S${printTemp(firstExtruder)} ; set first tool's temp`,
+        `M104 T${firstExtruder} S${this.printTemperature(firstExtruder)} ; set first tool's temp`,
         `M190 S${bedTemp} ; set bed temp and wait to reach it`,
-        `M109 T${firstExtruder} S${printTemp(firstExtruder)} ; wait for first tool's temp`
+        `M109 T${firstExtruder} S${this.printTemperature(firstExtruder)} ; wait for first tool's temp`
       );
       heaters = heaterLines.join("\n");
 
@@ -316,13 +387,13 @@ export default class Printer {
     } else {
       nozzleCheck = `M862.1 P${first.nozzleDiameter} ; nozzle diameter check`;
       heaters = [
-        `M104 S${printTemp(firstExtruder)} ; set extruder temp`,
+        `M104 S${this.printTemperature(firstExtruder)} ; set extruder temp`,
         `M190 S${bedTemp} ; set bed temp and wait to reach it`,
-        `M109 S${printTemp(firstExtruder)} ; wait for extruder temp`
+        `M109 S${this.printTemperature(firstExtruder)} ; wait for extruder temp`
       ].join("\n");
     }
 
-    // Tracks which nozzle geometry the extrusion math should use once the body G-code starts.
+    // Remembered so that an emitter state created afterwards starts on the tool picked here.
     this.activeExtruder = firstExtruder;
     const liftZ = 10;
     const leveling = this.bedLeveling ? "G29" : "M420 S1\n";
@@ -361,8 +432,8 @@ ${pickFirstTool}
 ${leveling} ; probe the printbed or use previously stored printbed mesh with hot bed and picked tool
 G0 Z0.200 F2400.000
 
-M204 S1000 
-          
+M204 S1000
+
 `;
   }
 
@@ -373,12 +444,13 @@ M204 S1000
    *
    * @param {number} to The index of the extruder to switch to.
    * @param {number | null} from The index of the currently active extruder, or null if none.
+   * @param {string} [materialNote] Extra wording for the filament change prompt on a single-head machine.
    * @returns {string} The G-code performing the switch.
    */
-  public switchExtruder(to: number, from: number | null): string {
+  public switchExtruder(to: number, from: number | null, materialNote?: string): string {
     return this.multipleToolheads
       ? this.changeTool(to, from)
-      : this.changeFilament(to);
+      : this.changeFilament(to, materialNote);
   }
 
   /**
@@ -386,15 +458,16 @@ M204 S1000
    * physically change the filament and then bringing the nozzle to the new material's temperature.
    *
    * @param {number} to The index of the extruder profile whose material is being loaded.
+   * @param {string} [materialNote] Which of that profile's materials to load, if it matters.
    * @returns {string} The filament change G-code.
    */
-  public changeFilament(to: number): string {
-    const temp = this.extruders[to].print_temp_extruder;
+  public changeFilament(to: number, materialNote?: string): string {
+    const temp = this.printTemperature(to);
 
     this.activeExtruder = to;
 
     return [
-      `\n; Change filament to extruder ${to}'s material`,
+      `\n; Change filament to extruder ${to}'s material${materialNote ? ` (${materialNote})` : ""}`,
       "M600 ; pause and prompt the user to swap filament",
       `M104 S${temp} ; set extruder temp`,
       `M109 S${temp} ; wait for extruder temp`,
@@ -403,9 +476,26 @@ M204 S1000
   }
 
   /**
+   * Generates the G-code that pauses for the user to swap between the "initial foam layers"
+   * material and the main material in the tool that is currently active. Only the filament
+   * changes: the tool, its nozzle geometry and its temperature all stay as they are.
+   *
+   * @param {boolean} toInitial True to load the initial-layer material, false to load the main one.
+   * @param {number} extruder The index of the active extruder, for the comment.
+   * @returns {string} The filament swap G-code.
+   */
+  public swapInitialMaterial(toInitial: boolean, extruder: number): string {
+    return [
+      `\n; Swap filament in extruder ${extruder}: load the ${toInitial ? "initial-layer" : "main"} material`,
+      "M600 ; pause and prompt the user to swap filament",
+      "G92 E0\n"
+    ].join("\n");
+  }
+
+  /**
    * Generates the G-code to swap the active toolhead.
    * Retracts and idles the outgoing tool, parks it, then heats and picks the incoming one.
-   * Updates {@link activeExtruder} so subsequent moves use the new tool's nozzle geometry.
+   * Updates {@link activeExtruder} so an emitter state created afterwards starts on the new tool.
    *
    * @param {number} to The index of the extruder to pick.
    * @param {number | null} from The index of the currently picked extruder, or null if none is picked.
@@ -413,17 +503,19 @@ M204 S1000
    */
   public changeTool(to: number, from: number | null): string {
     const lines: string[] = [`\n; Change Tool${from ?? -1} -> Tool${to}`];
+    // In a test sweep nothing is extruded, so the incoming tool is not heated either.
+    const printTemp = this.printTemperature(to);
 
     // Start the incoming tool heating now so the M109 below barely blocks.
-    lines.push(`M104 S${this.extruders[to].print_temp_extruder} T${to} ; preheat incoming tool`);
+    lines.push(`M104 S${printTemp} T${to} ; preheat incoming tool`);
 
     if (from !== null) {
       lines.push(`G1 E-${this.toolchangeRetract.toFixed(4)} F2100 ; retract before park`);
-      lines.push(`M104 S${this.extruders[from].idle_temp_extruder} T${from} ; idle outgoing tool`);
+      lines.push(`M104 S${this.requireExtruder(from).idle_temp_extruder} T${from} ; idle outgoing tool`);
       lines.push("P0 S1 L2 D0 ; park the currently-picked tool");
     }
 
-    lines.push(`M109 S${this.extruders[to].print_temp_extruder} T${to} ; wait for incoming tool's temp`);
+    lines.push(`M109 S${printTemp} T${to} ; wait for incoming tool's temp`);
     lines.push(`T${to} S1 L0 D0 ; pick tool ${to}`);
     lines.push(`G1 E${this.toolchangeRetract.toFixed(4)} F1500 ; prime`);
     lines.push("G92 E0\n");
@@ -437,80 +529,69 @@ M204 S1000
    * Generates the G-code command for moving the print head to a target position without extruding.
    *
    * @param {THREE.Vector3} target - The target coordinates.
+   * @param {number} extruder - The active extruder, whose travel speed is used. Defaults to the last active one.
    * @returns {string} The G-code command for moving to the target position.
    */
-  public moveToPosition(target: THREE.Vector3): string {
-    return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.extruders[this.activeExtruder].printHead_speed_when_free_move}`;
+  public moveToPosition(target: THREE.Vector3, extruder: number = this.activeExtruder): string {
+    return `G0 X${target.x.toFixed(6)} Y${target.y.toFixed(6)} Z${target.z.toFixed(6)} F${this.requireExtruder(extruder).printHead_speed_when_free_move}`;
   }
 
   /**
-   * Generates the G-code for extruding a single segment between two points
-   * while updating the extruded amount.
+   * Generates the G-code for extruding a single viscous-thread-printing segment between two points.
    *
    * @private
    * @param {THREE.Vector3} p0 - The starting point.
    * @param {THREE.Vector3} p1 - The ending point.
-   * @param {number} vStar - V* (head speed / thread speed) for this segment. Defaults to the global setting.
-   * @param {number} edot - Filament feed rate (mm/min) for this segment. Defaults to the global setting.
+   * @param {number} vStar - V* (head speed / thread speed) for this segment.
+   * @param {number} edot - Filament feed rate (mm/min) for this segment.
+   * @param {number} extruderIndex - The extruder printing the segment, for its nozzle geometry.
    * @returns {string} The G-code command for the extrusion segment.
    */
   private extrudeSingleSegment(
-    p0: THREE.Vector3 | { point: THREE.Vector3; type: string },
-    p1: THREE.Vector3 | { point: THREE.Vector3; type: string },
-    vStar: number = this.globalVTPSettings.V_Star,
-    edot: number = this.globalVTPSettings.Edot,
+    p0: THREE.Vector3,
+    p1: THREE.Vector3,
+    vStar: number,
+    edot: number,
+    extruderIndex: number,
   ): string {
-    // Extract Vector3 points regardless of input type
-    const p0Point = (p0 instanceof THREE.Vector3) ? p0 : p0.point;
-    const p1Point = (p1 instanceof THREE.Vector3) ? p1 : p1.point;
-
-    //console.log(this.V_Star, this.Edot, this.nozzleDiameter, this.dieSwelling, this.diameter_filament);
-
+    const extruder = this.requireExtruder(extruderIndex);
     const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
-    //console.log("beta", beta);
-    const extruder = this.extruders[this.activeExtruder];
     const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
-   // console.log("gamnma ",gamma);
 
     const S = gamma / (beta * vStar);
-    //console.log("S ", S);
     const F = edot / S;
-    //console.log("F ", F);
-
 
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
+    const extrudedAmount = this.norm(p1, p0) * S;
 
-    this.extrudedAmount = (this.norm(p1Point, p0Point)) * S;
-    let gcode = '';
-
-    // if (isFirstInLayer) {
-    //   gcode += `G1 X${p0Point.x.toFixed(6)} Y${p0Point.y.toFixed(6)} Z${p0Point.z.toFixed(6)} E0.0050 F0114 ; Move to start of new layer\n`;
-    // }
-
-    gcode += `G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
-   // console.log(`G1 X${p1Point.x.toFixed(6)} Y${p1Point.y.toFixed(6)} Z${p1Point.z.toFixed(6)} E${this.extrudedAmount.toFixed(6)} F0${Math.round(F)}`)
-    return gcode;
+    return `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
   }
 
 
   /**
    * Extrudes a regular line of filament between two points.
-   * The intended layer height of the extrusion is the nozzle diameter / 2 and the
-   * intended width of the extrusion is the thread diameter.
-   * 
+   * The intended width of the extrusion is the thread diameter, and its height is the layer
+   * height the segment was sliced at (half the nozzle diameter unless stated otherwise).
+   *
    * @param {THREE.Vector3} p0 The point the toolhead is coming from
    * @param {THREE.Vector3} p1 The point the toolhead is moving to.
+   * @param {number} extruderIndex The extruder printing the segment.
+   * @param {number} flow Multiplier on the amount of filament extruded.
+   * @param {number} [speed] Head speed in mm/min. Defaults to the extruder's travel speed.
+   * @param {number} [layerHeight] The layer height in mm. Defaults to half the nozzle diameter.
    * @returns  {string} The gcode to print the segment.
    */
   private extrudeRegularSegment(
     p0: THREE.Vector3,
     p1: THREE.Vector3,
+    extruderIndex: number,
     flow: number = 1,
     speed?: number,
+    layerHeight?: number,
   ): string {
-    // layer height = nozzleDiameter / 2, extrusion width = nozzle diameter * dieswell
-    const extruder = this.extruders[this.activeExtruder];
-    const beadArea = extruder.dieSwelling * Math.pow(extruder.nozzleDiameter, 2) / 2;
+    const extruder = this.requireExtruder(extruderIndex);
+    // bead cross-section = extrusion width (nozzle diameter * dieswell) * layer height
+    const beadArea = extruder.dieSwelling * extruder.nozzleDiameter * (layerHeight ?? this.regularLayerHeight(extruderIndex));
     const crossSection = Math.PI * Math.pow(this.diameter_filament / 2, 2);
     const filamentPerMM = (beadArea / crossSection) ;
     const dist = this.norm(p0, p1);
@@ -519,92 +600,57 @@ M204 S1000
   }
 
   /**
-   * Extrudes an ironing segment between two points: 20% of the regular flow at 25 mm/s.
+   * Creates the state a toolpath emission starts from: the tool the start G-code (or the last
+   * emitted toolpath) left picked, and nothing known yet about which material is loaded where.
    *
-   * @param {THREE.Vector3} p0 The point the toolhead is coming from
-   * @param {THREE.Vector3} p1 The point the toolhead is moving to.
-   * @returns {string} The gcode to iron the segment.
+   * @param {number | null} extruder The extruder that is currently picked. Defaults to the last active one.
+   * @returns {EmitterState} A fresh emitter state.
    */
-  private extrudeIroningSegment(
-    p0: THREE.Vector3,
-    p1: THREE.Vector3,
-  ): string {
-    return this.extrudeRegularSegment(p0, p1, 0.2, 1500);
+  public createEmitterState(extruder: number | null = this.activeExtruder): EmitterState {
+    return { extruder, initialMaterialLoaded: new Map() };
   }
-
 
   /**
-   * Generates the base (boundary) G-code based on the bottom boundary of the model.
-   * This prints a rectangular bounding box.
-   * This is intended for PLA printing.
+   * Finds out whether the points that follow a filament change start with the initial-layer
+   * material, so the change prompt can say which material to load.
    *
-   * @param {THREE.Vector3[]} constrainBounding - An array of at least 4 points defining the bottom boundary.
-   * @param {number} [offset=0.2] - The offset distance to expand the bounding box.
-   * @param {number} [extruderId=2] - The extruder ID (1 for left, otherwise right).
-   * @param {number} [layerHeight=0.2] - The Z height for the base layer.
-   * @returns {string} The generated base G-code.
+   * @param {PathPoint[]} toolpath The toolpath being emitted.
+   * @param {number} from The index of the point the filament change happens at.
+   * @returns {boolean | undefined} The first defined initialMaterial flag before the next extruder change.
    */
-  public generateBaseConstraints(
-    constrainBounding: THREE.Vector3[],
-    offset: number = 0.2,
-    extruderId: number = 2,
-    layerHeight: number = 0.2
-  ): string {
-    if (constrainBounding.length < 4) {
-      console.error("ConstrainBounding does not have enough points to define a rectangle.");
-      return "";
+  private upcomingInitialMaterial(toolpath: PathPoint[], from: number): boolean | undefined {
+    const extruder = toolpath[from].extruder;
+    for (let i = from; i < toolpath.length; i++) {
+      const point = toolpath[i];
+      if (point.extruder !== undefined && point.extruder !== extruder) {
+        return undefined;
+      }
+      if (point.initialMaterial !== undefined) {
+        return point.initialMaterial;
+      }
     }
-    const minX = Math.min(...constrainBounding.map(p => p.x)) - offset;
-    const maxX = Math.max(...constrainBounding.map(p => p.x)) + offset;
-    const minY = Math.min(...constrainBounding.map(p => p.y)) - offset;
-    const maxY = Math.max(...constrainBounding.map(p => p.y)) + offset;
-
-    const corners: THREE.Vector3[] = [
-      new THREE.Vector3(minX, minY, layerHeight), // Bottom Left
-      new THREE.Vector3(minX, maxY, layerHeight), // Top Left
-      new THREE.Vector3(maxX, maxY, layerHeight), // Top Right
-      new THREE.Vector3(maxX, minY, layerHeight), // Bottom Right
-      new THREE.Vector3(minX, minY, layerHeight)  // Close loop back to Bottom Left
-    ];
-
-    let body_gcode: string[] = [];
-    this.extrudedAmount = 0;
-
-    body_gcode.push(
-      `G0 F2880 X${corners[0].x} Y${corners[0].y} Z${corners[0].z}; move to start point`
-    );
-    body_gcode.push("M205 X8 Y8; tune down acceleration");
-    body_gcode.push("G1 F2400 E0; not sure the purpose of this line");
-
-    for (let i = 0; i < corners.length - 1; i++) {
-      body_gcode.push(
-        this.extrudeSingleSegment(
-          corners[i],
-          corners[i + 1],
-        )
-      );
-    }
-
-    body_gcode.push("G92 E0");
-    this.extrudedAmount = 0;
-
-    return body_gcode.join("\n");
+    return undefined;
   }
 
-
-    /**
+  /**
    * Generates foam toolpath G-code from a given toolpath.
+   *
+   * Nothing about the print is remembered on the Printer between calls: the picked tool and the
+   * material loaded in each tool come from `state`, which is updated in place. Emitting several
+   * toolpaths with the same state object therefore gives correct tool changes across them.
    *
    * @param {PathPoint[]} toolpath The points to turn into gcode in order with correct properties.
    *                               Any point that isn't a travel movement or regular segment should have
    *                               hStar, vStar, and edot among their properties.
-   * @returns {string} The generated foam toolpath G-code.
+   * @param {EmitterState} state Where the printer is at when the toolpath starts; updated to where
+   *                             it is when the toolpath ends. Defaults to the tool the start G-code picked.
+   * @returns {string} The generated foam toolpath G-code. Empty if the toolpath is empty.
    */
   public generate_foam_gcode(
-    toolpath: PathPoint[]
+    toolpath: PathPoint[],
+    state: EmitterState = this.createEmitterState(),
   ) : string {
     if (toolpath.length === 0) {
-      console.error("Toolpath is empty.");
       return "";
     }
 
@@ -612,35 +658,47 @@ M204 S1000
 
     let firstPoint = toolpath[0].point.clone();
     let lastTarget: THREE.Vector3 = firstPoint;
-    // Seeded from the tool the start G-code already picked, so we don't emit a redundant
-    // toolchange for the first point.
-    let extruder: number | null = this.activeExtruder;
-    let purgeDone = !this.purgeLine;
 
     body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
     body_gcode.push("M205 X8 Y8; tune down acceleration");
 
-    
-
     for (let i = 0; i < toolpath.length; i++) {
       const point = toolpath[i];
       const currentPoint = point.point.clone();
-      if (!purgeDone && i > 0 && !point.regularSegment) {
-        purgeDone = true;
-        body_gcode.push(`G0 Z${(lastTarget.z + 2).toFixed(4)} F2400 ; lift off the purge line`);
+      if (i > 0 && toolpath[i - 1].role === 'purgeLine' && point.role !== 'purgeLine') {
+        body_gcode.push(`G0 Z${(lastTarget.z + PURGE_LINE_LIFT).toFixed(4)} F2400 ; lift off the purge line`);
       }
-      // Note the !== undefined: extruder 0 is falsy, so a truthiness check would never pick tool 0.
       if(point.debug !== undefined){
         body_gcode.push("; DEBUG: " + point.debug);
       }
-      if (point.extruder !== undefined && point.extruder !== extruder) {
-        body_gcode.push(this.switchExtruder(point.extruder, extruder));
-        extruder = point.extruder;
+      // Note the !== undefined: extruder 0 is falsy, so a truthiness check would never pick tool 0.
+      if (point.extruder !== undefined && point.extruder !== state.extruder) {
+        this.requireExtruder(point.extruder);
+        let materialNote: string | undefined;
+        if (!this.multipleToolheads) {
+          // The one nozzle is getting a different material, so what was loaded before is gone.
+          const upcoming = this.upcomingInitialMaterial(toolpath, i);
+          materialNote = upcoming === undefined ? undefined : (upcoming ? "initial-layer material" : "main material");
+          state.initialMaterialLoaded.clear();
+          if (upcoming !== undefined) {
+            state.initialMaterialLoaded.set(0, upcoming);
+          }
+        }
+        body_gcode.push(this.switchExtruder(point.extruder, state.extruder, materialNote));
+        state.extruder = point.extruder;
       }
 
-      if (point.switchFilament) {
-        let to = this.activeExtruder == 0 ? 1 : 0;
-        body_gcode.push(this.changeFilament(to));
+      const extruder = state.extruder ?? 0;
+
+      if (point.initialMaterial !== undefined) {
+        // Tracked per tool for the whole print, so a second island's initial layers find out that
+        // the main material is still loaded from the first island and ask for a swap back.
+        const tool = this.multipleToolheads ? extruder : 0;
+        const loaded = state.initialMaterialLoaded.get(tool);
+        if (loaded !== undefined && loaded !== point.initialMaterial) {
+          body_gcode.push(this.swapInitialMaterial(point.initialMaterial, extruder));
+        }
+        state.initialMaterialLoaded.set(tool, point.initialMaterial);
       }
 
       if (point.pause) {
@@ -651,28 +709,25 @@ M204 S1000
 
       if (point.ironing && !this.testSweep) {
         body_gcode.push(
-          this.extrudeIroningSegment(
-            lastTarget,
-            currentPoint
-          )
+          this.extrudeRegularSegment(lastTarget, currentPoint, extruder, IRONING_FLOW, IRONING_SPEED, point.layerHeight)
         );
       } else if (point.regularSegment && !this.testSweep) {
         body_gcode.push(
-          this.extrudeRegularSegment(
-            lastTarget, 
-            currentPoint
-          )
+          this.extrudeRegularSegment(lastTarget, currentPoint, extruder, 1, undefined, point.layerHeight)
         );
       } else if (point.travel || this.testSweep) {
         body_gcode.push(
-          this.moveToPosition(currentPoint)
+          this.moveToPosition(currentPoint, extruder)
         );
       } else {
+        if (point.vStar === undefined || point.hStar === undefined || point.edot === undefined) {
+          throw new Error(`Toolpath point ${i} is a foam extrusion but is missing V*, H* or Edot.`);
+        }
         // Use the point's own V* and Edot without writing them back into globalVTPSettings:
         // chunks may share that object, and overwriting it left the last point's values behind.
-        const line = this.extrudeSingleSegment(lastTarget, currentPoint, point.vStar, point.edot);
+        const line = this.extrudeSingleSegment(lastTarget, currentPoint, point.vStar, point.edot, extruder);
         body_gcode.push(
-          `${line} ; V*=${point.vStar!.toFixed(4)} H*=${point.hStar!.toFixed(4)} deltaZ=${point.deltaZ?.toFixed(4) ?? this.globalVTPSettings.deltaZ.toFixed(4)} deltaL=${point.deltaL?.toFixed(4) ?? 'N/A'} Edot=${point.edot!.toFixed(4)}`
+          `${line} ; V*=${point.vStar.toFixed(4)} H*=${point.hStar.toFixed(4)} deltaZ=${point.deltaZ?.toFixed(4) ?? this.globalVTPSettings.deltaZ.toFixed(4)} deltaL=${point.deltaL?.toFixed(4) ?? 'N/A'} Edot=${point.edot.toFixed(4)}`
         );
       }
 
@@ -680,7 +735,9 @@ M204 S1000
     }
 
     body_gcode.push("G92 E0");
-    this.extrudedAmount = 0;
+    if (state.extruder !== null) {
+      this.activeExtruder = state.extruder;
+    }
 
     return body_gcode.join("\n");
   }
