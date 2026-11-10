@@ -50,4 +50,9 @@ export interface PathPoint {
      * amount. When left out the emitter assumes half the nozzle diameter.
      */
     layerHeight?: number;
+    /**
+     * The head speed (mm/min) of a regular segment. When left out the emitter uses the active
+     * extruder's travel speed, as it always has. Ignored by travel, ironing and foam moves.
+     */
+    speed?: number;
 }

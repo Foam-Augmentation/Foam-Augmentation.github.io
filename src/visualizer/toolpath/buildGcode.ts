@@ -212,6 +212,9 @@ export function validateToolpath(printer: Printer, toolpath: PathPoint[]): strin
         if (point.layerHeight !== undefined && !(point.layerHeight > 0)) {
             report('Layer height must be a positive number', `point ${i} has ${point.layerHeight}`);
         }
+        if (point.speed !== undefined && !(Number.isFinite(point.speed) && point.speed > 0)) {
+            report('Speed must be a positive number', `point ${i} has ${point.speed}`);
+        }
     }
 
     counts.forEach((entry, kind) => {

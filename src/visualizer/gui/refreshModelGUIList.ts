@@ -8,7 +8,7 @@ import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo
 import { importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 import { AnyModel, disposeModel, syncAuxTransforms } from './modelActions';
 import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips, setTip } from './guiHelpers';
-import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, MODEL_SPECS, InitialKey, ModelKey } from './paramSpecs';
+import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
 import { notify } from './notify';
 
 // Extend BufferGeometry to include boundsTree property
@@ -50,7 +50,7 @@ const differenceMarkUpdaters = new WeakMap<AnyModel, () => void>();
  * @param visualizer - The Visualizer instance.
  * @param modelObj - The model object to delete.
  */
-function confirmAndDeleteModel(visualizer: Visualizer, modelObj: AnyModel): void {
+export function confirmAndDeleteModel(visualizer: Visualizer, modelObj: AnyModel): void {
     const confirmed = window.confirm(
         `Delete “${modelObj.name}”?\n\nIts selections, parameters and generated toolpath are removed too. This cannot be undone.`
     );
@@ -399,6 +399,27 @@ export function addBumpsFolder(
 }
 
 /**
+ * Adds the settings of a regular (solid plastic) print to an everyday model's GUI item.
+ *
+ * @param modelGUIitem - The GUI folder for the model.
+ * @param modelObj - The everyday model object.
+ */
+export function addRegularPrintFolder(
+    modelGUIitem: GUI,
+    modelObj: EverydayModel,
+): void {
+    const regularFolder = addFolderWithTip(
+        modelGUIitem,
+        'Regular Print Settings',
+        'How the model is printed as an ordinary solid part: layers, walls and infill.'
+    );
+    regularFolder.domElement.classList.add('regular-folder');
+
+    const keys: RegularKey[] = ['layerHeight', 'perimeters', 'infillDensity', 'topBottomLayers', 'extruder', 'printSpeed'];
+    keys.forEach(key => addParam(regularFolder, modelObj.regularConfig, key, REGULAR_SPECS[key]));
+}
+
+/**
  * Adds the gradient folder to an everyday model's GUI item.
  *
  * @param modelGUIitem - The GUI folder for the model.
@@ -468,12 +489,23 @@ function buildModelFolder(
         );
     }
 
+    // What the object is comes first: it decides which of the folders below are shown
+    // (the `kind-…` class on the folder, see style.css).
+    if (listType === 'everyday') {
+        const everydayModel = modelObj as EverydayModel;
+        const kindController = addParam(modelGUIitem, everydayModel, 'kind', KIND_SPEC);
+        kindController.domElement.classList.add('kind-control');
+        kindController.onChange(() => visualizer.setModelKind(everydayModel, everydayModel.kind));
+        modelGUIitem.domElement.classList.add(`kind-${everydayModel.kind}`);
+    }
+
     addTransformFolder(modelGUIitem, modelObj, visualizer);
 
     // Everyday models: parameters first, because drawing an area generates the toolpath
     // from whatever the parameters are at that moment.
     if (listType === 'everyday') {
         const everydayModel = modelObj as EverydayModel;
+        addRegularPrintFolder(modelGUIitem, everydayModel);
         addParamsFolder_EverydayModel(modelGUIitem, everydayModel, visualizer);
         addAugmentFolder(modelGUIitem, everydayModel);
         addBumpsFolder(modelGUIitem, everydayModel);

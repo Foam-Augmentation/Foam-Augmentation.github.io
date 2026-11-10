@@ -12,7 +12,7 @@ import type { VTPSettings } from '../../printer/Printer';
 // ---------------------------------------------------------------------------------------------
 
 // Clipper works on integers, so points are multiplied by this going in and divided coming out (1 unit = 1 micron).
-const CLIPPER_SCALE = 1000;
+export const CLIPPER_SCALE = 1000;
 // Smallest area (mm^2) an inset contour may have; anything smaller is a sliver and is dropped.
 const MIN_AREA = 3;
 // MIN_AREA in Clipper's scaled integer units, which is what Clipper path areas are measured in.

@@ -8,10 +8,71 @@
  */
 import * as THREE from 'three';
 import type Visualizer from '../Visualizer';
-import { EverydayModel, FoamModel } from '../types/modelTypes';
+import { EverydayModel, FoamModel, ObjectKind, RegularPrintSettings } from '../types/modelTypes';
 
 /** Either kind of model the app handles. */
 export type AnyModel = EverydayModel | FoamModel;
+
+/** Settings a model starts with when it is printed as a regular part. */
+export const DEFAULT_REGULAR_SETTINGS: RegularPrintSettings = {
+  layerHeight: 0.2,
+  perimeters: 2,
+  infillDensity: 20,
+  topBottomLayers: 4,
+  extruder: 0,
+  printSpeed: 1800,
+};
+
+/**
+ * How each kind of object is shown: its name, a one-line description, the colour of its
+ * badge in the object list (a CSS variable from style.css) and the colour of its mesh.
+ */
+export const KIND_INFO: Record<ObjectKind, { label: string; description: string; cssColor: string; meshColor: number }> = {
+  augment: {
+    label: 'Augmentation',
+    description: 'Existing object; foam is printed onto a selected area',
+    cssColor: 'var(--kind-augment)',
+    // A neutral grey: the object itself is not printed, and the orange foam area reads well on it.
+    meshColor: 0xc9d0da,
+  },
+  foam: {
+    label: 'Foam Print',
+    description: 'Printed entirely as foam',
+    cssColor: 'var(--kind-foam)',
+    meshColor: 0x9fdccb,
+  },
+  regular: {
+    label: 'Regular Print',
+    description: 'Printed as a solid plastic part',
+    cssColor: 'var(--kind-regular)',
+    meshColor: 0xa9b8f5,
+  },
+};
+
+/**
+ * Slight brightening of the selected object's mesh. It is white, so the object keeps the
+ * colour of its kind; the outline box drawn by the Visualizer does most of the highlighting.
+ */
+const SELECTED_EMISSIVE = 0xffffff;
+const SELECTED_EMISSIVE_INTENSITY = 0.1;
+
+/**
+ * Colours a model's mesh by its kind, and brightens it while it is the selected object.
+ *
+ * @param model - The model to colour.
+ * @param selected - True if it is the selected object.
+ */
+export function applyModelAppearance(model: AnyModel, selected: boolean): void {
+  const material = model.mesh.material as THREE.MeshStandardMaterial;
+  if (!material || !('emissive' in material)) return;
+
+  const kind = (model as Partial<EverydayModel>).kind;
+  if (kind) {
+    material.color.setHex(KIND_INFO[kind].meshColor);
+  }
+  material.emissive.setHex(selected ? SELECTED_EMISSIVE : 0x000000);
+  material.emissiveIntensity = selected ? SELECTED_EMISSIVE_INTENSITY : 0;
+}
 
 /** The parts of the Visualizer that `disposeModel` needs. */
 export type ModelHost = Pick<

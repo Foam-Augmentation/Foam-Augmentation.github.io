@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
+import { GUI } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import initGUI, { InitGUIResult } from './gui/initGUI';
 import initRenderer, { resizeRenderer } from './renderer/initRenderer';
@@ -8,15 +8,17 @@ import initScene from './renderer/initScene';
 import initTransformControls from './interactions/initTransformControls';
 import { initLassoSelect, LassoState } from './interactions/initLassoSelect';
 import { regenerateSelectionToolpath, updateSelection } from './interactions/updateSelection';
-import { FoamModel, EverydayModel } from './types/modelTypes';
+import { FoamModel, EverydayModel, ObjectKind } from './types/modelTypes';
 import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
 import { ViewCube, ViewName } from './gui/ViewCube';
 import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
+import { initObjectList, renderObjectList } from './gui/objectList';
+import { applyModelAppearance } from './gui/modelActions';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
 
-/** The two jobs the app does. Each one ends in its own action (see `Visualizer.applyJob`). */
-export type Job = 'augment' | 'foam';
+/** Colour of the box drawn around the selected object (the accent colour in style.css). */
+const SELECTION_OUTLINE_COLOR = 0x5b9cff;
 
 /** How long to wait after the last parameter edit before regenerating toolpaths (ms). */
 const TOOLPATH_REFRESH_DELAY_MS = 300;
@@ -74,13 +76,6 @@ export default class Visualizer {
      * the selected model (as foam or sensing area, see `current_selection_type`).
      */
     public selectionArmed: boolean = false;
-
-    /**
-     * What the user is doing: augmenting an object (select an area, then save its G-code) or
-     * printing whole models as foam (Slice Plate). Edited by the "Job" control in the panel;
-     * call `applyJob` after changing it.
-     */
-    public job: Job = 'augment';
 
     /**
      * Model parameters from a preset that was imported while no everyday model was loaded.
@@ -149,12 +144,8 @@ export default class Visualizer {
     /** GUI folder for everyday model list */
     public everydayModelListFolder: GUI;
 
-    public saveFolder: GUI;
-    /** GUI folder holding the "Slice Plate" action. */
-    public treeSlicerFolder: GUI;
-    /** The "Save Toolpath G-Code" and "Slice Plate" buttons, so they can be enabled and disabled. */
-    private saveButton: Controller;
-    private sliceButton: Controller;
+    /** Box drawn around the selected object in the 3D view. */
+    private selectionOutline: THREE.BoxHelper | null = null;
 
     /** Models whose toolpath preview is waiting to be regenerated after a parameter edit. */
     private staleToolpathModels = new Set<EverydayModel>();
@@ -279,12 +270,6 @@ export default class Visualizer {
         this.gui = guiResult.gui;
         this.foamModelListFolder = guiResult.foamModelListFolder;
         this.everydayModelListFolder = guiResult.everydayModelListFolder;
-        //save folder for the gcode
-        this.saveFolder = guiResult.saveFolder;
-        this.treeSlicerFolder = guiResult.treeSlicerFolder;
-        this.saveButton = guiResult.saveButton;
-        this.sliceButton = guiResult.sliceButton;
-
         // "Fit View" button under the view cube.
         const fitButton = document.createElement('button');
         fitButton.type = 'button';
@@ -295,40 +280,57 @@ export default class Visualizer {
         document.body.appendChild(fitButton);
 
         initEmptyState(this);
-        this.applyJob();
-    }
-
-    // ----- job and action state -----
-
-    /**
-     * Shows the sections that belong to the current job and hides the other job's: augmenting
-     * ends in "Save G-Code", printing a foam model ends in "Foam Slicing".
-     */
-    public applyJob(): void {
-        const augmenting = this.job === 'augment';
-        if (!augmenting) {
-            // Area selection only exists when augmenting.
-            this.clearSelection();
-        }
-        this.saveFolder.show(augmenting);
-        this.treeSlicerFolder.show(!augmenting);
-        this.gui.domElement.classList.toggle('job-foam', !augmenting);
+        initObjectList(this);
         this.updateActionStates();
     }
 
+    // ----- object list and action state -----
+
     /**
-     * Enables the action buttons only while they can do something, and shows the "getting
-     * started" card while no model is loaded. Call after models or toolpaths change.
+     * Brings everything that depends on which objects exist, what kind they are and what has
+     * been generated for them up to date: the object list and its export buttons, and the
+     * "getting started" card. Call after models, their kinds or their toolpaths change.
      */
     public updateActionStates(): void {
         // Called from model-list refreshes that can run before the constructor has finished.
-        if (!this.saveButton || !this.sliceButton) return;
+        if (!this.gui) return;
 
-        const hasModels = this.everydayModelList.length > 0;
-        const hasToolpath = this.everydayModelList.some(model => (model.toolpathSamplePoints?.length ?? 0) > 0);
-        this.sliceButton.enable(hasModels);
-        this.saveButton.enable(hasToolpath);
-        setEmptyStateVisible(!hasModels && this.foamModelList.length === 0);
+        renderObjectList(this);
+        setEmptyStateVisible(this.everydayModelList.length === 0 && this.foamModelList.length === 0);
+    }
+
+    /**
+     * Changes what an object is (something to augment, a foam print or a regular print).
+     *
+     * Only an augmentation has selected areas, so leaving that kind disarms area selection and
+     * hides the object's foam highlight and toolpath preview; they come back if the object is
+     * made an augmentation again.
+     *
+     * @param model - The object to change.
+     * @param kind - Its new kind.
+     */
+    public setModelKind(model: EverydayModel, kind: ObjectKind): void {
+        model.kind = kind;
+        const augmenting = kind === 'augment';
+
+        if (!augmenting && this._selectedModel === model && this.selectionArmed) {
+            this.selectionArmed = false;
+            this.updateModeHints();
+        }
+        const augmentOnlyObjects = [
+            model.highlightFoamMesh, model.highlightSenseMesh,
+            model.pointsMesh_foam, model.pointsMesh_sense,
+            model.toolpathVisualizationObject,
+            ...(model.sensingIntersectModelList ?? []),
+        ];
+        augmentOnlyObjects.forEach(object => { if (object) object.visible = augmenting; });
+
+        // The settings shown for the object depend on its kind (see style.css).
+        const classes = model.guiItem?.domElement.classList;
+        (['augment', 'foam', 'regular'] as ObjectKind[]).forEach(k => classes?.toggle(`kind-${k}`, k === kind));
+
+        applyModelAppearance(model, this._selectedModel === model);
+        this.updateActionStates();
     }
 
     // ----- camera framing -----
@@ -394,17 +396,17 @@ export default class Visualizer {
      * Asks for the toolpath preview to be regenerated because something it depends on changed.
      * Requests are collected for a moment, so a burst of edits regenerates once.
      *
-     * Only augmentation toolpaths are previewed live; a model without a selected foam area has
-     * nothing to regenerate.
+     * Only augmentation toolpaths are previewed live; an object of another kind, or one without
+     * a selected foam area, has nothing to regenerate.
      *
      * @param model - The model that changed. Omit when a global setting changed, to refresh
      *                every model that has a selected area.
      */
     public scheduleToolpathRefresh(model?: EverydayModel): void {
-        if (this.job !== 'augment') return;
-
         const candidates = model ? [model] : this.everydayModelList;
-        candidates.filter(m => m.selectedRegularFoamMesh).forEach(m => this.staleToolpathModels.add(m));
+        candidates
+            .filter(m => m.kind === 'augment' && m.selectedRegularFoamMesh)
+            .forEach(m => this.staleToolpathModels.add(m));
         if (this.staleToolpathModels.size === 0) return;
 
         if (this.toolpathRefreshTimer !== null) clearTimeout(this.toolpathRefreshTimer);
@@ -412,7 +414,7 @@ export default class Visualizer {
             this.toolpathRefreshTimer = null;
             // A model can have been deleted, or lost its selection, while the request waited.
             const models = [...this.staleToolpathModels].filter(
-                m => this.everydayModelList.includes(m) && m.selectedRegularFoamMesh
+                m => this.everydayModelList.includes(m) && m.kind === 'augment' && m.selectedRegularFoamMesh
             );
             this.staleToolpathModels.clear();
             if (models.length === 0) return;
@@ -455,20 +457,51 @@ export default class Visualizer {
     }
 
     /**
-     * Makes a model the selected one (or clears the selection with null) and updates the
-     * panel highlight. Selecting a different model disarms any armed area selection, because
-     * that selection belongs to the previous model.
+     * Makes a model the selected one (or clears the selection with null). The selected object
+     * glows in the 3D view, is marked in the object list, and is the one whose settings the
+     * panel shows. Selecting a different model disarms any armed area selection, because that
+     * selection belongs to the previous model.
      *
      * @param model - The model to select, or null for none.
      */
     public selectModel(model: EverydayModel | FoamModel | null): void {
         if (model === this._selectedModel) return;
 
-        this._selectedModel?.guiItem?.domElement.classList.remove('selectedModel');
+        const previous = this._selectedModel;
+        previous?.guiItem?.domElement.classList.remove('selectedModel');
+        if (previous) applyModelAppearance(previous, false);
+
         this._selectedModel = model;
         this.selectionArmed = false;
-        model?.guiItem?.domElement.classList.add('selectedModel');
+        if (model) {
+            model.guiItem?.domElement.classList.add('selectedModel');
+            applyModelAppearance(model, true);
+            // The panel shows this object's settings only, so make sure they are open.
+            (model.guiItem as GUI | undefined)?.open?.();
+            this.everydayModelListFolder?.open();
+        }
+        this.updateSelectionOutline();
+        // The panel shows a hint instead of settings while nothing is selected (see style.css).
+        this.gui?.domElement.classList.toggle('has-selection', model !== null);
         this.updateModeHints();
+        this.updateActionStates();
+    }
+
+    /**
+     * Shows the outline box around the selected object, or hides it when nothing is selected.
+     */
+    private updateSelectionOutline(): void {
+        const model = this._selectedModel;
+        if (!model) {
+            if (this.selectionOutline) this.selectionOutline.visible = false;
+            return;
+        }
+        if (!this.selectionOutline) {
+            this.selectionOutline = new THREE.BoxHelper(model.mesh, SELECTION_OUTLINE_COLOR);
+            this.scene.add(this.selectionOutline);
+        }
+        this.selectionOutline.setFromObject(model.mesh);
+        this.selectionOutline.visible = true;
     }
 
     /**
@@ -480,6 +513,7 @@ export default class Visualizer {
      * @param kind - Whether the drawn area becomes a foam area or a sensing area.
      */
     public armSelection(model: EverydayModel, kind: 'foam' | 'sense'): void {
+        if (model.kind !== 'augment') return;
         this.transformControls.detach();
         this.selectModel(model);
         this.current_selection_type = kind;
@@ -650,6 +684,11 @@ export default class Visualizer {
         // Update the lasso shape scale based on the camera's field of view.
         const yScale = Math.tan(THREE.MathUtils.DEG2RAD * this.camera.fov / 2) * this.lassoState.selectionShape.position.z;
         this.lassoState.selectionShape.scale.set(-yScale * this.camera.aspect, -yScale, 1);
+        // Keep the selection box on the selected object while it is moved, rotated or scaled.
+        // (It is fitted to the mesh's bounding box, so this is cheap.)
+        if (this.selectionOutline?.visible) {
+            this.selectionOutline.update();
+        }
         // update the orbit controls
         this.orbitControls.update();
 

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import Visualizer from '../Visualizer';
 import { refreshModelGUIList } from '../gui/refreshModelGUIList';
-import { FoamModel, EverydayModel } from '../types/modelTypes';
+import { FoamModel, EverydayModel, ObjectKind } from '../types/modelTypes';
+import { applyModelAppearance, DEFAULT_REGULAR_SETTINGS } from '../gui/modelActions';
 import { MeshBVH } from 'three-mesh-bvh';
 import { notify } from '../gui/notify';
 
@@ -120,9 +121,10 @@ function readStlFile(file: File, onGeometry: (geometry: THREE.BufferGeometry, fi
  *
  * @param visualizer - An instance of Visualizer (from Visualizer.ts) 
  * @param type - The model type to import; must be either 'foam' or 'everyday'.
+ * @param kind - For an everyday model: what the object is (see ObjectKind).
  */
-export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday'): void {
-    pickStlFile((geometry, file) => addModelFromGeometry(visualizer, geometry, file.name, type));
+export function importSTLModel(visualizer: Visualizer, type: 'foam' | 'everyday', kind: ObjectKind = 'augment'): void {
+    pickStlFile((geometry, file) => addModelFromGeometry(visualizer, geometry, file.name, type, kind));
 }
 
 /**
@@ -219,12 +221,14 @@ export function loadExampleModel(visualizer: Visualizer): void {
  * @param geometry - The model's geometry, with its bounding box computed.
  * @param name - The model's name (normally the file name).
  * @param type - Which list the model goes into.
+ * @param kind - For an everyday model: what the object is (see ObjectKind).
  */
 export function addModelFromGeometry(
     visualizer: Visualizer,
     geometry: THREE.BufferGeometry,
     name: string,
-    type: 'foam' | 'everyday'
+    type: 'foam' | 'everyday',
+    kind: ObjectKind = 'augment'
 ): void {
     {
         // Use the bounding box to determine the center.
@@ -240,6 +244,11 @@ export function addModelFromGeometry(
 
         // Translate geometry so its center is at the origin.
         geometry.translate(-center.x, -center.y, -center.z);
+
+        // Shade from the triangles themselves. STL files often carry missing or wrong normals,
+        // which would leave the model black; for separate triangles this gives each face its
+        // true normal.
+        geometry.computeVertexNormals();
 
         // Build the bounds tree used for raycasting before the model is registered anywhere,
         // so a failure here doesn't leave a half-imported model behind.
@@ -280,6 +289,8 @@ export function addModelFromGeometry(
         } else {
             const everydayModelObj: EverydayModel = {
                 name,
+                kind,
+                regularConfig: { ...DEFAULT_REGULAR_SETTINGS },
                 mesh,
                 geometry,
                 transformType: 'move',
@@ -357,6 +368,7 @@ export function addModelFromGeometry(
             };
             visualizer.everydayModelList.push(everydayModelObj);
             visualizer.uuid_to_modelObj_Map.set(mesh.uuid, everydayModelObj);
+            applyModelAppearance(everydayModelObj, false);
         }
 
         // Add the mesh to the scene.
@@ -369,8 +381,11 @@ export function addModelFromGeometry(
             refreshModelGUIList(visualizer, 'everyday');
         }
 
-        // Bring every model into view, the new one included.
+        // Bring every model into view, the new one included, and show the new one's settings.
         visualizer.fitView();
+        if (type === 'everyday') {
+            visualizer.selectModel(visualizer.everydayModelList[visualizer.everydayModelList.length - 1]);
+        }
     }
 }
 

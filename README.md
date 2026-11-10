@@ -2,13 +2,22 @@
 
 # How to use
 1. **Import the Model**
-First choose the `Job` at the top of the panel: `Augment an Object` (print foam onto part of an existing object) or `Print a Foam Model` (print the whole model as foam). Then click `Import STL Model` and select an `stl` file to import, or drop the file on the window. `Load Example` on the start card adds a small built-in model to try the app with. The app should load the model into the center of the print bed automatically. You can move it around and scale/rotate it however you'd like in the `Transform` folder of the model.
+The window has three parts: the settings panel on the left, the 3D view in the middle and the `Objects` list on the right.
+
+Press `+ Add` in the `Objects` list and pick what the model is:
+- `Augmentation`: an existing object placed on the bed. It is not printed; foam is printed onto the area you select on it.
+- `Foam Print`: the whole model is printed as foam.
+- `Regular Print`: the model is printed as an ordinary solid plastic part.
+
+Then select an `stl` file. You can also drop STL files on the window (they come in as `Augmentation`), or press `Load Example` on the start card to add a small built-in model. The app loads the model into the center of the print bed.
+
+Every object shows in the `Objects` list with its type. Click an object there (or in the 3D view) to select it: it gets an outline in the 3D view, and the left panel shows that object's settings under `Selected Object`. The `Type` control at the top of its settings changes what the object is, and you can move, rotate and scale it in its `Transform` folder.
 <div align="center" style="margin: 20px;">
     <img src="src/images/select-model.png" width="300">
 </div>
 
 2. **Change the Print Parameters**
-- Either import a preset by pressing `Import Preset` under the `Presets` folder or change the various parameters under the imported model's folder to get your desired results. You can see descriptions of each of the parameters below under the **Print Parameters** section.
+- Either import a preset by pressing `Import Preset` under the `Presets` folder or select the object and change the parameters shown for it in the left panel to get your desired results. Only the settings that apply to the object's type are shown. You can see descriptions of each of the parameters below under the **Print Parameters** section.
 - If you don't want to have to set all the parameters again in the future, press `Export Preset` under the `Presets` folder so you can import them easily in the future.
 
 <div align="center", style="margin: 20px;">
@@ -26,13 +35,13 @@ First choose the `Job` at the top of the panel: `Augment an Object` (print foam 
 </div>
 
 3. **Generate the Toolpath**
-- For augmentation, press `Select Foam Area` in the `Area Selection` folder of the model you want to augment. The camera moves to the top view of the model and a hint appears on the canvas. Draw with the left mouse button down to use lasso or rectangular selection to select part of the mesh (right-drag rotates the view while selecting; the hint's `Back to Top View` button returns to the top view). This may take a second, but after you wait you should see a visualization show up. If you change a parameter afterwards, the visualization is regenerated. Press `Esc` to stop selecting.
+- For augmentation, select an `Augmentation` object and press `Select Foam Area` in its `Area Selection` folder. The camera moves to the top view of the model and a hint appears on the canvas. Draw with the left mouse button down to use lasso or rectangular selection to select part of the mesh (right-drag rotates the view while selecting; the hint's `Back to Top View` button returns to the top view). This may take a second, but after you wait you should see a visualization show up. If you change a parameter afterwards, the visualization is regenerated. Press `Esc` to stop selecting.
 <div align="center", style="margin: 20px;">
     <img src="src/images/lasso-select.png" width="300">
     <img src="src/images/augmentation.png" width="307">
 </div>
 
-- For foam slicing, set `Job` to `Print a Foam Model` and press `Slice Plate` under the `Foam Slicing` folder. With this, you should be prompted to save the G-Code and see a visualization show up after it's done slicing.
+- For `Foam Print` and `Regular Print` objects, press `Slice & Export Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. You should be prompted to save the G-Code and see a visualization show up after it's done slicing.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/foam-slicing.png" width="300" style="margin-bottom: 20px;"><br>
@@ -40,7 +49,7 @@ First choose the `Job` at the top of the panel: `Augment an Object` (print foam 
 </div>
 
 4. **Save the G-Code**
-- When augmenting, hit the `Save Toolpath G-Code` button under the `Save G-Code` folder (enabled once an area is selected) to download the gcode file for the foam printing toolpath. The G-Code should have already automatically downloaded if you did foam slicing rather than augmentation.
+- When augmenting, hit the `Export Augmentation G-Code` button at the bottom of the `Objects` list (enabled once an area is selected) to download the gcode file for the foam printing toolpath. Foam and regular prints are downloaded by `Slice & Export Prints`.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/saving.png" width="300">

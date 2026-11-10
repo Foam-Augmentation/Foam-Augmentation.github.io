@@ -204,7 +204,28 @@ export const INITIAL_SPECS = {
 /** `EverydayModel.initialOffset`. */
 export const INITIAL_OFFSET_SPEC = num('Outward Offset (mm)', 0, 50, 0.01, 'How far the initial layers are grown outwards, for example to build a scaffold around the object when augmenting.', false, [0, 10]);
 
+/** `EverydayModel.kind`: what an object on the plate is. */
+export const KIND_SPEC: EnumSpec = {
+  type: 'enum',
+  label: 'Type',
+  tip: 'Augmentation: an existing object on the bed; foam is printed onto the area you select on it. ' +
+    'Foam Print: the whole model is printed as foam. Regular Print: the model is printed as an ordinary solid part.',
+  options: ['augment', 'foam', 'regular'],
+  optionLabels: { augment: 'Augmentation', foam: 'Foam Print', regular: 'Regular Print' },
+};
+
+/** Parameters of a regular print (`EverydayModel.regularConfig`). */
+export const REGULAR_SPECS = {
+  layerHeight: num('Layer Height (mm)', 0.05, 1, 0.01, 'Thickness of each printed layer.', false, [0.1, 0.4]),
+  perimeters: num('Wall Loops', 0, 10, 1, 'How many loops are printed around the outline of every layer.', true, [0, 6]),
+  infillDensity: num('Infill Density (%)', 0, 100, 1, 'How much of the inside is filled. 0 leaves it hollow, 100 makes it solid.', true),
+  topBottomLayers: num('Top / Bottom Layers', 0, 20, 1, 'How many solid layers close every top and bottom surface.', true, [0, 10]),
+  extruder: num('Extruder', 0, 9, 1, 'Which extruder prints this part (0 is the first one). Its temperature and nozzle come from Printer Settings › Extruders.', true, [0, 4]),
+  printSpeed: num('Print Speed (mm/min)', 60, 12000, 10, 'Speed of the print head while extruding.', false, [300, 6000]),
+} as const;
+
 export type SettingKey = keyof typeof SETTING_SPECS;
+export type RegularKey = keyof typeof REGULAR_SPECS;
 export type ExtruderKey = keyof typeof EXTRUDER_SPECS;
 export type ModelKey = keyof typeof MODEL_SPECS;
 export type InitialKey = keyof typeof INITIAL_SPECS;

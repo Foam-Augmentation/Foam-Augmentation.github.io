@@ -122,9 +122,39 @@ export interface PointCloudPoint {
 }
 
 /**
- * EverydayModel: used for everyday objects. Extends BasicModel.
+ * What an object on the plate is, which decides how (and whether) it is printed:
+ * - `augment`: an existing object placed on the bed. It is not printed; foam is printed onto
+ *   the area selected on it.
+ * - `foam`: a model printed entirely as foam.
+ * - `regular`: a model printed as an ordinary solid plastic part.
+ */
+export type ObjectKind = 'augment' | 'foam' | 'regular';
+
+/** Settings of a model printed as an ordinary solid part (`kind === 'regular'`). */
+export interface RegularPrintSettings {
+    /** Layer height (mm). */
+    layerHeight: number;
+    /** Number of wall loops around every layer. */
+    perimeters: number;
+    /** Sparse infill density, 0 to 100 (%). */
+    infillDensity: number;
+    /** Number of solid layers under every top surface and over every bottom surface. */
+    topBottomLayers: number;
+    /** Index of the extruder that prints the part. */
+    extruder: number;
+    /** Speed of extruding moves (mm/min). */
+    printSpeed: number;
+}
+
+/**
+ * EverydayModel: an object on the plate. Extends BasicModel.
  */
 export interface EverydayModel extends BasicModel {
+    /** What the object is: something to augment, a foam print or a regular print. */
+    kind: ObjectKind;
+    /** Print settings used while `kind` is `regular`. */
+    regularConfig: RegularPrintSettings;
+
     /** Mesh highlighting foam areas, for visualization. */
     highlightFoamMesh?: THREE.Mesh;
     /** Mesh highlighting sense areas, for visualization. */

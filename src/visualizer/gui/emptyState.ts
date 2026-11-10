@@ -30,7 +30,7 @@ export function initEmptyState(visualizer: Visualizer): void {
   if (typeof document === 'undefined') return;
 
   document.getElementById('emptyStateImport')
-    ?.addEventListener('click', () => importSTLModel(visualizer, 'everyday'));
+    ?.addEventListener('click', () => importSTLModel(visualizer, 'everyday', 'augment'));
   document.getElementById('emptyStateExample')
     ?.addEventListener('click', () => loadExampleModel(visualizer));
 

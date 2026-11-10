@@ -1292,7 +1292,7 @@ function makeGradientMatrix(
  * @param {THREE.Mesh} mesh The mesh to copy and apply transforms to.
  * @returns {THREE.Mesh} The copied and transformed mesh.
  */
-function getTransformedMesh(
+export function getTransformedMesh(
   mesh: THREE.Mesh,
 ): THREE.Mesh {
     const position = mesh.position.clone();
@@ -1309,12 +1309,23 @@ function getTransformedMesh(
 }
 
 
+/** Options for {@link generateFoamToolpath}. */
+export interface FoamToolpathOptions {
+    /**
+     * Whether the toolpath starts with a purge line. Left out, it follows the printer's own
+     * `purgeLine` setting. Pass false when another toolpath in the same print already primes
+     * the nozzle.
+     */
+    purgeLine?: boolean;
+}
+
 /**
  * Slices a model for foam printing, using travel slicer outer reductions to reduce travel movements
  * and uses either rectilinear or fermat spiral infill.
  *
  * @param {Visualizer} visualizer The Visualizer instance
  * @param {EverydayModel[]} modelObjs A list of model objects to slice.
+ * @param {FoamToolpathOptions} options See {@link FoamToolpathOptions}.
  * @returns {PathPoint[]} The toolpath for the whole plate. Empty if there was nothing to slice.
  * @throws {Error} If a model's parameters cannot be sliced (e.g. a layer thickness of 0) or its
  *                 mesh is not watertight.
@@ -1322,6 +1333,7 @@ function getTransformedMesh(
 export function generateFoamToolpath(
     visualizer: Visualizer,
     modelObjs: EverydayModel[],
+    options: FoamToolpathOptions = {},
 ): PathPoint[] {
     if (!modelObjs.length) {
         return [];
@@ -1427,7 +1439,7 @@ export function generateFoamToolpath(
     }
 
     const toolpath: PathPoint[] = [];
-    if (printer.purgeLine) {
+    if (options.purgeLine ?? printer.purgeLine) {
         pushAll(toolpath, makePurgeLine(printer));
     }
     pushAll(toolpath, boundaryPath);
@@ -1510,7 +1522,7 @@ function makeBoundaryPath(
  * @returns {PathPoint[]} The purge line's points in print order.
  * @throws {Error} If the bed is too small to fit the purge line inside its margins.
  */
-function makePurgeLine(printer: Printer): PathPoint[] {
+export function makePurgeLine(printer: Printer): PathPoint[] {
     const margin = printer.bedMargin;
     const farX = printer.machine_depth - margin;
     const farY = margin + PURGE_LINE_SEPARATION * (PURGE_LINE_COUNT - 1) + 0.001;
@@ -1547,7 +1559,7 @@ function makePurgeLine(printer: Printer): PathPoint[] {
  * @param printColors The colors for print extrusions, indexed by extruder.
  * @param travelColor The color the visualization should be for travel movements.
  */
-function visualizeToolpath(
+export function visualizeToolpath(
     toolpath: PathPoint[],
     visualizationGroup: THREE.Group,
     printColors: number[],

@@ -12,6 +12,30 @@
         <canvas></canvas>
     </div>
 
+    <!-- Objects panel: every object on the plate, what it is, and the export actions
+         (see gui/objectList.ts). -->
+    <aside id="objectPanel" aria-label="Objects">
+        <header class="object-panel-header">
+            <h2>Objects</h2>
+            <button type="button" id="addObjectButton" aria-haspopup="true" aria-expanded="false">+ Add</button>
+            <div id="addObjectMenu" hidden></div>
+        </header>
+        <ul id="objectList"></ul>
+        <p id="objectListEmpty">No objects yet. Use <b>+ Add</b> or drop an STL file on the window.</p>
+        <footer class="object-panel-footer">
+            <button type="button" id="exportAugmentButton" class="export-button" disabled
+                title="Download one G-code file with the foam toolpath of every Augmentation object that has a selected area.">
+                <span class="export-label">Export Augmentation G-Code</span>
+                <span class="export-note"></span>
+            </button>
+            <button type="button" id="exportPrintButton" class="export-button" disabled
+                title="Slice every Foam Print and Regular Print object on the plate, show the toolpath and download one G-code file. Large models can take a while.">
+                <span class="export-label">Slice &amp; Export Prints</span>
+                <span class="export-note"></span>
+            </button>
+        </footer>
+    </aside>
+
     <!-- Getting-started card, shown while no model is loaded (see gui/emptyState.ts). -->
     <div id="emptyState" style="display: none;">
         <h2>Start with a model</h2>
@@ -21,10 +45,11 @@
             <button type="button" id="emptyStateExample">Load Example</button>
         </div>
         <ol>
-            <li>Choose the job at the top of the panel: augment an object, or print a model as foam.</li>
-            <li>Set the model's parameters in its folder.</li>
-            <li>Augmenting: press <b>Select Foam Area</b>, drag over the model, then <b>Save Toolpath G-Code</b>.
-                Printing as foam: press <b>Slice Plate</b>.</li>
+            <li>Every object appears in the <b>Objects</b> list on the right, with its type: Augmentation,
+                Foam Print or Regular Print.</li>
+            <li>Click an object to select it. Its settings, including its type, show in the panel on the left.</li>
+            <li>Augmentation: press <b>Select Foam Area</b> and drag over the model. Then export the G-code
+                from the bottom of the Objects list.</li>
         </ol>
     </div>
 

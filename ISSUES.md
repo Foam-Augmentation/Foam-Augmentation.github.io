@@ -23,6 +23,7 @@ Nothing here was tested on a physical printer. Visual findings come from DOM mea
 | Usability and aesthetics (U) | 0 | 4 | 8 | 4 | 16 |
 | Structure (T) | 0 | 0 | 3 | 3 | 6 |
 | Product design (D), added in the second pass | 0 | 6 | 17 | 5 | 28 |
+| Objects list and regular prints (R) | 0 | 2 | 3 | 2 | 7 |
 
 ---
 
@@ -205,6 +206,7 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [x] **D1 · P1 · verified — two different jobs share one panel with nothing separating them.** "Augment an object" ends in **Save Toolpath G-Code**; "print a model as foam" ends in **Slice Plate**. The two buttons sit one above the other, each in its own one-button folder, and neither says it belongs to a different job. Slice Plate slices the *everyday* models, while the "Models for Foam Slicing" list feeds nothing (N7).
   **Fixed:** A **Job** control at the top of the panel (Augment an Object / Print a Foam Model) shows only that job's action: Save G-Code or Foam Slicing. The foam job also hides each model's Area Selection folder; the other per-model folders stay because slicing reads some of them. The dead "Models for Foam Slicing" list is hidden, not deleted. The model list is now titled "Models" and its button "Import STL Model".
   Fix: a mode switch at the top of the panel (Augment an Object / Print a Foam Model) that shows only that job's sections. Remove the foam model list or make Slice Plate use it.
+  **Superseded:** the Job control was replaced by a type on each object (see "Objects list and regular prints").
 - [x] **D2 · P1 · verified — the empty state gives no direction.** A first-time user sees bare axes and four buttons; two of them (Slice Plate, Save Toolpath G-Code) only produce a warning. Import is by file dialog only, one file at a time.
   **Fixed:** A getting-started card shows while no model is loaded (Import STL Model, Load Example, three steps). STL files can be dropped on the window. Load Example adds a built-in 60 mm puck. Slice Plate and Save Toolpath G-Code are disabled until they can do something. The file drop was not exercised in the browser.
   Fix: an on-canvas card ("Drop an STL here, or Import") with a "Load Example" button; accept drag-and-drop; disable Slice and Save until they can do something (rest of U2).
@@ -304,6 +306,34 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 
 ---
 
+## Objects list and regular prints
+
+Added 2026-11-09 (after commit `260667e`). The single nested panel and the global Job switch were replaced, and a third kind of object was added.
+
+**What changed**
+
+- Every object has a **type**: Augmentation (an existing object; foam is printed onto a selected area), Foam Print (printed entirely as foam) or Regular Print (printed as an ordinary solid part). The type replaces the Job switch from D1.
+- An **Objects** list on the right shows every object with its type as a coloured badge and a status line. "+ Add" asks which type to import. The two export buttons sit under the list and say what they will include.
+- Clicking a row, or the object in the 3D view, **selects** it: it gets an outline box, and the left panel shows only that object's settings (only the ones for its type) under "Selected Object".
+- **Regular prints** are sliced by a new module, `src/visualizer/toolpath/regularSlicer.ts`: walls, rectilinear infill at ±45°, and solid layers wherever a region is within N layers of a top or bottom surface. All regular parts print together, layer by layer.
+- "Slice & Export Prints" writes one file: purge line, the regular prints, then the foam prints. Between the two the head rises 10 mm above everything printed and arrives over the foam print from above.
+
+**How it was checked:** `npm run typecheck`, `npm test` (218 tests, 46 of them for the regular slicer), a production build, and a dev-build run at 1280×800 with one object of each type (selection, per-type settings, export of a regular box plus a foam box, reading the downloaded G-code for NaN, speeds and the hand-off moves). Pointer and file input were scripted. **No regular-print G-code has been run on a printer.**
+
+**Open issues**
+
+- [ ] **R1 · P1 · unconfirmed — regular prints are untested on hardware and have no retraction.** The G-code pipeline has no retraction, so travels inside a layer cross gaps and holes at print height with the nozzle primed: expect stringing. There is no first-layer handling (same height, flow and speed as every layer), no skirt or brim, no supports, bridging or fan control.
+  Fix: test on a printer first; then add retraction with z-hop and a first-layer speed.
+- [ ] **R2 · P1 · read — no collision check on a mixed plate.** Foam prints follow the regular prints in the same file. The head arrives from above, but nothing checks that the print head (about 75 × 85 mm) clears a finished regular part while it prints foam next to it. The app warns about this after export.
+  Fix: check the print-head footprint against finished parts, or refuse plates where they are closer than the head.
+- [ ] **R3 · P2 · read — the object type and the regular print settings are not in presets.** Export and import carry the foam parameters only.
+- [ ] **R4 · P2 · read — augmentations export to a separate file.** A plate cannot print a regular part and then augment it in one run.
+- [ ] **R5 · P2 · read — regular slicer limits.** A model height that is not a multiple of the layer height is rounded up by up to one layer; slanted surfaces are offset by up to one layer; walls thinner than one line get nothing; a mesh that is not watertight is not detected; two regular parts on different extruders change tool every layer with no purge tower; one speed for every extrusion.
+- [ ] **R6 · P3 · read — a Foam Print still shows Augmentation Settings.** The foam slicer reads some of those values (layer counts, curved augmentation), so they were not hidden; which ones matter needs someone who knows the process.
+- [ ] **R7 · P3 · read — files dropped on the window always come in as Augmentation.** The type can be changed afterwards in the object's settings.
+
+---
+
 ## Found during the fix pass
 
 - [x] **N1 · P1 · verified — lasso BVH pruning lacked a perspective divide.** Turning the pruning on (A10) made every selection come back empty. Fixed in `updateSelection.ts`; caught by comparing against the original build in the browser.
@@ -352,3 +382,11 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - Editing a parameter regenerates the on-screen toolpath of models with a selected area. G-code output is unchanged: Save already regenerated from the current parameters.
 - Sliders cover a narrower range than the limits; values outside the slider can still be typed.
 - Slice Plate and Save Toolpath G-Code are disabled until there is a model / a selected area.
+
+**Objects list and regular prints**
+
+- The Job control is gone. Each object has a Type; "Export Augmentation G-Code" covers Augmentation objects and "Slice & Export Prints" covers Foam Print and Regular Print objects. Both buttons are under the Objects list on the right.
+- Slicing no longer includes every object: an Augmentation object is left out of "Slice & Export Prints", and only Augmentation objects are in the augmentation file.
+- Regular Print is new G-code that has never been printed (see R1). In a mixed file the foam part starts with a move from above instead of a travel across the bed from the origin; a foam-only file is unchanged.
+- `PathPoint` has an optional `speed` for regular segments; points without it print as before.
+- Imported models are shaded from their triangles, not from the normals in the STL file.

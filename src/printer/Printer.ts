@@ -713,7 +713,9 @@ M204 S1000
         );
       } else if (point.regularSegment && !this.testSweep) {
         body_gcode.push(
-          this.extrudeRegularSegment(lastTarget, currentPoint, extruder, 1, undefined, point.layerHeight)
+          // point.speed is undefined for every toolpath that does not set it, which keeps the
+          // extruder's travel speed as the default.
+          this.extrudeRegularSegment(lastTarget, currentPoint, extruder, 1, point.speed, point.layerHeight)
         );
       } else if (point.travel || this.testSweep) {
         body_gcode.push(
