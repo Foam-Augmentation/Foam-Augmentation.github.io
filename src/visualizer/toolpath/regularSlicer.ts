@@ -11,6 +11,7 @@ import {
     PolygonWithHoles,
 } from '../utils/TreeSlicer';
 import { TRAVEL_CLEARANCE } from './toolpathConstants';
+import type { InfillPattern, SupportMode, SupportStyle } from './regularPrintOptions';
 
 // ---------------------------------------------------------------------------------------------
 // Regular (solid plastic) slicer: perimeters, solid top/bottom layers and rectilinear infill.
@@ -66,9 +67,38 @@ export interface RegularPrintConfig {
     extruder: number;
     /** Head speed (mm/min) of extrusion moves. Travel moves use the extruder's travel speed. */
     printSpeed: number;
+
+    // The settings below are only used when the desktop app slices with PrusaSlicer (see
+    // prusaGcode.ts). The built-in slicer ignores them.
+
+    /** Thickness (mm) of the first layer. */
+    firstLayerHeight: number;
+    /** Head speed (mm/min) of every move on the first layer. Ignored while `useProfileSpeeds` is set. */
+    firstLayerSpeed: number;
+    /**
+     * Use the speeds of the user's PrusaSlicer profile (or PrusaSlicer's defaults) instead of
+     * `printSpeed` and `firstLayerSpeed`.
+     */
+    useProfileSpeeds: boolean;
+    /** Pattern of the sparse infill. */
+    infillPattern: InfillPattern;
+    /** Where supports are printed. */
+    supports: SupportMode;
+    /** What the supports look like. */
+    supportStyle: SupportStyle;
+    /**
+     * Surfaces flatter than this angle (degrees from the bed) get support. 0 lets PrusaSlicer
+     * decide from how far each layer overhangs the one below.
+     */
+    supportThreshold: number;
+    /** Width (mm) of the brim around the part's first layer. 0 prints none. */
+    brimWidth: number;
 }
 
-/** A sensible starting point for a regular print: 0.2 mm layers, 2 walls, 20 % infill, 4 solid layers. */
+/**
+ * A sensible starting point for a regular print: 0.2 mm layers, 2 walls, 20 % infill, 4 solid layers.
+ * The PrusaSlicer-only settings follow PrusaSlicer's own profile for the Prusa XL.
+ */
 export const DEFAULT_REGULAR_CONFIG: RegularPrintConfig = {
     layerHeight: 0.2,
     perimeters: 2,
@@ -76,6 +106,14 @@ export const DEFAULT_REGULAR_CONFIG: RegularPrintConfig = {
     topBottomLayers: 4,
     extruder: 0,
     printSpeed: 1800,
+    firstLayerHeight: 0.2,
+    firstLayerSpeed: 1500,
+    useProfileSpeeds: false,
+    infillPattern: 'grid',
+    supports: 'none',
+    supportStyle: 'snug',
+    supportThreshold: 45,
+    brimWidth: 0,
 };
 
 /** One model to print as a regular part. */

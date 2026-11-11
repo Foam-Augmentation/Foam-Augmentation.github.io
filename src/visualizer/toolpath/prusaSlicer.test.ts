@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import Printer from '../../printer/Printer';
 import { DEFAULT_REGULAR_CONFIG, type RegularPart } from './regularSlicer';
-import { sliceRegularParts, type PrusaSlicerBridge } from './prusaSlicer';
+import { isPrusaSlicerAvailable, sliceRegularParts, type PrusaSlicerBridge } from './prusaSlicer';
 
 function cube(x: number, config = DEFAULT_REGULAR_CONFIG): RegularPart {
     return {
@@ -66,5 +66,41 @@ describe('sliceRegularParts', () => {
     it('uses the built-in slicer quietly in a plain browser', async () => {
         const result = await sliceRegularParts(new Printer(), [cube(40)], undefined);
         expect(result).toMatchObject({ slicer: 'builtin', notes: [] });
+    });
+
+    it('sends the part\'s supports and brim to PrusaSlicer', async () => {
+        const bridge = fakeBridge(true);
+        await sliceRegularParts(new Printer(), [cube(40, { ...DEFAULT_REGULAR_CONFIG, supports: 'buildplate', brimWidth: 4 })], bridge);
+        const { ini } = bridge.slice.mock.calls[0][0];
+        expect(ini).toContain('support_material = 1');
+        expect(ini).toContain('support_material_buildplate_only = 1');
+        expect(ini).toContain('brim_width = 4');
+    });
+
+    it('checks the PrusaSlicer-only settings before running PrusaSlicer, and only then', async () => {
+        const bad = { ...DEFAULT_REGULAR_CONFIG, firstLayerHeight: 0.9 };
+        const bridge = fakeBridge(true);
+        await expect(sliceRegularParts(new Printer(), [cube(40, bad)], bridge)).rejects.toThrow(/first layer height/);
+        expect(bridge.slice).not.toHaveBeenCalled();
+
+        // The built-in slicer does not use them, so they cannot stop it.
+        const result = await sliceRegularParts(new Printer(), [cube(40, bad)], undefined);
+        expect(result.slicer).toBe('builtin');
+    });
+});
+
+describe('isPrusaSlicerAvailable', () => {
+    it('is false in a plain browser', async () => {
+        expect(await isPrusaSlicerAvailable(undefined)).toBe(false);
+    });
+
+    it('follows what the desktop app reports', async () => {
+        expect(await isPrusaSlicerAvailable(fakeBridge(true))).toBe(true);
+        expect(await isPrusaSlicerAvailable(fakeBridge(false))).toBe(false);
+    });
+
+    it('is false when the desktop app cannot be asked', async () => {
+        const bridge = { ...fakeBridge(true), status: async () => { throw new Error('no answer'); } };
+        expect(await isPrusaSlicerAvailable(bridge)).toBe(false);
     });
 });

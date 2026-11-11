@@ -143,6 +143,23 @@ These are in each everyday model's folder.
     - `Select Sensing Area`: Arms selection of a sensing area inside the foam area. It is printed with the Sensing Parameters.
     - `Add Sensing Box (20 mm)`: Adds a box on top of the model that you can drag across the surface; the triangles inside it become sensing area.
 
+# Regular Print Settings
+These are in the folder of each `Regular Print` object. Settings marked *(PrusaSlicer)* are only used when the desktop app slices with PrusaSlicer (see **Desktop App** below); elsewhere they are greyed out and the built-in slicer ignores them.
+- `Layer Height (mm)`: Thickness of each layer.
+- `First Layer Height (mm)` *(PrusaSlicer)*: Thickness of the first layer. A thicker first layer sticks better. It cannot be more than the nozzle diameter.
+- `Wall Loops`: How many loops are printed around the outline of every layer.
+- `Top / Bottom Layers`: How many solid layers close every top and bottom surface.
+- `Infill Density (%)`: How much of the inside is filled.
+- `Infill Pattern` *(PrusaSlicer)*: Pattern of the sparse infill (Grid, Gyroid, Cubic, Lightning, ...). PrusaSlicer cannot fill a solid part with most of them, so at 100 % the inside is filled with straight lines instead.
+- `Supports` *(PrusaSlicer)*: None, Build Plate Only (supports only stand on the bed, never on the part) or Everywhere.
+- `Support Style` *(PrusaSlicer)*: Grid, Snug or Organic (tree) supports. Only used while Supports is on.
+- `Overhang Threshold (°)` *(PrusaSlicer)*: Surfaces flatter than this angle get support; 0 lets PrusaSlicer decide. Only used while Supports is on.
+- `Brim Width (mm)` *(PrusaSlicer)*: Width of a flat ring around the part's first layer, to stop corners lifting. 0 prints none.
+- `Extruder`: Which extruder prints the part.
+- `Print Speed (mm/min)`: Speed of the print head while extruding.
+- `First Layer Speed (mm/min)` *(PrusaSlicer)*: Speed of every move on the first layer.
+- `Use Profile Speeds` *(PrusaSlicer)*: Use the speeds of your PrusaSlicer profile (or PrusaSlicer's defaults) instead of Print Speed and First Layer Speed.
+
 # Presets
 A preset is a plain text file with one `key value` pair per line. It stores every setting above, every extruder, and the parameters of one everyday model (the selected one, or the first one if none is selected). Files start with a `presetVersion` line; older files without it still import.
 
@@ -159,7 +176,7 @@ When a preset is imported, every value is checked first (type, range, allowed op
 The same app also runs as a desktop app (Electron), which can slice **Regular Print** objects with [PrusaSlicer](https://www.prusa3d.com/page/prusaslicer_424/) instead of the built-in slicer. That brings in PrusaSlicer's supports, bridging, retraction, cooling and Arachne walls.
 
 1. Install PrusaSlicer. The app looks for it in the usual install folder (on Windows, `C:\Program Files\Prusa3D\PrusaSlicer\prusa-slicer-console.exe`). If it is somewhere else, use **Slicer → Locate PrusaSlicer…** or set the `PRUSA_SLICER_PATH` environment variable.
-2. Optionally, export a config from PrusaSlicer (**File → Export → Export Config**) and choose it under **Slicer → Choose PrusaSlicer Profile…**. Everything it sets is used, except the settings the app controls: each object's own Regular Print settings (layer height, walls, infill, solid layers, speed), the machine size, nozzle and filament, and the start/end G-code, skirt and wipe tower (the app's own start/end G-code, purge line and purge tower are used instead).
+2. Optionally, export a config from PrusaSlicer (**File → Export → Export Config**) and choose it under **Slicer → Choose PrusaSlicer Profile…**. Everything it sets is used, except the settings the app controls: each object's own Regular Print Settings (layer and first-layer height, walls, infill density and pattern, solid layers, supports, brim and, unless `Use Profile Speeds` is checked, the print and first-layer speeds), the machine size, nozzle and filament, and the start/end G-code, skirt and wipe tower (the app's own start/end G-code, purge line and purge tower are used instead).
 3. Start the app:
 
 ```bash

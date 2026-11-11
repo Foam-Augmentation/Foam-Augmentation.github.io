@@ -3,7 +3,7 @@ import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type Printer from '../../printer/Printer';
 import type { PathPoint } from './pathTypes';
 import { generateRegularToolpath, validateRegularConfig, type RegularPart } from './regularSlicer';
-import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode } from './prusaGcode';
+import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode, validatePrusaOptions } from './prusaGcode';
 import { TRAVEL_CLEARANCE } from './toolpathConstants';
 
 /** What the desktop app tells the page about PrusaSlicer. */
@@ -53,6 +53,26 @@ export interface RegularSliceResult {
  */
 export function getPrusaSlicerBridge(): PrusaSlicerBridge | undefined {
     return typeof window !== 'undefined' ? window.prusaSlicer : undefined;
+}
+
+/**
+ * Whether regular prints are sliced with PrusaSlicer right now: the page runs in the desktop
+ * app and PrusaSlicer was found. The user can locate PrusaSlicer while the app runs, so ask
+ * again rather than keeping the answer.
+ *
+ * @param {PrusaSlicerBridge | undefined} bridge The desktop app's bridge, if there is one.
+ * @returns {Promise<boolean>} True if PrusaSlicer would be used; false in a plain browser, when
+ *                             PrusaSlicer is missing, or if the desktop app cannot be asked.
+ */
+export async function isPrusaSlicerAvailable(bridge: PrusaSlicerBridge | undefined = getPrusaSlicerBridge()): Promise<boolean> {
+    if (!bridge) {
+        return false;
+    }
+    try {
+        return (await bridge.status()).available;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -154,7 +174,11 @@ export async function sliceRegularParts(
     if (bridge) {
         const status = await bridge.status();
         if (status.available) {
-            parts.forEach((part, i) => validateRegularConfig(printer, part.config, part.name ?? `Part ${i + 1}`));
+            parts.forEach((part, i) => {
+                const name = part.name ?? `Part ${i + 1}`;
+                validateRegularConfig(printer, part.config, name);
+                validatePrusaOptions(printer, part.config, name);
+            });
             if (groupBySettings(parts).length > 1) {
                 notes.push('Regular parts with different settings are printed one group after another. Keep them well apart: nothing checks that the print head clears a finished group.');
             }

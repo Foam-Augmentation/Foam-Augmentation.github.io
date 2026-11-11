@@ -452,6 +452,17 @@ body {
     display: none;
 }
 
+/* why some Regular Print Settings are greyed out (no PrusaSlicer) */
+.regular-prusa-note {
+    margin: 4px 12px 6px 4px;
+    padding: 6px 10px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
 /* the Type control heads the object's settings */
 .lil-gui .controller.kind-control {
     margin-bottom: 8px;

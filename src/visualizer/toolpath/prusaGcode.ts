@@ -2,6 +2,14 @@ import * as THREE from 'three';
 import type Printer from '../../printer/Printer';
 import type { PathPoint } from './pathTypes';
 import type { RegularPrintConfig } from './regularSlicer';
+import {
+    INFILL_PATTERNS,
+    SOLID_FALLBACK_PATTERN,
+    SOLID_INFILL_PATTERNS,
+    SUPPORT_MODES,
+    SUPPORT_STYLES,
+    type SupportMode,
+} from './regularPrintOptions';
 
 // ---------------------------------------------------------------------------------------------
 // The parts of the PrusaSlicer integration that do not need Electron: the settings PrusaSlicer is
@@ -49,13 +57,75 @@ const INTEGRATION_SETTINGS: PrusaConfig = {
     gcode_label_objects: 'disabled',
 };
 
+/** The PrusaSlicer settings behind each choice of where supports go. */
+const SUPPORT_SETTINGS: Record<SupportMode, PrusaConfig> = {
+    none: { support_material: '0' },
+    // Automatic supports on: with plain STL parts there are no support enforcers, so supports
+    // that only follow enforcers would never print anything.
+    buildplate: { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '1' },
+    everywhere: { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '0' },
+};
+
+/** mm/min as the mm/s string PrusaSlicer takes. */
+function toPrusaSpeed(mmPerMin: number): string {
+    return (mmPerMin * MM_PER_MIN_TO_MM_PER_S).toFixed(2);
+}
+
 /**
- * The PrusaSlicer settings for one regular part: the integration settings, the printer's machine
- * and nozzle, and the part's own print settings. Everything else (supports, retraction, cooling,
- * seams, infill pattern, ...) is left to the user's PrusaSlicer profile, or PrusaSlicer's defaults.
+ * Checks the regular-print settings that only PrusaSlicer uses (the built-in slicer ignores
+ * them, see validateRegularConfig for the rest), so a bad value gets a clear message instead of
+ * a PrusaSlicer error.
  *
  * @param {Printer} printer The printer the part is printed on.
  * @param {RegularPrintConfig} config How to print the part.
+ * @param {string} name What to call the part in the message.
+ * @throws {Error} If a setting has a value PrusaSlicer cannot slice with.
+ */
+export function validatePrusaOptions(printer: Printer, config: RegularPrintConfig, name: string): void {
+    const fail = (problem: string): never => {
+        throw new Error(`Regular print settings of "${name}": ${problem}`);
+    };
+    const oneOf = (value: unknown, options: readonly string[]) => typeof value === 'string' && options.includes(value);
+
+    if (!oneOf(config.supports, SUPPORT_MODES)) {
+        fail(`"${config.supports}" is not a supports choice (${SUPPORT_MODES.join(', ')}).`);
+    }
+    if (!oneOf(config.supportStyle, SUPPORT_STYLES)) {
+        fail(`"${config.supportStyle}" is not a support style (${SUPPORT_STYLES.join(', ')}).`);
+    }
+    if (!oneOf(config.infillPattern, INFILL_PATTERNS)) {
+        fail(`"${config.infillPattern}" is not an infill pattern (${INFILL_PATTERNS.join(', ')}).`);
+    }
+    if (!Number.isInteger(config.supportThreshold) || config.supportThreshold < 0 || config.supportThreshold > 90) {
+        fail(`the overhang threshold must be a whole number of degrees from 0 to 90 (it is ${config.supportThreshold}).`);
+    }
+    if (!Number.isFinite(config.brimWidth) || config.brimWidth < 0) {
+        fail(`the brim width must be 0 or more (it is ${config.brimWidth}).`);
+    }
+    if (!Number.isFinite(config.firstLayerHeight) || config.firstLayerHeight <= 0) {
+        fail(`the first layer height must be greater than 0 (it is ${config.firstLayerHeight}).`);
+    }
+    // PrusaSlicer refuses a first layer taller than the nozzle is wide.
+    const nozzleDiameter = printer.extruders[config.extruder]?.nozzleDiameter;
+    if (nozzleDiameter !== undefined && config.firstLayerHeight > nozzleDiameter) {
+        fail(`the first layer height (${config.firstLayerHeight} mm) cannot be more than the nozzle diameter (${nozzleDiameter} mm).`);
+    }
+    if (typeof config.useProfileSpeeds !== 'boolean') {
+        fail('"Use Profile Speeds" must be on or off.');
+    }
+    if (!config.useProfileSpeeds && (!Number.isFinite(config.firstLayerSpeed) || config.firstLayerSpeed <= 0)) {
+        fail(`the first layer speed must be greater than 0 (it is ${config.firstLayerSpeed}).`);
+    }
+}
+
+/**
+ * The PrusaSlicer settings for one regular part: the integration settings, the printer's machine
+ * and nozzle, and the part's own print settings (layers, walls, infill, supports, brim and, unless
+ * the part uses the profile's speeds, its speeds). Everything else (retraction, cooling, seams,
+ * support details, ...) is left to the user's PrusaSlicer profile, or PrusaSlicer's defaults.
+ *
+ * @param {Printer} printer The printer the part is printed on.
+ * @param {RegularPrintConfig} config How to print the part. Check it with validatePrusaOptions first.
  * @returns {PrusaConfig} The settings to pass to PrusaSlicer.
  */
 export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): PrusaConfig {
@@ -65,7 +135,17 @@ export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): 
     }
     const width = printer.machine_depth;
     const depth = printer.machine_depth_y;
-    const printSpeed = (config.printSpeed * MM_PER_MIN_TO_MM_PER_S).toFixed(2);
+    const printSpeed = toPrusaSpeed(config.printSpeed);
+    const speeds: PrusaConfig = config.useProfileSpeeds ? {} : {
+        perimeter_speed: printSpeed,
+        infill_speed: printSpeed,
+        solid_infill_speed: printSpeed,
+        first_layer_speed: toPrusaSpeed(config.firstLayerSpeed),
+    };
+    const solid = config.infillDensity >= 100;
+    const fillPattern = solid && !SOLID_INFILL_PATTERNS.includes(config.infillPattern)
+        ? SOLID_FALLBACK_PATTERN
+        : config.infillPattern;
 
     return {
         ...INTEGRATION_SETTINGS,
@@ -81,14 +161,17 @@ export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): 
         travel_speed: (extruder.printHead_speed_when_free_move * MM_PER_MIN_TO_MM_PER_S).toFixed(2),
         // The part's own settings, as set in the object list.
         layer_height: String(config.layerHeight),
-        first_layer_height: String(config.layerHeight),
+        first_layer_height: String(config.firstLayerHeight),
         perimeters: String(config.perimeters),
         fill_density: `${config.infillDensity}%`,
+        fill_pattern: fillPattern,
         top_solid_layers: String(config.topBottomLayers),
         bottom_solid_layers: String(config.topBottomLayers),
-        perimeter_speed: printSpeed,
-        infill_speed: printSpeed,
-        solid_infill_speed: printSpeed,
+        ...SUPPORT_SETTINGS[config.supports],
+        support_material_style: config.supportStyle,
+        support_material_threshold: String(config.supportThreshold),
+        brim_width: String(config.brimWidth),
+        ...speeds,
     };
 }
 

@@ -8,8 +8,9 @@ import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo
 import { importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 import { AnyModel, disposeModel, syncAuxTransforms } from './modelActions';
 import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips, setTip } from './guiHelpers';
-import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
+import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, PRUSA_ONLY_REGULAR_KEYS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
 import { notify } from './notify';
+import { isPrusaSlicerAvailable } from '../toolpath/prusaSlicer';
 
 // Extend BufferGeometry to include boundsTree property
 declare module 'three' {
@@ -23,6 +24,15 @@ const DIFFERS_CLASS = 'differs-from-foam';
 
 /** Size of the box added by "Add Sensing Box", in mm. */
 const SENSING_BOX_SIZE = 20;
+
+/**
+ * Whether regular prints are sliced with PrusaSlicer, as last checked (see
+ * watchPrusaSlicerAvailability). While false, the PrusaSlicer-only regular settings are greyed out.
+ */
+let prusaSlicerAvailable = false;
+
+/** Per model: re-applies which of its regular-print controls are enabled. */
+const regularControlUpdaters = new WeakMap<EverydayModel, () => void>();
 
 /** Sensing parameter → the foam parameter it overrides. */
 const SENSE_TO_FOAM: [ModelKey, ModelKey][] = [
@@ -415,8 +425,57 @@ export function addRegularPrintFolder(
     );
     regularFolder.domElement.classList.add('regular-folder');
 
-    const keys: RegularKey[] = ['layerHeight', 'perimeters', 'infillDensity', 'topBottomLayers', 'extruder', 'printSpeed'];
-    keys.forEach(key => addParam(regularFolder, modelObj.regularConfig, key, REGULAR_SPECS[key]));
+    // Says why some rows are greyed out; shown only while PrusaSlicer is not available.
+    const note = document.createElement('div');
+    note.className = 'regular-prusa-note';
+    note.textContent = 'Greyed-out settings are only used when the desktop app slices with PrusaSlicer.';
+    regularFolder.$children.prepend(note);
+
+    const keys: RegularKey[] = [
+        'layerHeight', 'firstLayerHeight', 'perimeters', 'topBottomLayers', 'infillDensity', 'infillPattern',
+        'supports', 'supportStyle', 'supportThreshold', 'brimWidth',
+        'extruder', 'printSpeed', 'firstLayerSpeed', 'useProfileSpeeds',
+    ];
+    const controllers = new Map<RegularKey, Controller>();
+    keys.forEach(key => controllers.set(key, addParam(regularFolder, modelObj.regularConfig, key, REGULAR_SPECS[key])));
+
+    const updateEnabled = (): void => {
+        const config = modelObj.regularConfig;
+        const prusa = prusaSlicerAvailable;
+        PRUSA_ONLY_REGULAR_KEYS.forEach(key => controllers.get(key)?.enable(prusa));
+        // The details of supports that are off do nothing.
+        const supportsOn = config.supports !== 'none';
+        controllers.get('supportStyle')?.enable(prusa && supportsOn);
+        controllers.get('supportThreshold')?.enable(prusa && supportsOn);
+        // The part's own speeds do nothing while PrusaSlicer takes the profile's.
+        const profileSpeeds = prusa && config.useProfileSpeeds;
+        controllers.get('printSpeed')?.enable(!profileSpeeds);
+        controllers.get('firstLayerSpeed')?.enable(prusa && !profileSpeeds);
+        note.style.display = prusa ? 'none' : '';
+    };
+    controllers.get('supports')?.onChange(updateEnabled);
+    controllers.get('useProfileSpeeds')?.onChange(updateEnabled);
+    regularControlUpdaters.set(modelObj, updateEnabled);
+    updateEnabled();
+}
+
+/**
+ * Keeps the regular-print folders in step with whether PrusaSlicer is available: checks once
+ * now, and again whenever the window gets the focus back (PrusaSlicer can be located from the
+ * desktop app's Slicer menu, whose file dialog takes the focus). Call once.
+ *
+ * @param visualizer - The Visualizer instance.
+ */
+export function watchPrusaSlicerAvailability(visualizer: Visualizer): void {
+    if (typeof window === 'undefined') return;
+    const check = async (): Promise<void> => {
+        const available = await isPrusaSlicerAvailable();
+        if (available === prusaSlicerAvailable) return;
+        prusaSlicerAvailable = available;
+        visualizer.everydayModelList.forEach(model => regularControlUpdaters.get(model)?.());
+    };
+    void check();
+    window.addEventListener('focus', () => { void check(); });
 }
 
 /**

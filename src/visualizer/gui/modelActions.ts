@@ -9,19 +9,13 @@
 import * as THREE from 'three';
 import type Visualizer from '../Visualizer';
 import { EverydayModel, FoamModel, ObjectKind, RegularPrintSettings } from '../types/modelTypes';
+import { DEFAULT_REGULAR_CONFIG } from '../toolpath/regularSlicer';
 
 /** Either kind of model the app handles. */
 export type AnyModel = EverydayModel | FoamModel;
 
-/** Settings a model starts with when it is printed as a regular part. */
-export const DEFAULT_REGULAR_SETTINGS: RegularPrintSettings = {
-  layerHeight: 0.2,
-  perimeters: 2,
-  infillDensity: 20,
-  topBottomLayers: 4,
-  extruder: 0,
-  printSpeed: 1800,
-};
+/** Settings a model starts with when it is printed as a regular part. Copy it before changing it. */
+export const DEFAULT_REGULAR_SETTINGS: Readonly<RegularPrintSettings> = DEFAULT_REGULAR_CONFIG;
 
 /**
  * How each kind of object is shown: its name, a one-line description, the colour of its

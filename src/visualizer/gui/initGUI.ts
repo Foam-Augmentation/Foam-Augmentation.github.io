@@ -4,7 +4,7 @@ import Visualizer from '../Visualizer';
 import { importSTLModel } from '../loaders/modelLoader';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
-import { refreshModelControls } from './refreshModelGUIList';
+import { refreshModelControls, watchPrusaSlicerAvailability } from './refreshModelGUIList';
 import { addButton, addFolderWithTip, addParam, folderTitleElement, initTooltips, setTip } from './guiHelpers';
 import { SETTING_SPECS, SettingKey } from './paramSpecs';
 
@@ -193,6 +193,9 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
 
   // Turn on tooltips for every control in the panel, including ones added later.
   initTooltips(gui.domElement);
+
+  // Grey out the regular-print settings only PrusaSlicer uses while it is not available.
+  watchPrusaSlicerAvailability(visualizer);
 
   // Open the GUI.
   gui.open();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Printer from '../../printer/Printer';
-import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode } from './prusaGcode';
+import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode, validatePrusaOptions } from './prusaGcode';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 
 // Shaped like PrusaSlicer's own output with relative E: a layer change, a retract/unretract around
@@ -104,6 +104,86 @@ describe('buildPrusaConfig', () => {
 
     it('rejects an extruder that does not exist', () => {
         expect(() => buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, extruder: 9 })).toThrow(/Extruder 9/);
+    });
+
+    it('maps the first layer, infill pattern, supports and brim', () => {
+        const config = buildPrusaConfig(new Printer(), {
+            ...DEFAULT_REGULAR_CONFIG,
+            layerHeight: 0.1,
+            firstLayerHeight: 0.3,
+            firstLayerSpeed: 1200,
+            infillPattern: 'gyroid',
+            supports: 'everywhere',
+            supportStyle: 'organic',
+            supportThreshold: 40,
+            brimWidth: 5,
+        });
+        expect(config).toMatchObject({
+            layer_height: '0.1',
+            first_layer_height: '0.3',
+            first_layer_speed: '20.00',
+            fill_pattern: 'gyroid',
+            support_material: '1',
+            support_material_auto: '1',
+            support_material_buildplate_only: '0',
+            support_material_style: 'organic',
+            support_material_threshold: '40',
+            brim_width: '5',
+        });
+    });
+
+    it.each([
+        ['none', { support_material: '0' }],
+        ['buildplate', { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '1' }],
+        ['everywhere', { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '0' }],
+    ] as const)('turns supports "%s" into the matching PrusaSlicer switches', (supports, expected) => {
+        expect(buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, supports })).toMatchObject(expected);
+    });
+
+    it('fills a solid part with straight lines when the chosen pattern cannot be solid', () => {
+        const solid = (infillPattern: typeof DEFAULT_REGULAR_CONFIG.infillPattern) =>
+            buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, infillDensity: 100, infillPattern }).fill_pattern;
+        expect(solid('gyroid')).toBe('rectilinear');
+        expect(solid('grid')).toBe('rectilinear');
+        expect(solid('concentric')).toBe('concentric');
+        expect(buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, infillDensity: 99, infillPattern: 'gyroid' }).fill_pattern).toBe('gyroid');
+    });
+
+    it('leaves every speed to the profile when the part uses the profile speeds', () => {
+        const config = buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, useProfileSpeeds: true });
+        for (const key of ['perimeter_speed', 'infill_speed', 'solid_infill_speed', 'first_layer_speed']) {
+            expect(config).not.toHaveProperty(key);
+        }
+        // The travel speed is the machine's, not a print speed: it stays.
+        expect(config).toHaveProperty('travel_speed');
+    });
+});
+
+describe('validatePrusaOptions', () => {
+    const printer = new Printer();
+
+    it('accepts the defaults', () => {
+        expect(() => validatePrusaOptions(printer, DEFAULT_REGULAR_CONFIG, 'Part')).not.toThrow();
+    });
+
+    it.each([
+        ['an unknown supports choice', { supports: 'tree' }],
+        ['an unknown support style', { supportStyle: 'tree' }],
+        ['an unknown infill pattern', { infillPattern: 'hilbertcurve' }],
+        ['a fractional overhang threshold', { supportThreshold: 45.5 }],
+        ['an overhang threshold over 90', { supportThreshold: 91 }],
+        ['a negative brim', { brimWidth: -1 }],
+        ['a zero first layer height', { firstLayerHeight: 0 }],
+        ['a first layer taller than the nozzle', { firstLayerHeight: 0.5 }],
+        ['a zero first layer speed', { firstLayerSpeed: 0 }],
+        ['a profile-speeds value that is not on or off', { useProfileSpeeds: 'yes' }],
+    ])('rejects %s', (_, overrides) => {
+        const config = { ...DEFAULT_REGULAR_CONFIG, ...overrides } as unknown as typeof DEFAULT_REGULAR_CONFIG;
+        expect(() => validatePrusaOptions(printer, config, 'Part')).toThrow(/Regular print settings of "Part"/);
+    });
+
+    it('does not ask for a first layer speed the profile replaces', () => {
+        expect(() => validatePrusaOptions(printer, { ...DEFAULT_REGULAR_CONFIG, useProfileSpeeds: true, firstLayerSpeed: 0 }, 'Part')).not.toThrow();
     });
 });
 
