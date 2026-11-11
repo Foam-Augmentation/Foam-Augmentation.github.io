@@ -122,6 +122,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
         controller.updateDisplay();
       });
       refreshModelControls(visualizer);
+      visualizer.invalidatePlateSlice();
 
       const titleElement = folderTitleElement(presetFolder);
       if (titleElement) {

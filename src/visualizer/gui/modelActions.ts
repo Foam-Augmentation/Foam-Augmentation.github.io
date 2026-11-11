@@ -17,6 +17,18 @@ export type AnyModel = EverydayModel | FoamModel;
 /** Settings a model starts with when it is printed as a regular part. Copy it before changing it. */
 export const DEFAULT_REGULAR_SETTINGS: Readonly<RegularPrintSettings> = DEFAULT_REGULAR_CONFIG;
 
+/** The last object id handed out by {@link newObjectId}. */
+let lastObjectId = 0;
+
+/**
+ * Hands out the id of a new object on the plate (`EverydayModel.objectId`).
+ *
+ * @returns A positive whole number no other object has had since the app started.
+ */
+export function newObjectId(): number {
+  return ++lastObjectId;
+}
+
 /**
  * How each kind of object is shown: its name, a one-line description, the colour of its
  * badge in the object list (a CSS variable from style.css) and the colour of its mesh.

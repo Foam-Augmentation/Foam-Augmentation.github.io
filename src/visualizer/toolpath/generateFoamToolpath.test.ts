@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import Printer from '../../printer/Printer';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel, PointCloudPoint, ToolpathConfig } from '../types/modelTypes';
-import type { PathPoint } from './pathTypes';
+import { FEATURE, type PathPoint } from './pathTypes';
 import { generateAugmentFoamToolpath, generateFoamToolpath } from './generateFoamToolpath';
 import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
@@ -262,6 +262,58 @@ describe('generateFoamToolpath (Slice Plate)', () => {
         expect(toolpath.every(isFinitePoint)).toBe(true);
         const gcode = buildPrintGcode(printer, [toolpath]);
         expect(gcode).not.toMatch(/NaN|Infinity|undefined/);
+    });
+});
+
+describe('object, layer and feature tags', () => {
+    it('tags an augmentation by object and by layer of its stack, counted from 0', () => {
+        const model = { ...blockModel({ initialFoamLayerCount: 2 }, { initialFoamLayerCount: 1 }), objectId: 7 };
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(), model)!;
+        const extrusions = toolpath.filter(isModelExtrusion);
+
+        expect(extrusions.every(p => p.objectId === 7)).toBe(true);
+        // Three layers (2 foam + 1 initial), each at its own height: layer n is the n-th lowest.
+        const heights = [...new Set(extrusions.map(p => p.point.z.toFixed(3)))].map(Number).sort((a, b) => a - b);
+        expect(heights).toHaveLength(3);
+        extrusions.forEach(p => {
+            expect(p.layer).toBe(heights.findIndex(z => Math.abs(z - p.point.z) < 1e-3));
+            expect(p.feature).toBe(p.layer === 0 ? FEATURE.initialFoam : FEATURE.foam);
+        });
+
+        // The purge line and tower belong to no object.
+        const helpers = toolpath.filter(p => p.role === 'purgeTower' || p.role === 'purgeLine');
+        expect(helpers.length).toBeGreaterThan(0);
+        expect(helpers.every(p => p.objectId === undefined && p.feature === undefined)).toBe(true);
+    });
+
+    it('counts the extra flat layers of a curve augment on from the stack', () => {
+        const model = { ...blockModel({ curveAugment: true, initialFoamLayerCount: 2 }), objectId: 3 };
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(), model)!;
+        const layers = [...new Set(toolpath.filter(isModelExtrusion).map(p => p.layer))].sort();
+        expect(layers).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    it('tags a foam print, its shell and its boundary', () => {
+        const printer = new Printer();
+        printer.generateBoundary = true;
+        const model = { ...blockModel(), objectId: 12 };
+        const toolpath = generateFoamToolpath(fakeVisualizer(printer), [model]);
+
+        const extrusions = toolpath.filter(isModelExtrusion);
+        expect(extrusions.length).toBeGreaterThan(0);
+        expect(extrusions.every(p => p.objectId === 12 && p.layer !== undefined && p.layer >= 0)).toBe(true);
+        const features = new Set(extrusions.map(p => p.feature));
+        expect(features).toContain(FEATURE.foam);
+        expect(features).toContain(FEATURE.shell);
+        expect([...features].every(f => Object.values(FEATURE).includes(f as never))).toBe(true);
+        // A 10 mm block in 1.7 mm layers: the first layer is 0 and none is skipped.
+        const layers = [...new Set(extrusions.map(p => p.layer!))].sort((a, b) => a - b);
+        expect(layers[0]).toBe(0);
+        expect(layers).toEqual(layers.map((_, i) => i));
+
+        const boundary = toolpath.filter(p => p.role === 'boundary');
+        expect(boundary.length).toBeGreaterThan(0);
+        expect(boundary.every(p => p.objectId === 12)).toBe(true);
     });
 });
 

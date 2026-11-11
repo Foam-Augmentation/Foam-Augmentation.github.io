@@ -11,7 +11,8 @@ import {
   parsePreset,
   serializePreset,
 } from './presetFormat';
-import { EXTRUDER_SPECS, INITIAL_SPECS, MODEL_SPECS, SETTING_SPECS } from './paramSpecs';
+import { EXTRUDER_SPECS, INITIAL_SPECS, MODEL_SPECS, REGULAR_SPECS, SETTING_SPECS } from './paramSpecs';
+import { DEFAULT_REGULAR_CONFIG } from '../toolpath/regularSlicer';
 
 /** A default extruder, mirroring createDefaultExtruder() in Printer.ts. */
 function makeExtruder(): ExtruderValues {
@@ -280,5 +281,50 @@ describe('applyPresetToSettings', () => {
     expect(target.extruders).toHaveLength(2);
     expect(target.extruders[0]).toEqual(makeExtruder());
     expect(target.extruders[1].nozzleDiameter).toBe(0.8);
+  });
+});
+
+describe('regular-print settings', () => {
+  const regularModel = () => ({
+    ...makeModel(),
+    regularConfig: {
+      ...DEFAULT_REGULAR_CONFIG,
+      supports: 'everywhere', supportStyle: 'organic', infillPattern: 'gyroid', brimWidth: 4, useProfileSpeeds: true,
+    } as Record<string, unknown>,
+  });
+
+  it('writes every regular-print setting of the model, and reads them back', () => {
+    const source = regularModel();
+    const text = serializePreset(makeSettings(), source);
+    for (const key of Object.keys(REGULAR_SPECS)) expect(text).toContain(`\nregular.${key} `);
+
+    const preset = parsePreset(text);
+    expect(preset.errors).toEqual([]);
+    expect(preset.version).toBe(PRESET_VERSION);
+    expect(hasModelSection(preset)).toBe(true);
+
+    const restored = { ...makeModel(), regularConfig: { ...DEFAULT_REGULAR_CONFIG } as Record<string, unknown> };
+    applyPresetToModel(preset, restored);
+    expect(restored.regularConfig).toEqual(source.regularConfig);
+  });
+
+  it('checks each value like a control would', () => {
+    const errors = parsePreset([
+      'regular.supports trees',
+      'regular.brimWidth -1',
+      'regular.useProfileSpeeds maybe',
+      'regular.perimeters 2.5',
+    ].join('\n')).errors;
+    expect(errors).toHaveLength(4);
+    expect(parsePreset('regular.colour red').warnings).toHaveLength(1);
+  });
+
+  it('still reads a version 2 file, which has no regular-print settings', () => {
+    const preset = parsePreset('presetVersion 2\nhStar 7\n');
+    expect(preset.errors).toEqual([]);
+    expect(preset.regular).toEqual({});
+    const target = { ...makeModel(), regularConfig: { ...DEFAULT_REGULAR_CONFIG } as Record<string, unknown> };
+    applyPresetToModel(preset, target);
+    expect(target.regularConfig).toEqual(DEFAULT_REGULAR_CONFIG);
   });
 });

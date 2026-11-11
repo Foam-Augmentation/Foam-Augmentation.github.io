@@ -89,6 +89,14 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
         }
         syncAuxTransforms(obj);
     });
+
+    // 'objectChange' (unlike 'change', which also fires on hover) means the gizmo really moved the
+    // model, so a print on it no longer matches the plate slice.
+    transformControls.addEventListener('objectChange', () => {
+        const mesh = transformControls.object;
+        const model = mesh ? visualizer.everydayModelList.find(candidate => candidate.mesh === mesh) : undefined;
+        if (model) visualizer.invalidatePlateSlice(model);
+    });
 }
 
 /**

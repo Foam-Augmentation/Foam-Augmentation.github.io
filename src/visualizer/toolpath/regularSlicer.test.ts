@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import Printer from '../../printer/Printer';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel } from '../types/modelTypes';
-import type { PathPoint } from './pathTypes';
+import { FEATURE, type PathPoint } from './pathTypes';
 import { generateFoamToolpath, getTransformedMesh, makePurgeLine, visualizeToolpath } from './generateFoamToolpath';
 import { buildPrintGcode, validateToolpath } from './buildGcode';
 import {
@@ -427,6 +427,35 @@ describe('generateRegularToolpath with several parts', () => {
             expect(Math.abs(move.to.y - 70)).toBeLessThanOrEqual(5);
         }
         expect(layerHeights(moves)[0]).toBeCloseTo(1.2, 6);
+    });
+});
+
+describe('object, layer and feature tags', () => {
+    const printer = new Printer();
+    const toolpath = generateRegularToolpath(printer, [{ ...cubePart(), objectId: 5 }]);
+    const extrusions = toolpath.filter(p => p.regularSegment);
+
+    it('puts the object on every extrusion and on the travel between them', () => {
+        expect(extrusions.length).toBeGreaterThan(0);
+        expect(extrusions.every(p => p.objectId === 5)).toBe(true);
+        // Only the approach moves that lift the head clear are nobody's.
+        expect(toolpath.filter(p => p.travel && p.role === undefined).every(p => p.objectId === 5)).toBe(true);
+        expect(toolpath.filter(p => p.role === 'approach').every(p => p.objectId === undefined)).toBe(true);
+    });
+
+    it('numbers the layers from 0 at the bottom', () => {
+        // Layer n of a part standing on the bed prints at (n + 1) layer heights.
+        extrusions.forEach(p => expect(p.point.z).toBeCloseTo((p.layer! + 1) * DEFAULT_REGULAR_CONFIG.layerHeight, 6));
+        expect(Math.min(...extrusions.map(p => p.layer!))).toBe(0);
+    });
+
+    it('names the features as PrusaSlicer does', () => {
+        expect(new Set(extrusions.map(p => p.feature))).toEqual(new Set([
+            FEATURE.externalPerimeter, FEATURE.perimeter, FEATURE.solidInfill, FEATURE.internalInfill,
+        ]));
+        // The bottom layer is solid: walls and solid infill only.
+        const bottom = new Set(extrusions.filter(p => p.layer === 0).map(p => p.feature));
+        expect(bottom).toEqual(new Set([FEATURE.externalPerimeter, FEATURE.perimeter, FEATURE.solidInfill]));
     });
 });
 

@@ -66,6 +66,8 @@ export function confirmAndDeleteModel(visualizer: Visualizer, modelObj: AnyModel
     );
     if (!confirmed) return;
 
+    // While the object still says what it is: a print that goes away changes the plate slice.
+    if ('kind' in modelObj) visualizer.invalidatePlateSlice(modelObj);
     disposeModel(visualizer, modelObj);
     refreshModelGUIList(visualizer, 'foam');
     refreshModelGUIList(visualizer, 'everyday');
@@ -153,18 +155,24 @@ function addTransformFolder(
     zController.onChange((value: number) => applyAxis('z', value));
     [xController, yController, zController].forEach(controller => setTip(controller.domElement, axisTip));
 
+    /** A moved print no longer matches the plate slice. */
+    const placementChanged = (): void => {
+        if ('kind' in modelObj) visualizer.invalidatePlateSlice(modelObj);
+    };
     addButton(transformFolder, 'Snap Model to Plate', 'Move the model down (or up) so it rests on the print bed.', () => {
         mesh.geometry.computeBoundingBox();
         const bbox = mesh.geometry.boundingBox!;
         mesh.position.setZ((bbox.max.z - bbox.min.z) * mesh.scale.z / 2);
         syncAuxTransforms(modelObj);
         showCurrentValues();
+        placementChanged();
     });
     addButton(transformFolder, 'Center Model', 'Move the model to the middle of the print bed.', () => {
         mesh.position.setX(visualizer.printer.machine_depth / 2);
         mesh.position.setY(visualizer.printer.machine_depth_y / 2);
         syncAuxTransforms(modelObj);
         showCurrentValues();
+        placementChanged();
     });
 
     showCurrentValues();
@@ -524,6 +532,10 @@ function buildModelFolder(
     // A preset imported before any everyday model existed applies to models added later.
     if (listType === 'everyday' && visualizer.pendingModelPreset) {
         visualizer.pendingModelPreset(modelObj as EverydayModel);
+    }
+    // A new print is not in the plate slice yet.
+    if (listType === 'everyday') {
+        visualizer.invalidatePlateSlice(modelObj as EverydayModel);
     }
 
     const modelGUIitem = guiFolder.addFolder('');

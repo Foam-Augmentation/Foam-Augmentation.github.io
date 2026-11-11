@@ -79,6 +79,62 @@ describe('parsePrusaGcode', () => {
         expect(parsePrusaGcode('G1 Z.2\nG1 X1 Y1\n', { extruder: 0 })).toEqual([]);
     });
 
+    it('gives every extrusion the feature it prints, and travel none', () => {
+        expect(path.map(p => p.feature)).toEqual([
+            undefined, 'External perimeter', 'External perimeter', undefined, undefined, 'Solid infill',
+        ]);
+    });
+});
+
+// Shaped like PrusaSlicer 2.9's output with gcode_label_objects = octoprint: the labels are
+// declared once up front, then each layer prints the objects in turn.
+const LABELLED = `
+; printing object C:/tmp/part-0.stl id:0 copy 0
+; stop printing object C:/tmp/part-0.stl id:0 copy 0
+; printing object C:/tmp/part-1.stl id:1 copy 0
+; stop printing object C:/tmp/part-1.stl id:1 copy 0
+;LAYER_CHANGE
+;Z:0.2
+G1 Z.2 F720
+; printing object C:/tmp/part-1.stl id:1 copy 0
+G1 X200 Y100 F9000
+;TYPE:External perimeter
+G1 X201 Y100 E.1
+; stop printing object C:/tmp/part-1.stl id:1 copy 0
+; printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X100 Y100
+;TYPE:Support material
+G1 X101 Y100 E.1
+; stop printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X150 Y100
+;LAYER_CHANGE
+;Z:0.4
+G1 Z.4
+; printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X102 Y100 E.1
+`;
+
+describe('parsePrusaGcode with object labels', () => {
+    const path = parsePrusaGcode(LABELLED, { extruder: 0, objectIds: [40, 41] });
+
+    it('maps PrusaSlicer\'s object ids, in the order the parts were sent, to ours', () => {
+        expect(path.map(p => [p.point.x, p.objectId])).toEqual([
+            [200, 41], [201, 41], [100, 40], [101, 40], [150, undefined], [150, undefined], [102, 40],
+        ]);
+    });
+
+    it('counts layers from 0 at each layer change', () => {
+        expect(path.map(p => p.layer)).toEqual([0, 0, 0, 0, 0, 1, 1]);
+    });
+
+    it('carries a feature on until the next one', () => {
+        expect(path.filter(p => p.regularSegment).map(p => p.feature)).toEqual(['External perimeter', 'Support material', 'Support material']);
+    });
+
+    it('leaves the objects unassigned without ids to map them to', () => {
+        expect(parsePrusaGcode(LABELLED, { extruder: 0 }).every(p => p.objectId === undefined)).toBe(true);
+    });
+
     it('refuses G-code it cannot reproduce', () => {
         expect(() => parsePrusaGcode('M82\n', { extruder: 0 })).toThrow(/absolute extrusion/);
         expect(() => parsePrusaGcode('G1 Z1\nG1 X1 Y1\nG2 X2 Y2 I1 J0 E.1\n', { extruder: 0 })).toThrow(/arcs/);
@@ -93,6 +149,7 @@ describe('buildPrusaConfig', () => {
         expect(config).toMatchObject({
             use_relative_e_distances: '1',
             arc_fitting: 'disabled',
+            gcode_label_objects: 'octoprint',
             start_gcode: '',
             fill_density: '35%',
             perimeters: String(DEFAULT_REGULAR_CONFIG.perimeters),

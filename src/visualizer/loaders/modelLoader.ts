@@ -3,7 +3,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import Visualizer from '../Visualizer';
 import { refreshModelGUIList } from '../gui/refreshModelGUIList';
 import { FoamModel, EverydayModel, ObjectKind } from '../types/modelTypes';
-import { applyModelAppearance, DEFAULT_REGULAR_SETTINGS } from '../gui/modelActions';
+import { applyModelAppearance, DEFAULT_REGULAR_SETTINGS, newObjectId } from '../gui/modelActions';
 import { MeshBVH } from 'three-mesh-bvh';
 import { notify } from '../gui/notify';
 
@@ -288,6 +288,7 @@ export function addModelFromGeometry(
             visualizer.uuid_to_modelObj_Map.set(mesh.uuid, foamModelObj);
         } else {
             const everydayModelObj: EverydayModel = {
+                objectId: newObjectId(),
                 name,
                 kind,
                 regularConfig: { ...DEFAULT_REGULAR_SETTINGS },

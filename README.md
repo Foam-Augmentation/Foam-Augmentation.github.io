@@ -41,7 +41,7 @@ Every object shows in the `Objects` list with its type. Click an object there (o
     <img src="src/images/augmentation.png" width="307">
 </div>
 
-- For `Foam Print` and `Regular Print` objects, press `Slice & Export Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. You should be prompted to save the G-Code and see a visualization show up after it's done slicing.
+- For `Foam Print` and `Regular Print` objects, press `Slice Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. When it is done the toolpath shows in the 3D view, each object's row says how many layers it has, and a summary under the button says what the file holds (objects, which slicer made the regular parts, tools, height and file size).
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/foam-slicing.png" width="300" style="margin-bottom: 20px;"><br>
@@ -49,7 +49,8 @@ Every object shows in the `Objects` list with its type. Click an object there (o
 </div>
 
 4. **Save the G-Code**
-- When augmenting, hit the `Export Augmentation G-Code` button at the bottom of the `Objects` list (enabled once an area is selected) to download the gcode file for the foam printing toolpath. Foam and regular prints are downloaded by `Slice & Export Prints`.
+- When augmenting, hit the `Export Augmentation G-Code` button at the bottom of the `Objects` list (enabled once an area is selected) to download the gcode file for the foam printing toolpath.
+- For foam and regular prints, press `Export Print G-Code` after `Slice Prints` to save the sliced file. Changing anything on the plate afterwards (moving a print, editing its settings, adding or deleting a print, changing a printer setting) marks the slice out of date: the summary says so and `Export Print G-Code` waits until you slice again.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/saving.png" width="300">
@@ -161,7 +162,7 @@ These are in the folder of each `Regular Print` object. Settings marked *(PrusaS
 - `Use Profile Speeds` *(PrusaSlicer)*: Use the speeds of your PrusaSlicer profile (or PrusaSlicer's defaults) instead of Print Speed and First Layer Speed.
 
 # Presets
-A preset is a plain text file with one `key value` pair per line. It stores every setting above, every extruder, and the parameters of one everyday model (the selected one, or the first one if none is selected). Files start with a `presetVersion` line; older files without it still import.
+A preset is a plain text file with one `key value` pair per line. It stores every setting above, every extruder, and the parameters of one everyday model (the selected one, or the first one if none is selected), including its Regular Print Settings (as `regular.…` lines). It does not store what type an object is. Files start with a `presetVersion` line; older files, with or without it, still import.
 
 When a preset is imported, every value is checked first (type, range, allowed options). If any line is invalid the whole file is rejected and nothing changes. Model parameters are applied to the selected everyday model, or to all everyday models if none is selected; if no everyday model is loaded yet, they are applied to the models you import afterwards.
 

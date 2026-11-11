@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { leadInFromAbove } from './gcodeActions';
+import { exportPlateGcode, leadInFromAbove } from './gcodeActions';
 import type { PathPoint } from './pathTypes';
+import type Visualizer from '../Visualizer';
+import type { EverydayModel } from '../types/modelTypes';
+import { plateFingerprint, type PlateSlice } from './plateSlice';
+import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
+import { notify } from '../gui/notify';
+import { saveGcodeToFile } from './saveGcodeToFile';
+
+// Both touch the DOM; only whether and how they are called matters here.
+vi.mock('../gui/notify', () => ({ notify: vi.fn(), withBusy: vi.fn() }));
+vi.mock('./saveGcodeToFile', () => ({ saveGcodeToFile: vi.fn() }));
 
 /** A travel point. */
 function travel(x: number, y: number, z: number, extra: Partial<PathPoint> = {}): PathPoint {
@@ -53,5 +63,57 @@ describe('leadInFromAbove', () => {
     const onlyTravel = [travel(0, 0, 0.2), travel(5, 5, 0.2)];
     expect(leadInFromAbove(onlyTravel, 16)).toBe(onlyTravel);
     expect(leadInFromAbove([], 16)).toEqual([]);
+  });
+});
+
+describe('exportPlateGcode', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** A plate with one regular print, sliced as it is now unless `slice` is false. */
+  function plate(slice = true) {
+    const model = {
+      objectId: 1, kind: 'regular', name: 'part',
+      mesh: new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10)),
+      regularConfig: { ...DEFAULT_REGULAR_CONFIG }, toolpathConfig: {}, initialConfig: {}, initialOffset: 0,
+    } as unknown as EverydayModel;
+    const config = { bedTemp: 60, extruders: [{ nozzleDiameter: 0.4 }] };
+    const plateSlice: PlateSlice | null = slice ? {
+      gcode: 'G1 X1', fileName: 'part.gcode', previews: [], stale: false,
+      fingerprint: plateFingerprint(config, [model]),
+      summary: { objects: new Map([[1, { layers: 1 }]]), tools: [0], height: 1, bytes: 6 },
+    } : null;
+    const visualizer = {
+      config, everydayModelList: [model], plateSlice,
+      invalidatePlateSlice: vi.fn(() => { if (plateSlice) plateSlice.stale = true; }),
+    } as unknown as Visualizer;
+    return { visualizer, model, plateSlice };
+  }
+
+  it('saves the sliced G-code while the plate is as it was sliced', () => {
+    const { visualizer } = plate();
+    exportPlateGcode(visualizer);
+    expect(saveGcodeToFile).toHaveBeenCalledWith('G1 X1', 'part.gcode');
+  });
+
+  it('asks for a slice first when there is none', () => {
+    exportPlateGcode(plate(false).visualizer);
+    expect(saveGcodeToFile).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/Slice the plate first/), 'warning');
+  });
+
+  it('refuses a slice that is known to be out of date', () => {
+    const { visualizer, plateSlice } = plate();
+    plateSlice!.stale = true;
+    exportPlateGcode(visualizer);
+    expect(saveGcodeToFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and marks the slice out of date, when the plate changed without the app being told', () => {
+    const { visualizer, model, plateSlice } = plate();
+    model.mesh.position.x = 50;
+    exportPlateGcode(visualizer);
+    expect(saveGcodeToFile).not.toHaveBeenCalled();
+    expect(plateSlice!.stale).toBe(true);
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/changed after it was sliced/), 'warning');
   });
 });

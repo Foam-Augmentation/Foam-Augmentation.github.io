@@ -263,7 +263,8 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
   Fix: keep errors until dismissed, add a message log, and give the collision warning an "Apply H\*" button.
 - [ ] **D20 · P2 · read — the busy overlay has no progress and no cancel** (`notify.ts:82`). A long slice looks the same as a hung tab (S8).
   Fix: run in a worker, show progress per layer, allow Cancel.
-- [ ] **D21 · P2 · read — saving goes straight to a download.** There is no summary of what the file contains (models, layers, temperatures, tools, time). Slice Plate slices and downloads in one click, so the result cannot be inspected first.
+- [~] **D21 · P2 · read — saving goes straight to a download.** There is no summary of what the file contains (models, layers, temperatures, tools, time). Slice Plate slices and downloads in one click, so the result cannot be inspected first.
+  **Status: partly fixed (2026-11-10).** Foam and regular prints are sliced by **Slice Prints**, which shows the toolpath, each object's layer count and a summary (objects, regular slicer, tools, height, file size), and saved by **Export Print G-Code**. Any change to the plate marks the slice out of date, and the export compares a fingerprint of the plate with the one taken at slicing, so a stale file is never saved. No time or filament estimate yet, and the augmentation export still generates and downloads in one step.
   Fix: Slice → preview and summary → Export.
 - [ ] **D22 · P2 · read — delete uses the browser's `confirm()` and has no undo.**
   Fix: delete at once and offer Undo in the toast.
@@ -326,7 +327,8 @@ Added 2026-11-09 (after commit `260667e`). The single nested panel and the globa
   Fix: test on a printer first; then add retraction with z-hop and a first-layer speed.
 - [ ] **R2 · P1 · read — no collision check on a mixed plate.** Foam prints follow the regular prints in the same file. The head arrives from above, but nothing checks that the print head (about 75 × 85 mm) clears a finished regular part while it prints foam next to it. The app warns about this after export.
   Fix: check the print-head footprint against finished parts, or refuse plates where they are closer than the head.
-- [ ] **R3 · P2 · read — the object type and the regular print settings are not in presets.** Export and import carry the foam parameters only.
+- [~] **R3 · P2 · read — the object type and the regular print settings are not in presets.** Export and import carry the foam parameters only.
+  **Status: partly fixed (2026-11-10).** Presets (version 3) carry every Regular Print setting as `regular.<key>` lines. The object type is left out on purpose: a preset imported with no object selected applies to every object, and it would turn them all into the same type.
 - [ ] **R4 · P2 · read — augmentations export to a separate file.** A plate cannot print a regular part and then augment it in one run.
 - [ ] **R5 · P2 · read — regular slicer limits.** A model height that is not a multiple of the layer height is rounded up by up to one layer; slanted surfaces are offset by up to one layer; walls thinner than one line get nothing; a mesh that is not watertight is not detected; two regular parts on different extruders change tool every layer with no purge tower; one speed for every extrusion.
 - [ ] **R6 · P3 · read — a Foam Print still shows Augmentation Settings.** The foam slicer reads some of those values (layer counts, curved augmentation), so they were not hidden; which ones matter needs someone who knows the process.

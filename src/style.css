@@ -1049,4 +1049,25 @@ body.file-drag-over #dropOverlay {
 .export-note {
     font-size: 11px;
     opacity: 0.85;
+    overflow-wrap: anywhere;
+}
+
+/* what the last plate slice holds, between Slice Prints and Export Print G-Code */
+#plateSummary {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+#plateSummary[hidden] {
+    display: none;
+}
+
+#plateSummary.stale {
+    border-style: dashed;
+    color: var(--text-muted);
 }

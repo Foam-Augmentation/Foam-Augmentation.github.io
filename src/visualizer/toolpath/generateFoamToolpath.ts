@@ -24,7 +24,7 @@ import {
     extractShellRegionsFromLayer,
 } from '../utils/TreeSlicer';
 import { notify } from '../gui/notify';
-import type { PathPoint } from './pathTypes';
+import { FEATURE, type PathPoint } from './pathTypes';
 import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
 import { getRequiredZOffset } from './collision';
 import {
@@ -273,6 +273,10 @@ function fillToolpath(
                     role: role,
                     layerHeight: nextPoint.layerHeight,
                     initialMaterial: nextPoint.initialMaterial,
+                    // The points in between are part of the move to nextPoint.
+                    objectId: nextPoint.objectId,
+                    layer: nextPoint.layer,
+                    feature: nextPoint.feature,
                     extruder: point.extruder,
                     hStar: point.hStar,
                     vStar: point.vStar,
@@ -983,6 +987,18 @@ function makeChunkPath(
             continue;
         }
 
+        // Every point of the region is on the same layer of the model's stack. A shell region is
+        // sliced finer than the foam; it counts as part of the foam layer it sits in.
+        const layer = layerOf(region.height);
+        // Sensing regions are the ones on another extruder than the foam's (see Printer.getVTPSettings).
+        const foamFeature = useInitial ? FEATURE.initialFoam : region.extruder !== 0 ? FEATURE.sensingFoam : FEATURE.foam;
+        for (const point of path) {
+            point.layer = layer;
+            if (!point.travel) {
+                point.feature = region.shell ? (point.ironing ? FEATURE.ironing : FEATURE.shell) : foamFeature;
+            }
+        }
+
         const prevPathLen = chunkPath.length;
         pushAll(chunkPath, path);
         chunkPath[prevPathLen].travel = true;
@@ -1154,7 +1170,11 @@ function makeChunkTreePath(
         const chunk = roots[printIndex];
         const printExtruder = chunk.regions[0].extruder;
         const chunkPath = makeChunkPath(chunk, lastPoint, printedRegions, modelHeight, scanX, TOOLPATH_FILL_DISTANCE, layerHeights);
-        chunkPath.forEach(p => p.extruder = printExtruder);
+        const objectId = chunk.modelObj!.objectId;
+        chunkPath.forEach(p => {
+            p.extruder = printExtruder;
+            p.objectId = objectId;
+        });
         if (chunkPath.length) {
             chunkPath[0].debug = `NEW CHUNK. Min: ${chunk.regions[0].height}, MAX: ${chunk.regions[chunk.regions.length-1].height}, shell ${chunk.shell}, extruder ${printExtruder}, scanX ${scanX}` + (chunkPath[0].debug ? " | " + chunkPath[0].debug : "");
         }
@@ -1382,7 +1402,9 @@ export function generateFoamToolpath(
         });
 
         if (printer.generateBoundary) {
-            boundaryPath = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, false).concat(boundaryPath);
+            const boundary = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, false);
+            tagBoundary(boundary, modelObj);
+            boundaryPath = boundary.concat(boundaryPath);
         }
 
         // Update parameters for printing
@@ -1510,6 +1532,22 @@ function makeBoundaryPath(
     }
 
     return path;
+}
+
+
+/**
+ * Marks the boundary points of a boundary path as belonging to the model they surround. The
+ * pause and travel points around them stay unassigned.
+ *
+ * @param {PathPoint[]} path A path from makeBoundaryPath. Modified in place.
+ * @param {EverydayModel} modelObj The model the boundary surrounds.
+ */
+function tagBoundary(path: PathPoint[], modelObj: EverydayModel): void {
+    for (const point of path) {
+        if (point.role === 'boundary') {
+            point.objectId = modelObj.objectId;
+        }
+    }
 }
 
 
@@ -1950,6 +1988,7 @@ export function generateAugmentFoamToolpath(
                 toolpath.push({
                     ...point,
                     debug: undefined,
+                    layer: point.layer === undefined ? undefined : point.layer + layer,
                     point: new THREE.Vector3(
                         point.point.x,
                         point.point.y,
@@ -2022,7 +2061,9 @@ export function generateAugmentFoamToolpath(
         pushAll(fullToolpath, makePurgeLine(printer));
     }
     if (printer.generateBoundary) {
-        pushAll(fullToolpath, makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, true));
+        const boundary = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, true);
+        tagBoundary(boundary, modelObj);
+        pushAll(fullToolpath, boundary);
     } else {
         fullToolpath.push({
             point: new THREE.Vector3(0, 0, safeZ),

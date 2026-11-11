@@ -13,7 +13,8 @@ import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
 import { ViewCube, ViewName } from './gui/ViewCube';
 import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { initObjectList, renderObjectList } from './gui/objectList';
-import { applyModelAppearance } from './gui/modelActions';
+import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
+import type { PlateSlice } from './toolpath/plateSlice';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
 
@@ -82,6 +83,12 @@ export default class Visualizer {
      * They are applied to each everyday model imported afterwards (see refreshModelGUIList).
      */
     public pendingModelPreset: ((model: EverydayModel) => void) | null = null;
+
+    /**
+     * The last slice of the plate's Foam Print and Regular Print objects, waiting to be exported,
+     * or null before the first slice. Set by `setPlateSlice`; marked stale by `invalidatePlateSlice`.
+     */
+    public plateSlice: PlateSlice | null = null;
 
 
     /**
@@ -330,7 +337,53 @@ export default class Visualizer {
         (['augment', 'foam', 'regular'] as ObjectKind[]).forEach(k => classes?.toggle(`kind-${k}`, k === kind));
 
         applyModelAppearance(model, this._selectedModel === model);
+        // An object that starts or stops printing changes the plate slice.
+        this.invalidatePlateSlice(model);
         this.updateActionStates();
+    }
+
+    // ----- plate slice -----
+
+    /**
+     * Keeps a new plate slice for export, replacing (and removing the preview of) the last one.
+     *
+     * @param slice - The new slice.
+     */
+    public setPlateSlice(slice: PlateSlice): void {
+        this.discardPlateSlicePreview();
+        this.plateSlice = slice;
+        this.updateActionStates();
+    }
+
+    /**
+     * Marks the plate slice as out of date because something it was made from changed, and
+     * removes its preview, which no longer shows what would print. Export then asks for a new slice.
+     *
+     * @param model - The object that changed. An augmentation that is not part of the slice
+     *                cannot change it, so it is ignored. Omit when a global setting changed.
+     */
+    public invalidatePlateSlice(model?: EverydayModel): void {
+        const slice = this.plateSlice;
+        if (!slice || slice.stale) return;
+        if (model && model.kind === 'augment' && !slice.summary.objects.has(model.objectId)) return;
+
+        slice.stale = true;
+        this.discardPlateSlicePreview();
+        this.updateActionStates();
+    }
+
+    /** Removes the toolpath preview drawn for the plate slice, if it is still there. */
+    private discardPlateSlicePreview(): void {
+        const previews = this.plateSlice?.previews ?? [];
+        if (!previews.length) return;
+        // The previews hang off the objects they were drawn for; let go of them there too.
+        for (const model of this.everydayModelList) {
+            if (model.toolpathVisualizationObject && previews.includes(model.toolpathVisualizationObject)) {
+                model.toolpathVisualizationObject = undefined;
+            }
+        }
+        previews.forEach(preview => disposeObject3D(preview));
+        this.plateSlice!.previews = [];
     }
 
     // ----- camera framing -----
@@ -403,6 +456,9 @@ export default class Visualizer {
      *                every model that has a selected area.
      */
     public scheduleToolpathRefresh(model?: EverydayModel): void {
+        // Whatever changes a preview can change the plate slice too.
+        this.invalidatePlateSlice(model);
+
         const candidates = model ? [model] : this.everydayModelList;
         candidates
             .filter(m => m.kind === 'augment' && m.selectedRegularFoamMesh)
@@ -757,6 +813,7 @@ export default class Visualizer {
         const last = this.config.extruders[this.config.extruders.length - 1];
         this.config.extruders.push(last ? { ...last } : createDefaultExtruder());
         this.syncExtrudersToPrinter();
+        this.invalidatePlateSlice();
         return this.config.extruders.length - 1;
     }
 
@@ -778,6 +835,7 @@ export default class Visualizer {
         }
         this.config.extruders.splice(index, 1);
         this.syncExtrudersToPrinter();
+        this.invalidatePlateSlice();
         return true;
     }
 }

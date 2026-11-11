@@ -39,6 +39,8 @@ const MM_PER_MIN_TO_MM_PER_S = 1 / 60;
  * - No arcs: the parser and the preview only understand straight moves.
  * - No skirt or wipe tower: our purge line and purge tower do that job.
  * - No sequential printing: every object is printed layer by layer together.
+ * - Object labels as comments (`; printing object ... id:N copy 0`), so each move can be traced
+ *   back to its part. Comments only: nothing the printer acts on.
  */
 const INTEGRATION_SETTINGS: PrusaConfig = {
     use_relative_e_distances: '1',
@@ -54,7 +56,7 @@ const INTEGRATION_SETTINGS: PrusaConfig = {
     skirts: '0',
     wipe_tower: '0',
     complete_objects: '0',
-    gcode_label_objects: 'disabled',
+    gcode_label_objects: 'octoprint',
 };
 
 /** The PrusaSlicer settings behind each choice of where supports go. */
@@ -198,7 +200,17 @@ export function formatPrusaIni(config: PrusaConfig): string {
 export interface ParsePrusaGcodeOptions {
     /** The extruder that prints the moves. Set on the first point so the emitter picks that tool. */
     extruder: number;
+    /**
+     * Our object id (`PathPoint.objectId`) of each part PrusaSlicer sliced, in the order the
+     * parts were given to it: PrusaSlicer numbers its objects in that order, from 0.
+     */
+    objectIds?: readonly (number | undefined)[];
 }
+
+/** PrusaSlicer's object label comment, `printing object <name> id:<n> copy <n>`. */
+const OBJECT_START = /^printing object .* id:(\d+) copy \d+$/;
+/** The comment that closes an object label. */
+const OBJECT_STOP = /^stop printing object /;
 
 /** Splits a G-code word like `X12.5` into its letter and number. */
 function readWords(code: string): Map<string, number> {
@@ -221,7 +233,10 @@ function readWords(code: string): Map<string, number> {
  * - Retractions and fan commands, which do not move the head, are kept as `preGcode` on the
  *   point after them. A final retraction with no move after it is dropped: the next toolpath
  *   starts with its own moves, and PrusaSlicer has no matching unretract waiting.
- * - Feature changes (`;TYPE:Perimeter`) are carried over as debug comments.
+ * - Feature changes (`;TYPE:Perimeter`) are carried over as debug comments, and every extrusion
+ *   carries the feature it prints as `feature`.
+ * - Every point after the first `;LAYER_CHANGE` carries its layer (0 = the first), and every point
+ *   inside an object label carries that object's id from `options.objectIds`.
  * - Everything else (temperatures, progress, `G92 E0`, the tool select) is our emitter's job and dropped.
  *
  * Moves before the head's x, y and z are all known only update where the head is.
@@ -240,6 +255,9 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
     let feed: number | undefined;
     let pending: string[] = [];
     let pendingType: string | undefined;
+    let feature: string | undefined;
+    let layer = -1;
+    let objectId: number | undefined;
     let extruded = false;
 
     const lines = gcode.split(/\r?\n/);
@@ -251,6 +269,16 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
 
         if (comment.startsWith('TYPE:')) {
             pendingType = comment.slice('TYPE:'.length);
+            feature = pendingType;
+        } else if (comment === 'LAYER_CHANGE') {
+            layer++;
+        } else if (OBJECT_STOP.test(comment)) {
+            objectId = undefined;
+        } else {
+            const start = OBJECT_START.exec(comment);
+            if (start) {
+                objectId = options.objectIds?.[Number(start[1])];
+            }
         }
         if (!code) {
             continue;
@@ -306,6 +334,15 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
             if (pendingType !== undefined) {
                 point.debug = `PrusaSlicer: ${pendingType}`;
                 pendingType = undefined;
+            }
+            if (point.regularSegment && feature !== undefined) {
+                point.feature = feature;
+            }
+            if (layer >= 0) {
+                point.layer = layer;
+            }
+            if (objectId !== undefined) {
+                point.objectId = objectId;
             }
             path.push(point);
         } else if (command === 'G10' || command === 'G11' || command === 'M106' || command === 'M107') {

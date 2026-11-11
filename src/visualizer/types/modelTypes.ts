@@ -141,6 +141,11 @@ export type RegularPrintSettings = RegularPrintConfig;
  * EverydayModel: an object on the plate. Extends BasicModel.
  */
 export interface EverydayModel extends BasicModel {
+    /**
+     * A number that identifies the object for as long as the app runs; it is never reused. The
+     * toolpath points of the object carry it (`PathPoint.objectId`).
+     */
+    objectId: number;
     /** What the object is: something to augment, a foam print or a regular print. */
     kind: ObjectKind;
     /** Print settings used while `kind` is `regular`. */

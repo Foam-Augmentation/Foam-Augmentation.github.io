@@ -28,9 +28,15 @@
                 <span class="export-label">Export Augmentation G-Code</span>
                 <span class="export-note"></span>
             </button>
-            <button type="button" id="exportPrintButton" class="export-button" disabled
-                title="Slice every Foam Print and Regular Print object on the plate, show the toolpath and download one G-code file. Large models can take a while.">
-                <span class="export-label">Slice &amp; Export Prints</span>
+            <button type="button" id="slicePrintsButton" class="export-button" disabled
+                title="Slice every Foam Print and Regular Print object on the plate into one G-code file and show its toolpath. Large models can take a while.">
+                <span class="export-label">Slice Prints</span>
+                <span class="export-note"></span>
+            </button>
+            <div id="plateSummary" role="status" hidden></div>
+            <button type="button" id="exportPrintsButton" class="export-button" disabled
+                title="Save the G-code of the last slice. Slice again after changing the plate.">
+                <span class="export-label">Export Print G-Code</span>
                 <span class="export-note"></span>
             </button>
         </footer>

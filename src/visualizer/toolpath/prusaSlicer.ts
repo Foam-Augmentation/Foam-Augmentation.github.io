@@ -136,7 +136,7 @@ export async function slicePartsWithPrusa(printer: Printer, parts: RegularPart[]
             ini: formatPrusaIni(buildPrusaConfig(printer, config)),
         };
         const { gcode } = await bridge.slice(request);
-        const groupPath = parsePrusaGcode(gcode, { extruder: config.extruder });
+        const groupPath = parsePrusaGcode(gcode, { extruder: config.extruder, objectIds: group.map(part => part.objectId) });
         if (!groupPath.length) {
             continue;
         }
