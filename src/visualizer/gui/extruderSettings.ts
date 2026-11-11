@@ -13,6 +13,7 @@ const EXTRUDER_CONTROL_KEYS: ExtruderKey[] = [
   'print_temp_extruder',
   'idle_temp_extruder',
   'printHead_speed_when_free_move',
+  'filamentDensity',
 ];
 
 /**

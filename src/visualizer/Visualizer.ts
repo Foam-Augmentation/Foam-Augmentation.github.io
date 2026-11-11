@@ -13,6 +13,7 @@ import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
 import { ViewCube, ViewName } from './gui/ViewCube';
 import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { initObjectList, renderObjectList } from './gui/objectList';
+import { initPreviewBar, refreshPreviewBar } from './gui/previewBar';
 import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
 import type { PlateSlice } from './toolpath/plateSlice';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
@@ -288,6 +289,7 @@ export default class Visualizer {
 
         initEmptyState(this);
         initObjectList(this);
+        initPreviewBar(this);
         this.updateActionStates();
     }
 
@@ -304,6 +306,7 @@ export default class Visualizer {
 
         renderObjectList(this);
         setEmptyStateVisible(this.everydayModelList.length === 0 && this.foamModelList.length === 0);
+        refreshPreviewBar(this);
     }
 
     /**

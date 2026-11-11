@@ -95,8 +95,8 @@ export const FEATURE = {
     sensingFoam: 'Sensing foam',
     /** The regular extrusions that wall in a foam print. */
     shell: 'Shell',
-    /** A pass that retraces the shell to smooth it. */
-    ironing: 'Ironing',
+    /** A pass that retraces the shell to smooth it. (Not PrusaSlicer's "Ironing" of top surfaces.) */
+    ironing: 'Shell ironing',
     externalPerimeter: 'External perimeter',
     perimeter: 'Perimeter',
     solidInfill: 'Solid infill',

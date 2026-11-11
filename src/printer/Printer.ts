@@ -16,6 +16,8 @@ export interface Extruder {
   print_temp_extruder: number;
   /** Standby temperature while parked (in °C). Hot enough to reheat fast, cool enough not to ooze. */
   idle_temp_extruder: number;
+  /** Density of the filament (g/cm³), for the filament weight of a print. */
+  filamentDensity: number;
   color: number;
 }
 
@@ -33,6 +35,7 @@ export function createDefaultExtruder(): Extruder {
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
+    filamentDensity: 1.21,
     color: 0x5fd38d
   };
 }
@@ -149,6 +152,7 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 230,
         idle_temp_extruder: 70,
+        filamentDensity: 1.21, // TPU
         color: 0x5fd38d
       },
       {//conductive TPU extruder
@@ -158,6 +162,7 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 240,
         idle_temp_extruder: 70,
+        filamentDensity: 1.21, // TPU
         color: 0xf2a65a
       }
     ];
@@ -708,17 +713,47 @@ M204 P1000 T1000
     edot: number,
     extruderIndex: number,
   ): string {
-    const extruder = this.requireExtruder(extruderIndex);
-    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
-    const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
-
-    const S = gamma / (beta * vStar);
-    const F = edot / S;
+    const { filamentPerMm: S, headSpeed: F } = this.foamMotion(vStar, edot, this.requireExtruder(extruderIndex));
 
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
     const extrudedAmount = this.norm(p1, p0) * S;
 
     return `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
+  }
+
+  /**
+   * How a foam (viscous thread) move runs: the filament it feeds per mm of head travel, and the
+   * head speed that keeps the thread speed in ratio V* with it at feed rate Edot.
+   *
+   * @param {number} vStar V* (head speed / thread speed).
+   * @param {number} edot Filament feed rate (mm/min).
+   * @param {Extruder} extruder The extruder, for its nozzle diameter and die swell.
+   * @returns {{ filamentPerMm: number, headSpeed: number }} Filament (mm per mm) and head speed (mm/min).
+   */
+  public foamMotion(vStar: number, edot: number, extruder: Extruder): { filamentPerMm: number, headSpeed: number } {
+    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
+    const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
+    const filamentPerMm = gamma / (beta * vStar);
+    return { filamentPerMm, headSpeed: edot / filamentPerMm };
+  }
+
+  /**
+   * The head speed (mm/min) of the move to a toolpath point, as {@link generate_foam_gcode}
+   * writes it (outside a test sweep). For the preview.
+   *
+   * @param {PathPoint} point The point the move goes to.
+   * @param {number} extruderIndex The extruder that makes the move.
+   * @returns {number | undefined} The speed, or undefined if the extruder does not exist.
+   */
+  public moveSpeed(point: PathPoint, extruderIndex: number): number | undefined {
+    const extruder = this.extruders[extruderIndex];
+    if (!extruder) return undefined;
+    const travelSpeed = extruder.printHead_speed_when_free_move;
+    if (point.extrusion !== undefined && (point.regularSegment || point.travel)) return point.speed ?? travelSpeed;
+    if (point.ironing) return IRONING_SPEED;
+    if (point.regularSegment || point.travel) return point.speed ?? travelSpeed;
+    if (point.vStar === undefined || point.edot === undefined) return undefined;
+    return this.foamMotion(point.vStar, point.edot, extruder).headSpeed;
   }
 
 

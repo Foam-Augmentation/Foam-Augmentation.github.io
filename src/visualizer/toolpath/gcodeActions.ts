@@ -13,7 +13,8 @@ import {
 import { sliceRegularParts, type RegularSlicerUsed } from './prusaSlicer';
 import { disposeObject3D } from '../gui/modelActions';
 import { plateFingerprint, summarizePlate } from './plateSlice';
-import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
+import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
+import { describeEstimate } from '../gui/objectSummary';
 import { saveGcodeToFile } from './saveGcodeToFile';
 import { defaultDownloadName } from '../gui/downloadName';
 import { TRAVEL_CLEARANCE, TRAVEL_PREVIEW_COLOR } from './toolpathConstants';
@@ -71,9 +72,9 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
             return;
         }
 
-        const gcode = buildPrintGcode(visualizer.printer, toolpaths);
+        const { gcode, estimate } = buildPrintGcodeWithEstimate(visualizer.printer, toolpaths);
         saveGcodeToFile(gcode, defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'));
-        notify(`G-code for ${toolpaths.length} model${toolpaths.length === 1 ? '' : 's'} saved.`, 'success');
+        notify(`G-code for ${toolpaths.length} model${toolpaths.length === 1 ? '' : 's'} saved. ${describeEstimate(estimate)}.`, 'success');
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);
@@ -81,7 +82,7 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
 }
 
 /**
- * Slices the regular-print objects into one toolpath and shows it in the scene.
+ * Slices the regular-print objects into one toolpath.
  *
  * In the desktop app with PrusaSlicer installed, PrusaSlicer slices them; otherwise the built-in
  * slicer does (all of them together, layer by layer). Anything the user should know about which
@@ -118,14 +119,6 @@ async function sliceRegularModels(
         }))
     );
     notes.forEach(note => notify(note, 'warning'));
-    if (!toolpath.length) {
-        return { toolpath, slicer };
-    }
-
-    const preview = new THREE.Group();
-    visualizeToolpath(toolpath, preview, visualizer.printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
-    visualizer.scene.add(preview);
-    models[0].toolpathVisualizationObject = preview;
     return { toolpath, slicer };
 }
 
@@ -216,8 +209,9 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
         // The purge line is printed once, at the very start of the file. The foam slicer adds
         // its own when it is the only thing printed; with regular prints first, it goes in front
         // of those instead.
+        // The whole plate is drawn below, in print order; the foam slicer need not draw its part.
         const foamPath = foamModels.length
-            ? generateFoamToolpath(visualizer, foamModels, regularPath.length ? { purgeLine: false } : {})
+            ? generateFoamToolpath(visualizer, foamModels, { preview: false, ...(regularPath.length ? { purgeLine: false } : {}) })
             : [];
 
         const toolpaths: PathPoint[][] = [];
@@ -237,19 +231,26 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
             }
         }
 
-        // What the two slicers drew. They hang off the first object of each kind.
-        const previews = [regularModels[0], foamModels[0]]
-            .map(model => model?.toolpathVisualizationObject)
-            .filter((preview): preview is THREE.Group => preview !== undefined);
-
         if (!toolpaths.length) {
-            previews.forEach(preview => disposeObject3D(preview));
             notify('Slicing produced nothing to print. Check that the objects are on the bed and have some height.', 'warning');
             return;
         }
 
-        const gcode = buildPrintGcode(printer, toolpaths);
-        const summary = summarizePlate(toolpaths.flat(), gcode, regularModels.length ? regular.slicer : undefined);
+        const { gcode, estimate } = buildPrintGcodeWithEstimate(printer, toolpaths);
+        const summary = summarizePlate(toolpaths.flat(), gcode, {
+            regularSlicer: regularModels.length ? regular.slicer : undefined,
+            estimate,
+            filamentDiameter: printer.diameter_filament,
+            densities: printer.extruders.map(extruder => extruder.filamentDensity),
+        });
+
+        // One preview of the whole file, in the order it prints, moves between objects included.
+        const preview = new THREE.Group();
+        visualizeToolpath(combineToolpaths(toolpaths), preview, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+            (point, extruder) => printer.moveSpeed(point, extruder));
+        visualizer.scene.add(preview);
+        const previews = [preview];
+
         visualizer.setPlateSlice({
             gcode,
             fileName: defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'),

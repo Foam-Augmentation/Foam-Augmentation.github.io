@@ -235,7 +235,8 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [x] **D10 · P1 · read — the preview goes stale when a parameter changes.** The toolpath is drawn when the area is selected. Save regenerates from the current parameters, so after any edit the file differs from what is on screen. Only layer thickness triggers a redraw (`refreshModelGUIList.ts:286`).
   **Fixed:** Finishing an edit in a model's folder (slider released, value entered), or in Printer or Slicer Settings, regenerates the preview of every affected model that has a selected area, 300 ms after the last edit, behind the busy overlay. Buttons (Snap, Center, file pickers) and gizmo moves do not trigger it yet (N6).
   Fix: regenerate on change (debounced), or mark the preview "out of date" with a Regenerate button.
-- [ ] **D11 · P2 · verified — a successful selection reports nothing.** No message, no numbers. The preview was thin grey and green lines with no legend for travel, purge and extruder colours.
+- [~] **D11 · P2 · verified — a successful selection reports nothing.** No message, no numbers. The preview was thin grey and green lines with no legend for travel, purge and extruder colours.
+  **Status: partly fixed (2026-11-10).** A preview bar works on the selected augmentation's preview (and on the sliced plate): colour by feature, tool, speed, V\*, H\* or Edot with a legend, a slider through the layers in print order, and travel on or off. The augmentation export's message gives the time and filament. A selection itself still reports no numbers until it is exported.
   Fix: a result summary (layers, path length, estimated time and filament), a colour legend and a layer slider.
 
 ### Parameters panel
@@ -264,7 +265,7 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [ ] **D20 · P2 · read — the busy overlay has no progress and no cancel** (`notify.ts:82`). A long slice looks the same as a hung tab (S8).
   Fix: run in a worker, show progress per layer, allow Cancel.
 - [~] **D21 · P2 · read — saving goes straight to a download.** There is no summary of what the file contains (models, layers, temperatures, tools, time). Slice Plate slices and downloads in one click, so the result cannot be inspected first.
-  **Status: partly fixed (2026-11-10).** Foam and regular prints are sliced by **Slice Prints**, which shows the toolpath, each object's layer count and a summary (objects, regular slicer, tools, height, file size), and saved by **Export Print G-Code**. Any change to the plate marks the slice out of date, and the export compares a fingerprint of the plate with the one taken at slicing, so a stale file is never saved. No time or filament estimate yet, and the augmentation export still generates and downloads in one step.
+  **Status: partly fixed (2026-11-10).** Foam and regular prints are sliced by **Slice Prints**, which shows the toolpath, each object's layer count and a summary (objects, regular slicer, tools, height, file size), and saved by **Export Print G-Code**. Any change to the plate marks the slice out of date, and the export compares a fingerprint of the plate with the one taken at slicing, so a stale file is never saved. The summary also gives the print time, filament (m and g per tool) and pauses, worked out from the G-code (2026-11-10). The augmentation export still generates and downloads in one step.
   Fix: Slice → preview and summary → Export.
 - [ ] **D22 · P2 · read — delete uses the browser's `confirm()` and has no undo.**
   Fix: delete at once and offer Undo in the toast.

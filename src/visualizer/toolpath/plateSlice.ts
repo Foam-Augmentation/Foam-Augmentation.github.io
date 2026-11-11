@@ -11,6 +11,7 @@ import type { PathPoint } from './pathTypes';
 import type { RegularSlicerUsed } from './prusaSlicer';
 import { getExtruderUsage } from './buildGcode';
 import { SETTING_SPECS } from '../gui/paramSpecs';
+import { estimateGcode, type PrintEstimate } from './printEstimate';
 
 /** What a slice holds for one object. */
 export interface SlicedObject {
@@ -30,6 +31,22 @@ export interface PlateSummary {
     height: number;
     /** The size of the G-code file (bytes). */
     bytes: number;
+    /** How long it prints and how much filament it uses (see printEstimate.ts). */
+    estimate: PrintEstimate;
+    /** The weight (g) of the filament each tool uses, by tool number. */
+    filamentGrams: number[];
+}
+
+/** What {@link summarizePlate} needs besides the toolpath and the G-code. */
+export interface SummaryOptions {
+    /** What sliced the regular prints, if there were any. */
+    regularSlicer?: RegularSlicerUsed;
+    /** The estimate of the G-code, if it is already known. Worked out from the G-code otherwise. */
+    estimate?: PrintEstimate;
+    /** The filament diameter (mm), for the filament weight. */
+    filamentDiameter: number;
+    /** Each extruder's filament density (g/cm³), for the filament weight. */
+    densities: number[];
 }
 
 /** A sliced plate, ready to be exported. */
@@ -51,10 +68,10 @@ export interface PlateSlice {
  *
  * @param {PathPoint[]} toolpath Every point of the plate, in print order.
  * @param {string} gcode The G-code made from it.
- * @param {RegularSlicerUsed} [regularSlicer] What sliced the regular prints, if there were any.
+ * @param {SummaryOptions} options The slicer used, the estimate if known, and the filament.
  * @returns {PlateSummary} The summary.
  */
-export function summarizePlate(toolpath: PathPoint[], gcode: string, regularSlicer?: RegularSlicerUsed): PlateSummary {
+export function summarizePlate(toolpath: PathPoint[], gcode: string, options: SummaryOptions): PlateSummary {
     const layersByObject = new Map<number, Set<number>>();
     let height = 0;
     for (const point of toolpath) {
@@ -82,12 +99,19 @@ export function summarizePlate(toolpath: PathPoint[], gcode: string, regularSlic
     for (const [objectId, layers] of layersByObject) {
         objects.set(objectId, { layers: layers.size });
     }
+    const estimate = options.estimate ?? estimateGcode(gcode).estimate;
+    // mm of filament -> mm³ -> cm³ -> g.
+    const crossSection = Math.PI * (options.filamentDiameter / 2) ** 2;
+    const filamentGrams = estimate.filament.map((length, tool) =>
+        Math.max(0, length) * crossSection / 1000 * (options.densities[tool] ?? options.densities[0] ?? 0));
     return {
-        regularSlicer,
+        regularSlicer: options.regularSlicer,
         objects,
         tools: getExtruderUsage(toolpath).used,
         height,
         bytes: new TextEncoder().encode(gcode).length,
+        estimate,
+        filamentGrams,
     };
 }
 

@@ -136,6 +136,7 @@ export const EXTRUDER_SPECS = {
   dieSwelling: num('Die Swell Factor', 0.1, 2, 0.01, 'How much the thread widens as it leaves the nozzle (thread diameter ÷ nozzle diameter).', false, [0.5, 2]),
   print_temp_extruder: num('Print Temperature (°C)', 0, 300, 1, 'Nozzle temperature while this extruder is printing.', false, [150, 300]),
   idle_temp_extruder: num('Idle Temperature (°C)', 0, 300, 1, 'Standby temperature while this extruder is parked.'),
+  filamentDensity: num('Filament Density (g/cm³)', 0.5, 3, 0.01, 'Density of the filament in this extruder, for the filament weight in the slice summary. TPU is about 1.21, PLA 1.24, PETG 1.27.', false, [0.8, 2]),
   printHead_speed_when_free_move: num('Travel Speed (mm/min)', 1, 10000, 1, 'Print head speed for moves that do not extrude.', false, [100, 6000]),
   color: num('Color', 0, 0xffffff, 1, 'Display colour of this extruder\'s toolpath (RGB as a number).', true),
 } as const;

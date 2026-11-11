@@ -20,7 +20,7 @@ describe('summarizePlate', () => {
         at(50, { role: 'purgeTower', extruder: 1 }),
         at(3, { objectId: 2, layer: 0, extruder: 1 }),
     ];
-    const summary = summarizePlate(toolpath, 'G1 X1 ; é\n', 'prusaslicer');
+    const summary = summarizePlate(toolpath, 'G1 X1 ; é\n', { regularSlicer: 'prusaslicer', filamentDiameter: 1.75, densities: [1.21] });
 
     it('counts the layers each object prints in, leaving travel out', () => {
         expect([...summary.objects]).toEqual([[1, { layers: 3 }], [2, { layers: 1 }]]);
@@ -34,6 +34,23 @@ describe('summarizePlate', () => {
         expect(summary.tools).toEqual([0, 1]);
         expect(summary.bytes).toBe(11);
         expect(summary.regularSlicer).toBe('prusaslicer');
+    });
+});
+
+describe('summarizePlate: time and filament', () => {
+    it('estimates the G-code, and weighs each tool\'s filament with its own density', () => {
+        // 1000 mm of 1.75 mm filament is 2.405 cm³.
+        const gcode = 'M83\nG1 X10 E1000 F1200\nT1 S1 L0 D0\nG1 X20 E1000';
+        const summary = summarizePlate([], gcode, { filamentDiameter: 1.75, densities: [1, 2] });
+        expect(summary.estimate.filament).toEqual([1000, 1000]);
+        expect(summary.filamentGrams[0]).toBeCloseTo(2.405, 3);
+        expect(summary.filamentGrams[1]).toBeCloseTo(4.811, 3);
+        expect(summary.estimate.seconds).toBeGreaterThan(0);
+    });
+
+    it('takes an estimate it is given instead of working it out again', () => {
+        const estimate = { seconds: 60, filament: [500], stops: 1, toolChanges: 0 };
+        expect(summarizePlate([], '', { estimate, filamentDiameter: 1.75, densities: [1.21] }).estimate).toBe(estimate);
     });
 });
 

@@ -25,6 +25,7 @@ import {
 } from '../utils/TreeSlicer';
 import { notify } from '../gui/notify';
 import { FEATURE, type PathPoint } from './pathTypes';
+import { buildToolpathPreview } from './toolpathPreview';
 import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
 import { getRequiredZOffset } from './collision';
 import {
@@ -1336,6 +1337,11 @@ export interface FoamToolpathOptions {
      * the nozzle.
      */
     purgeLine?: boolean;
+    /**
+     * Whether to draw the toolpath in the scene (on the first model's `toolpathVisualizationObject`).
+     * Defaults to true. Pass false when the caller draws a bigger toolpath it is part of.
+     */
+    preview?: boolean;
 }
 
 /**
@@ -1466,11 +1472,13 @@ export function generateFoamToolpath(
     pushAll(toolpath, boundaryPath);
     pushAll(toolpath, modelPath);
 
-    const visualizationGroup = new THREE.Group();
-    visualizeToolpath(toolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
-
-    visualizer.scene.add(visualizationGroup);
-    modelObjs[0].toolpathVisualizationObject = visualizationGroup;
+    if (options.preview ?? true) {
+        const visualizationGroup = new THREE.Group();
+        visualizeToolpath(toolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+            (point, extruder) => printer.moveSpeed(point, extruder));
+        visualizer.scene.add(visualizationGroup);
+        modelObjs[0].toolpathVisualizationObject = visualizationGroup;
+    }
     return toolpath;
 }
 
@@ -1588,62 +1596,29 @@ export function makePurgeLine(printer: Printer): PathPoint[] {
 
 
 /**
- * Visualizes a toolpath, showing travel movements and print movements
- * as separate colors.
- * 
- * @param toolpath The toolpath to visualize
- * @param visualizationGroup The visualization group to add the visualization to.
- * @param printColors The colors for print extrusions, indexed by extruder.
- * @param travelColor The color the visualization should be for travel movements.
+ * Draws a toolpath into a group: its extruding moves coloured by feature, and its travel moves,
+ * as one preview (see toolpathPreview.ts). The preview is kept on the group as
+ * `userData.preview`, so the preview bar can recolour it and show it layer by layer.
+ *
+ * @param toolpath The toolpath to draw.
+ * @param visualizationGroup The group to draw into.
+ * @param printColors The colour of each tool, by tool number.
+ * @param travelColor The colour of travel moves.
+ * @param speedOf The head speed (mm/min) of the move to a point, for colouring by speed.
  */
 export function visualizeToolpath(
     toolpath: PathPoint[],
     visualizationGroup: THREE.Group,
     printColors: number[],
-    travelColor: number
+    travelColor: number,
+    speedOf?: (point: PathPoint, extruder: number) => number | undefined,
 ): void {
     if (!toolpath.length) {
         return;
     }
-    let allVertices: number[] = [];
-    let lastPoint = toolpath[0];
-
-    const visualizeSegment = () => {
-        if (allVertices.length > 0) {
-            const geometry = new THREE.BufferGeometry();
-
-            geometry.setAttribute(
-                'position',
-                new THREE.Float32BufferAttribute(new Float32Array(allVertices), 3)
-            );
-
-            // Print moves are colored per extruder so material changes are visible.
-            // Anything past the end of the palette falls back to the first color.
-            const printColor = printColors[lastPoint.extruder ?? 0] ?? printColors[0];
-            const material = new THREE.LineBasicMaterial({
-                color: lastPoint.travel ? travelColor : printColor,
-                linewidth: 2,
-            });
-
-            const line = new THREE.Line(geometry, material);
-            visualizationGroup.add(line);
-        }
-        allVertices = [];
-    };
-
-    for (const point of toolpath) {   
-        if ((lastPoint.travel as boolean) != (point.travel as boolean)) {
-            visualizeSegment();
-            if (point.travel) {
-                allVertices.push(lastPoint.point.x, lastPoint.point.y, lastPoint.point.z);
-            }
-        }
-        allVertices.push(point.point.x, point.point.y, point.point.z);
-
-        lastPoint = point;
-    }
-
-    visualizeSegment()
+    const preview = buildToolpathPreview(toolpath, { toolColors: printColors, travelColor, speedOf });
+    visualizationGroup.add(preview.extrusion, preview.travel);
+    visualizationGroup.userData.preview = preview;
 }
 
 
@@ -2079,7 +2054,8 @@ export function generateAugmentFoamToolpath(
     pushAll(fullToolpath, toolpath);
 
     // --- 4. Visualize the toolpath
-    visualizeToolpath(fullToolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
+    visualizeToolpath(fullToolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+        (point, extruder) => printer.moveSpeed(point, extruder));
 
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;

@@ -33,7 +33,8 @@
                 <span class="export-label">Slice Prints</span>
                 <span class="export-note"></span>
             </button>
-            <div id="plateSummary" role="status" hidden></div>
+            <div id="plateSummary" role="status" hidden
+                title="The time counts the moves, dwells and tool changes. Heating, homing, bed probing and the time the printer waits for you at a pause are not included."></div>
             <button type="button" id="exportPrintsButton" class="export-button" disabled
                 title="Save the G-code of the last slice. Slice again after changing the plate.">
                 <span class="export-label">Export Print G-Code</span>
@@ -41,6 +42,25 @@
             </button>
         </footer>
     </aside>
+
+    <!-- Toolpath preview controls: colours, a slider through the layers in print order, and a
+         legend (see gui/previewBar.ts). Shown while there is a preview to work on. -->
+    <div id="previewBar" hidden>
+        <div class="preview-row">
+            <span id="previewTitle" class="preview-title">Preview</span>
+            <label class="preview-control">Colour by
+                <select id="previewColorMode"></select>
+            </label>
+            <label class="preview-control"><input type="checkbox" id="previewTravel" checked> Travel</label>
+            <label class="preview-control"><input type="checkbox" id="previewOnlyLayer"> Only this layer</label>
+        </div>
+        <div class="preview-row">
+            <input type="range" id="previewStep" min="0" max="0" step="1" value="0"
+                aria-label="Layers shown, in print order" title="Build the print up layer by layer, in the order it prints (arrow keys step one layer)">
+            <span id="previewStepLabel" class="preview-step-label"></span>
+        </div>
+        <div id="previewLegend" class="preview-legend"></div>
+    </div>
 
     <!-- Getting-started card, shown while no model is loaded (see gui/emptyState.ts). -->
     <div id="emptyState" style="display: none;">

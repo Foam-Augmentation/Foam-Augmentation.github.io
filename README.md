@@ -41,7 +41,7 @@ Every object shows in the `Objects` list with its type. Click an object there (o
     <img src="src/images/augmentation.png" width="307">
 </div>
 
-- For `Foam Print` and `Regular Print` objects, press `Slice Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. When it is done the toolpath shows in the 3D view, each object's row says how many layers it has, and a summary under the button says what the file holds (objects, which slicer made the regular parts, tools, height and file size).
+- For `Foam Print` and `Regular Print` objects, press `Slice Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. When it is done the toolpath shows in the 3D view (see **Preview** below), each object's row says how many layers it has, and a summary under the button says what the file holds: objects, which slicer made the regular parts, about how long it prints, how much filament it uses (metres and grams, per tool), how many pauses it has, tools, height and file size.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/foam-slicing.png" width="300" style="margin-bottom: 20px;"><br>
@@ -55,6 +55,14 @@ Every object shows in the `Objects` list with its type. Click an object there (o
 <div align="center" style="margin: 20px;">
     <img src="src/images/saving.png" width="300">
 </div>
+
+# Preview
+A bar across the top of the 3D view controls the toolpath preview. It works on the selected Augmentation object's preview, or else on the sliced plate (until the plate changes).
+- `Colour by`: `Feature` (foam, initial foam, sensing foam, walls, infill, solid infill, support, shell, and purge/brim/boundary), `Tool`, `Speed`, `V*`, `H*` or `Edot`. The legend under it says what the colours mean; click a feature or tool in the legend to hide it or show it again.
+- The slider builds the print up one step at a time, in the order it prints: each step is one layer of one object (or the purge line, or a block of the purge tower). The label says which object and layer it is and at what height. While the slider is not at the end, the sliced prints' models are hidden so the layers inside them show; Augmentation objects stay.
+- `Only this layer` shows the slider's step alone. `Travel` shows or hides the moves that do not extrude.
+
+The time estimate follows the motion limits the G-code sets (speeds, acceleration, jerk); for a PrusaSlicer-sliced test part it came within 1 % of PrusaSlicer's own estimate. It does not count heating, homing, bed probing, or the time the printer waits for you at a pause, and it allows 20 s per tool change. Every exported file (prints and augmentations) also carries `M73` progress lines, so the printer shows how far along it is, the time left and, when there is a pause ahead, the time until it.
 
 # Other Features
 
@@ -99,6 +107,7 @@ Every control in the panel has a tooltip with the same description as below; hov
         - `Print Temperature (°C)`: Nozzle temperature while the extruder is printing.
         - `Idle Temperature (°C)`: Standby temperature while the extruder is parked.
         - `Travel Speed (mm/min)`: Print head speed for moves that do not extrude.
+        - `Filament Density (g/cm³)`: Density of the filament in this extruder, for the filament weight in the slice summary (TPU is about 1.21, PLA 1.24, PETG 1.27).
 - `Slicer Settings` folder:
     - `Fermat Spiral Infill`: If checked, infill patterns will be generated with fermat spirals. If not checked the slicer will generate a rectilinear pattern.
     - `Print Boundary`: if checked, the printer will print a boundary around the model. If selected when augmenting, the printer will also pause the print after the boundary is made, so you can place your object in the and then resume the augmentation.

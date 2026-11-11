@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type Printer from '../../printer/Printer';
 import type { PathPoint } from './pathTypes';
 import { BOUNDS_TOLERANCE, TRAVEL_CLEARANCE } from './toolpathConstants';
+import { addProgressLines, type PrintEstimate } from './printEstimate';
 
 /** At most this many individual problems are spelled out in a validation error. */
 const MAX_REPORTED_PROBLEMS = 5;
@@ -252,7 +253,8 @@ export function assertPrintable(printer: Printer, toolpath: PathPoint[]): void {
  * All bodies are emitted here, in one pass, after the start G-code: the tool that is picked and
  * the material that is loaded are carried from one model into the next, so a model that needs a
  * different tool than the previous one ended on gets a tool change. Start G-code, purge line and
- * end G-code each appear exactly once, and every heater is switched off at the end.
+ * end G-code each appear exactly once, and every heater is switched off at the end. Progress lines
+ * (M73) are added throughout, so the printer can show how far along it is and how long is left.
  *
  * @param {Printer} printer The printer to generate G-code for.
  * @param {PathPoint[][]} toolpaths One toolpath per model, in print order.
@@ -260,6 +262,18 @@ export function assertPrintable(printer: Printer, toolpath: PathPoint[]): void {
  * @throws {Error} If there is nothing to print, or the toolpath fails validation.
  */
 export function buildPrintGcode(printer: Printer, toolpaths: PathPoint[][]): string {
+    return buildPrintGcodeWithEstimate(printer, toolpaths).gcode;
+}
+
+/**
+ * {@link buildPrintGcode}, also returning how long the print takes and how much filament it uses.
+ *
+ * @param {Printer} printer The printer to generate G-code for.
+ * @param {PathPoint[][]} toolpaths One toolpath per model, in print order.
+ * @returns {{ gcode: string, estimate: PrintEstimate }} The whole G-code file and its estimate.
+ * @throws {Error} If there is nothing to print, or the toolpath fails validation.
+ */
+export function buildPrintGcodeWithEstimate(printer: Printer, toolpaths: PathPoint[][]): { gcode: string, estimate: PrintEstimate } {
     const toolpath = combineToolpaths(toolpaths);
     if (!toolpath.length) {
         throw new Error('There is no toolpath to generate G-code from.');
@@ -271,5 +285,5 @@ export function buildPrintGcode(printer: Printer, toolpaths: PathPoint[][]): str
     // The start G-code probes, and cleans the nozzle next to, the area the first layer covers.
     const start = printer.build_start_gcode(first, used, printer.boundsFromToolpath(toolpath));
     const body = printer.generate_foam_gcode(toolpath, printer.createEmitterState(first));
-    return start + body + printer.build_end_gcode();
+    return addProgressLines(start + body + printer.build_end_gcode());
 }

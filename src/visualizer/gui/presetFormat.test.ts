@@ -23,6 +23,7 @@ function makeExtruder(): ExtruderValues {
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
+    filamentDensity: 1.21,
     color: 0x00ff00,
   };
 }
