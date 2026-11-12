@@ -23,6 +23,8 @@ const MAX_CONSOLE_OUTPUT = 16 * 1024 * 1024;
 const MAX_STL_BYTES = 512 * 1024 * 1024;
 /** The most parts one request may contain. */
 const MAX_PARTS = 256;
+/** The largest vendor profile bundle (bytes) read from the PrusaSlicer install. */
+const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 
 const PAGE = path.join(__dirname, '..', 'dist', 'index.html');
 
@@ -85,6 +87,33 @@ function findPrusaSlicer() {
     return defaultPrusaSlicerPaths().find(isFile);
 }
 
+/**
+ * Prusa's own profile bundle (printers, prints, filaments) in the PrusaSlicer install that is
+ * used: next to the program on Windows, in the app bundle's Resources on macOS, under share/ on
+ * Linux. The app reads it from there; it does not ship it.
+ */
+function findVendorBundle() {
+    const executable = findPrusaSlicer();
+    if (!executable) return undefined;
+    const dir = path.dirname(executable);
+    const candidates = [
+        path.join(dir, 'resources', 'profiles', 'PrusaResearch.ini'),
+        path.join(dir, '..', 'Resources', 'profiles', 'PrusaResearch.ini'),
+        path.join(dir, '..', 'resources', 'profiles', 'PrusaResearch.ini'),
+        path.join(dir, '..', 'share', 'PrusaSlicer', 'profiles', 'PrusaResearch.ini'),
+        '/usr/share/PrusaSlicer/profiles/PrusaResearch.ini',
+    ];
+    return candidates.find(isFile);
+}
+
+function readVendorBundle() {
+    const file = findVendorBundle();
+    if (!file || fs.statSync(file).size > MAX_BUNDLE_BYTES) {
+        return { text: null };
+    }
+    return { text: fs.readFileSync(file, 'utf8'), path: file };
+}
+
 function getStatus() {
     const executable = findPrusaSlicer();
     const profile = readSettings().profilePath;
@@ -98,18 +127,26 @@ function getStatus() {
 // --- slicing ----------------------------------------------------------------------------------
 
 /** Checks a request from the page. The page is our own, but it is still the less trusted side. */
+/** Checks settings text from the page: `key = value` lines and nothing else. */
+function validateIni(ini, maxLength, what) {
+    if (typeof ini !== 'string' || ini.length > maxLength) {
+        throw new Error(`The slicing request has no valid ${what}.`);
+    }
+    for (const line of ini.split('\n')) {
+        if (line !== '' && !/^[a-z0-9_]+ = [^\r\n]*$/.test(line)) {
+            throw new Error(`The slicing request has a ${what} line that is not "key = value": ${line.slice(0, 80)}`);
+        }
+    }
+}
+
 function validateRequest(request) {
     if (!request || typeof request !== 'object') {
         throw new Error('The slicing request is empty.');
     }
-    const { parts, ini } = request;
-    if (typeof ini !== 'string' || ini.length > 1024 * 1024) {
-        throw new Error('The slicing request has no valid settings.');
-    }
-    for (const line of ini.split('\n')) {
-        if (line !== '' && !/^[a-z0-9_]+ = [^\r\n]*$/.test(line)) {
-            throw new Error(`The slicing request has a settings line that is not "key = value": ${line.slice(0, 80)}`);
-        }
+    const { parts, ini, profileIni } = request;
+    validateIni(ini, 1024 * 1024, 'settings');
+    if (profileIni !== undefined) {
+        validateIni(profileIni, 4 * 1024 * 1024, 'profile settings');
     }
     if (!Array.isArray(parts) || parts.length === 0 || parts.length > MAX_PARTS) {
         throw new Error('The slicing request has no parts.');
@@ -147,6 +184,10 @@ async function slice(request) {
     try {
         const iniPath = path.join(folder, 'settings.ini');
         fs.writeFileSync(iniPath, request.ini);
+        const vendorPath = path.join(folder, 'vendor-profiles.ini');
+        if (request.profileIni) {
+            fs.writeFileSync(vendorPath, request.profileIni);
+        }
         const stlPaths = request.parts.map((part, i) => {
             const file = path.join(folder, `part-${i}.stl`);
             fs.writeFileSync(file, part.stl);
@@ -159,7 +200,9 @@ async function slice(request) {
             // Slice every part as one plate, where they are: no centring or arranging.
             '--merge',
             '--dont-arrange',
-            // The user's profile first, so our settings win wherever both set something.
+            // Prusa's profiles chosen in the app first, then the user's own profile, then our
+            // settings: each wins over the ones before it wherever both set something.
+            ...(request.profileIni ? ['--load', vendorPath] : []),
             ...(profile ? ['--load', profile] : []),
             '--load', iniPath,
             '--output', output,
@@ -264,6 +307,7 @@ function createWindow() {
 
 ipcMain.handle('prusa:status', () => getStatus());
 ipcMain.handle('prusa:slice', (_event, request) => slice(request));
+ipcMain.handle('prusa:vendorProfiles', () => readVendorBundle());
 
 app.whenReady().then(() => {
     if (!isFile(PAGE)) {

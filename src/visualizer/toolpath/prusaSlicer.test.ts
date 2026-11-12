@@ -104,3 +104,52 @@ describe('isPrusaSlicerAvailable', () => {
         expect(await isPrusaSlicerAvailable(bridge)).toBe(false);
     });
 });
+
+describe('Prusa profiles in the slicing request', () => {
+    const BUNDLE = [
+        '[printer:Original Prusa XL Input Shaper 0.4 nozzle]',
+        'printer_technology = FFF',
+        'nozzle_diameter = 0.4',
+        'retract_length = 0.8',
+        '[print:0.20mm SPEED @XLIS 0.4]',
+        'perimeter_acceleration = 3000',
+        'compatible_printers_condition = nozzle_diameter[0]==0.4',
+        '[filament:Generic PLA @XLIS]',
+        'start_filament_gcode = "M572 S0.036"',
+    ].join('\n');
+
+    function bridgeWithBundle(): PrusaSlicerBridge & { slice: ReturnType<typeof vi.fn> } {
+        return { ...fakeBridge(true), vendorProfiles: async () => ({ text: BUNDLE }) };
+    }
+
+    it('sends the chosen printer, print and filament profiles to be loaded under the app\'s settings', async () => {
+        const printer = new Printer();
+        printer.prusaPrinterProfile = 'Original Prusa XL Input Shaper 0.4 nozzle';
+        const bridge = bridgeWithBundle();
+        const config = { ...DEFAULT_REGULAR_CONFIG, printProfile: '0.20mm SPEED @XLIS 0.4', filamentProfile: 'Generic PLA @XLIS' };
+        await sliceRegularParts(printer, [cube(40, config)], bridge);
+        const { profileIni, ini } = bridge.slice.mock.calls[0][0];
+        expect(profileIni).toContain('retract_length = 0.8');
+        expect(profileIni).toContain('perimeter_acceleration = 3000');
+        expect(profileIni).toContain('start_filament_gcode = "M572 S0.036"');
+        expect(profileIni).not.toContain('compatible_printers_condition');
+        // The app's own settings stay in their own file, loaded last.
+        expect(ini).toContain('layer_height = ');
+        expect(ini).not.toContain('retract_length');
+    });
+
+    it('leaves out a profile the bundle does not have, and says so', async () => {
+        const printer = new Printer();
+        printer.prusaPrinterProfile = 'Original Prusa XL Input Shaper 0.4 nozzle';
+        const bridge = bridgeWithBundle();
+        const result = await sliceRegularParts(printer, [cube(40, { ...DEFAULT_REGULAR_CONFIG, printProfile: 'Gone' })], bridge);
+        expect(bridge.slice.mock.calls[0][0].profileIni).toContain('retract_length = 0.8');
+        expect(result.notes.some(note => /print profile “Gone”/.test(note))).toBe(true);
+    });
+
+    it('sends no profile file when none is chosen', async () => {
+        const bridge = bridgeWithBundle();
+        await sliceRegularParts(new Printer(), [cube(40)], bridge);
+        expect(bridge.slice.mock.calls[0][0].profileIni).toBeUndefined();
+    });
+});

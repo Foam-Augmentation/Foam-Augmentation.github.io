@@ -15,6 +15,7 @@ import { disposeObject3D } from '../gui/modelActions';
 import { plateFingerprint, summarizePlate } from './plateSlice';
 import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
 import { describeEstimate } from '../gui/objectSummary';
+import { describeHeadConflicts } from '../gui/placement';
 import { saveGcodeToFile } from './saveGcodeToFile';
 import { defaultDownloadName } from '../gui/downloadName';
 import { TRAVEL_CLEARANCE, TRAVEL_PREVIEW_COLOR } from './toolpathConstants';
@@ -75,10 +76,32 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
         const { gcode, estimate } = buildPrintGcodeWithEstimate(visualizer.printer, toolpaths);
         saveGcodeToFile(gcode, defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'));
         notify(`G-code for ${toolpaths.length} model${toolpaths.length === 1 ? '' : 's'} saved. ${describeEstimate(estimate)}.`, 'success');
+        warnAboutHeadConflicts(visualizer, models);
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);
     });
+}
+
+/** At most this many head conflicts are spelled out; the rest are counted. */
+const MAX_REPORTED_CONFLICTS = 3;
+
+/**
+ * Warns when printing foam at one of the objects in a file would bring the print head into
+ * another one of them that is taller than the nozzle (see utils/arrange.ts). Arrange keeps such
+ * objects apart; this catches objects the user placed by hand.
+ *
+ * @param {Visualizer} visualizer The visualizer, for the printer.
+ * @param {EverydayModel[]} models The objects the file prints at.
+ */
+function warnAboutHeadConflicts(visualizer: Visualizer, models: EverydayModel[]): void {
+    const conflicts = describeHeadConflicts(visualizer, models);
+    if (!conflicts.length) return;
+    const more = conflicts.length - MAX_REPORTED_CONFLICTS;
+    notify(
+        `${conflicts.slice(0, MAX_REPORTED_CONFLICTS).join(' ')}${more > 0 ? ` (and ${more} more)` : ''} Move them apart, or press Arrange.`,
+        'warning'
+    );
 }
 
 /**
@@ -261,12 +284,7 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
         });
 
         notify('Plate sliced. Check the preview and the summary, then press Export Print G-Code.', 'success');
-        if (regularPath.length && foamPath.length) {
-            notify(
-                'This file prints the regular parts first and the foam parts after them. Nothing checks that the print head clears the finished regular parts while it prints foam next to them: keep them well apart.',
-                'warning'
-            );
-        }
+        warnAboutHeadConflicts(visualizer, models);
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);

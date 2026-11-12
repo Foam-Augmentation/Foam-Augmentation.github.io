@@ -88,7 +88,7 @@ Files: `src/printer/Printer.ts`, `src/visualizer/toolpath/*`.
 - [x] **G17 · P2 · read — gradient bounds are per chunk, not per model** (`:1120,1158`), and divide by zero for a zero-width chunk.
 - [x] **G18 · P2 · read — toolpath performance hot spots.** `fillToolpath` re-runs over the remaining path at every recursion level (`:1389`); one `THREE.Points` object per sample point (`:3029-3051`); `unshift` per point (`:2011,2156,2194`); `getImageData(1×1)` per gradient sample (`modelLoader.ts:278`).
 - [x] **G19 · P3 · read — `changeTool` heats to print temperature even in `testSweep`** (`Printer.ts:418`); `saveGcodeToFile.ts:23` revokes the blob URL synchronously.
-- [ ] **G20 · P3 · unconfirmed — printer-behaviour questions to check on hardware.** `approachTravelPoint` crosses at `max(from.z, to.z)` and could hit a taller printed chunk in between; the purge tower is printed by the outgoing tool so the incoming one is never primed; `M900 K30` and `G92 X0 Y0` after homing may be wrong on XL firmware; `initGUI.ts:357` carries a TODO asking whether end G-code is added twice.
+- [ ] **G20 · P3 · unconfirmed — printer-behaviour questions to check on hardware.** `approachTravelPoint` crosses at `max(from.z, to.z)` and could hit a taller printed chunk in between; the purge tower is printed by the outgoing tool so the incoming one is never primed; `G92 X0 Y0` after homing may be wrong on XL firmware (the start G-code no longer writes `M900 K30`: pressure advance is now turned off with `M572 S0` on the XL and `M900 K0` on the MK3S); `initGUI.ts:357` carries a TODO asking whether end G-code is added twice.
   **Status: not fixed.** Needs a printer. Firmware commands untouched; in-print travel to the purge tower still crosses at `max(from.z, to.z)`.
 
 ---
@@ -217,7 +217,7 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
   **Fixed:** The bed has a surface, a 10 mm grid (stronger every 50 mm) and a solid outline; the rest of the print space is drawn faintly.
   Fix: a grid plane with the front edge marked.
 - [~] **D5 · P2 · verified — import gives no confirmation and does not select the new model.** No toast, no highlight in the panel. Every model is placed at the bed centre (`modelLoader.ts:147`), so a second model lands inside the first.
-  **Status: partly fixed.** A new model is framed by the camera (D3). No toast, no selection, and models still stack at the bed centre.
+  **Status: partly fixed.** A new model is framed by the camera (D3), selected, and placed in the free space nearest the bed centre (2026-11-11). There is still no toast.
   Fix: select and frame the new model; place it in free bed space.
 - [ ] **D6 · P2 · read — nothing survives a reload.** Models, transforms and selected areas are lost; presets carry parameters only. There is no warning on leaving the page.
   Fix: a project file (or autosave to browser storage) and a leave-page warning while there is unsaved work.
@@ -253,8 +253,9 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
   Fix: one "Layers" group showing the total; name the two ramps consistently ("Top …" for vertical, "Gradient …" for SVG).
 - [ ] **D16 · P2 · read — file pickers leave no trace.** After "Select Augment Model", "Select Bump Model" or "Select Gradient SVG" nothing shows that a file is loaded, which one, or how to remove it (`modelLoader.ts:266-348,438`).
   Fix: show the file name with a remove button; draw the gradient or bump preview on the model.
-- [ ] **D17 · P2 · read — the transform controls are minimal.** One X/Y/Z triple changes meaning with Mode; no uniform-scale lock, no reset, and the model is not dropped back onto the bed after a rotate or scale. Any click on a model attaches the gizmo, including a click meant to start an orbit.
+- [~] **D17 · P2 · read — the transform controls are minimal.** One X/Y/Z triple changes meaning with Mode; no uniform-scale lock, no reset, and the model is not dropped back onto the bed after a rotate or scale. Any click on a model attaches the gizmo, including a click meant to start an orbit.
   Fix: separate position / rotation / scale rows, a scale lock, Reset, auto drop-to-bed, and W/E/R shortcuts.
+  **Status: partly fixed (2026-11-11).** Lay on Face (F), Arrange (A), Duplicate (Ctrl+D), and Snap Model to Plate now rests the lowest point on the bed whatever the rotation. Still one X/Y/Z triple, no scale lock or reset.
 - [ ] **D18 · P3 · read — printer setup is a list of raw numbers.** No printer profiles, presets exist only as `.txt` files on disk, extruders are numbered from 0 with no tie to T0/T1, and the extruder colour has a spec but no control (`extruderSettings.ts:9`).
   Fix: a printer dropdown with built-in profiles, named presets kept in the app, a colour swatch per extruder.
 
@@ -326,8 +327,9 @@ Added 2026-11-09 (after commit `260667e`). The single nested panel and the globa
 
 - [ ] **R1 · P1 · unconfirmed — regular prints are untested on hardware and have no retraction.** The G-code pipeline has no retraction, so travels inside a layer cross gaps and holes at print height with the nozzle primed: expect stringing. There is no first-layer handling (same height, flow and speed as every layer), no skirt or brim, no supports, bridging or fan control.
   Fix: test on a printer first; then add retraction with z-hop and a first-layer speed.
-- [ ] **R2 · P1 · read — no collision check on a mixed plate.** Foam prints follow the regular prints in the same file. The head arrives from above, but nothing checks that the print head (about 75 × 85 mm) clears a finished regular part while it prints foam next to it. The app warns about this after export.
+- [~] **R2 · P1 · read — no collision check on a mixed plate.** Foam prints follow the regular prints in the same file. The head arrives from above, but nothing checks that the print head (about 75 × 85 mm) clears a finished regular part while it prints foam next to it. The app warns about this after export.
   Fix: check the print-head footprint against finished parts, or refuse plates where they are closer than the head.
+  **Status: partly fixed (2026-11-11).** Arrange and the placement of new objects keep anything taller than the nozzle out of the print head's reach (Print Head Min/Max X/Y) around a Foam Print or Augmentation, and slicing or exporting warns by name about any such object placed by hand. The check is on outlines seen from above and the head's rectangle; it is not a full 3D collision check.
 - [~] **R3 · P2 · read — the object type and the regular print settings are not in presets.** Export and import carry the foam parameters only.
   **Status: partly fixed (2026-11-10).** Presets (version 3) carry every Regular Print setting as `regular.<key>` lines. The object type is left out on purpose: a preset imported with no object selected applies to every object, and it would turn them all into the same type.
 - [ ] **R4 · P2 · read — augmentations export to a separate file.** A plate cannot print a regular part and then augment it in one run.

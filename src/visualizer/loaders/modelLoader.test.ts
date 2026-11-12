@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { createExampleGeometry, createPixelGradient, parseStlGeometry, sampleMesh } from './modelLoader';
+import { copyName, createExampleGeometry, createPixelGradient, parseStlGeometry, sampleMesh } from './modelLoader';
 
 /** Builds a binary STL file holding the given triangles (9 numbers each). */
 function binaryStl(triangles: number[][]): ArrayBuffer {
@@ -170,4 +170,13 @@ describe('createExampleGeometry (D2)', () => {
     expect(box.max.z).toBeCloseTo(12);
     expect(box.max.x).toBeCloseTo(30);
   });
+});
+
+describe('copyName', () => {
+    it('numbers copies from 2, skipping names that are taken', () => {
+        expect(copyName(['bottle.stl'], 'bottle.stl')).toBe('bottle.stl (2)');
+        expect(copyName(['bottle.stl', 'bottle.stl (2)'], 'bottle.stl')).toBe('bottle.stl (3)');
+        // A copy of a copy counts on from the original's name.
+        expect(copyName(['bottle.stl', 'bottle.stl (2)'], 'bottle.stl (2)')).toBe('bottle.stl (3)');
+    });
 });

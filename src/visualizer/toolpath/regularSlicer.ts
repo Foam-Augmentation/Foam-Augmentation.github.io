@@ -93,6 +93,10 @@ export interface RegularPrintConfig {
     supportThreshold: number;
     /** Width (mm) of the brim around the part's first layer. 0 prints none. */
     brimWidth: number;
+    /** Prusa's print profile to start from ('' for none). See prusaProfiles.ts. */
+    printProfile: string;
+    /** Prusa's filament profile to use ('' for none). */
+    filamentProfile: string;
 }
 
 /**
@@ -114,6 +118,8 @@ export const DEFAULT_REGULAR_CONFIG: RegularPrintConfig = {
     supportStyle: 'snug',
     supportThreshold: 45,
     brimWidth: 0,
+    printProfile: '',
+    filamentProfile: '',
 };
 
 /** One model to print as a regular part. */

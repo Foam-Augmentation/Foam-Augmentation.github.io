@@ -52,7 +52,16 @@ export interface EnumSpec {
   optionLabels: Readonly<Record<string, string>>;
 }
 
-export type ParamSpec = NumberSpec | BooleanSpec | EnumSpec;
+/** A parameter that holds a name or other short text (e.g. a PrusaSlicer profile). Empty means "none". */
+export interface TextSpec {
+  type: 'text';
+  label: string;
+  tip: string;
+  /** The longest text allowed. */
+  maxLength: number;
+}
+
+export type ParamSpec = NumberSpec | BooleanSpec | EnumSpec | TextSpec;
 
 /** Shorthand for a numeric spec. */
 function num(
@@ -70,6 +79,11 @@ function num(
 /** Shorthand for a boolean spec. */
 function bool(label: string, tip: string): BooleanSpec {
   return { type: 'boolean', label, tip };
+}
+
+/** Shorthand for a text spec. */
+function text(label: string, tip: string, maxLength = 200): TextSpec {
+  return { type: 'text', label, tip, maxLength };
 }
 
 /**
@@ -119,6 +133,7 @@ export const SETTING_SPECS = {
   checkCollisions: bool('Check Collisions', 'When augmenting, check whether the print head would hit the object and suggest an H* that avoids it. Makes slicing slower.'),
   bedLeveling: bool('Bed Leveling', 'Probe the bed for automatic leveling before printing.'),
   testSweep: bool('Test Sweep (Dry Run)', 'Follow the toolpath without heating or extruding, to check that the print head clears the object.'),
+  prusaPrinterProfile: text('PrusaSlicer Printer', `Prusa's printer profile the desktop app slices Regular Prints with: retraction, wipe and the other printer settings PrusaSlicer uses. The bed size, nozzle and temperatures still come from Printer Settings. It also decides which print and filament profiles each object can choose. ${PRUSA_ONLY_TIP}`),
 
   // ----- test pattern (preset files only; no control in the panel) -----
   startHStarTest: num('Test Start H*', 0, 200, 0.01, 'First H* of the test pattern.'),
@@ -269,6 +284,8 @@ export const REGULAR_SPECS = {
   } as EnumSpec,
   supportThreshold: num('Overhang Threshold (°)', 0, 90, 1, `Surfaces flatter than this angle, measured from the bed, get support; steeper ones are printed without. 0 lets PrusaSlicer decide from how far each layer overhangs the one below. ${PRUSA_ONLY_TIP}`, true),
   brimWidth: num('Brim Width (mm)', 0, 50, 0.5, `Width of a flat ring printed around the part on the first layer, to stop corners lifting. 0 prints no brim. ${PRUSA_ONLY_TIP}`, false, [0, 20]),
+  printProfile: text('Print Profile', `Prusa's print profile to start from: speeds (with Use Profile Speeds), accelerations, seams, bridging and the rest. The settings above still win where they overlap. The list follows the PrusaSlicer Printer in Slicer Settings. ${PRUSA_ONLY_TIP}`),
+  filamentProfile: text('Filament Profile', `Prusa's filament profile: cooling, fan, retraction and pressure advance for that material. Temperatures still come from the extruder's settings. ${PRUSA_ONLY_TIP}`),
 } as const;
 
 /**
@@ -284,6 +301,8 @@ export const PRUSA_ONLY_REGULAR_KEYS: readonly RegularKey[] = [
   'supportStyle',
   'supportThreshold',
   'brimWidth',
+  'printProfile',
+  'filamentProfile',
 ];
 
 export type SettingKey = keyof typeof SETTING_SPECS;

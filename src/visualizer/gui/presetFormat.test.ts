@@ -52,6 +52,7 @@ function makeSettings(): SettingsTarget {
     printHeadMaxY: 70,
     bedLeveling: false,
     testSweep: false,
+    prusaPrinterProfile: 'Original Prusa XL Input Shaper 0.4 nozzle',
     multipleToolheads: true,
     purgeTower: true,
     startHStarTest: 5,
@@ -327,5 +328,21 @@ describe('regular-print settings', () => {
     const target = { ...makeModel(), regularConfig: { ...DEFAULT_REGULAR_CONFIG } as Record<string, unknown> };
     applyPresetToModel(preset, target);
     expect(target.regularConfig).toEqual(DEFAULT_REGULAR_CONFIG);
+  });
+});
+
+describe('text settings', () => {
+  it('keeps a profile name with spaces, and reads an empty one back as empty', () => {
+    const settings = makeSettings();
+    const source = { ...makeModel(), regularConfig: { ...DEFAULT_REGULAR_CONFIG, printProfile: '0.20mm SPEED @XLIS 0.4', filamentProfile: '' } as Record<string, unknown> };
+    const preset = parsePreset(serializePreset(settings, source));
+    expect(preset.errors).toEqual([]);
+    expect(preset.settings.prusaPrinterProfile).toBe('Original Prusa XL Input Shaper 0.4 nozzle');
+    expect(preset.regular.printProfile).toBe('0.20mm SPEED @XLIS 0.4');
+    expect(preset.regular.filamentProfile).toBe('');
+  });
+
+  it('still says a number with nothing after its key has no value', () => {
+    expect(parsePreset('bedTemp').errors[0]).toMatch(/has no value/);
   });
 });

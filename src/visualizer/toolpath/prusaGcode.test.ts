@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import Printer from '../../printer/Printer';
+import type { PathPoint } from './pathTypes';
 import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode, validatePrusaOptions } from './prusaGcode';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 
@@ -267,5 +269,72 @@ describe('emitting parsed PrusaSlicer moves', () => {
         expect(lines).toContain('M106 S255');
         // The fan change comes right before the wipe it was in front of.
         expect(lines.indexOf('M106 S255')).toBe(lines.indexOf('G1 X15.000000 Y20.000000 Z0.200000 E-0.300000 F1800') - 1);
+    });
+});
+
+describe('acceleration and pressure advance from PrusaSlicer', () => {
+    const at = (x: number, extra: Partial<PathPoint> = {}): PathPoint => ({ point: new THREE.Vector3(x, 10, 0.2), ...extra });
+
+    it('keeps M204, M205, M572 and M900 for the next move', () => {
+        const path = parsePrusaGcode('G1 Z.2\nG1 X1 Y1\nM572 S0.036\nM204 P3000\nG1 X2 Y1 E.1\nM205 X8 Y8\nM900 K0\nG1 X3 Y1 E.1\n', { extruder: 0 });
+        expect(path[1].preGcode).toEqual(['M572 S0.036', 'M204 P3000']);
+        expect(path[2].preGcode).toEqual(['M205 X8 Y8', 'M900 K0']);
+    });
+
+    it('turns pressure advance off again before the first foam move after PrusaSlicer\'s moves', () => {
+        const printer = new Printer();
+        const gcode = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M572 S0.036', 'M204 P3000'] }),
+            at(20, { regularSegment: true, extrusion: 0.5, speed: 1800 }),
+            at(30, { vStar: 0.2, hStar: 6, edot: 50 }),
+            at(40, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]);
+        const lines = gcode.split('\n');
+        const imported = lines.indexOf('M572 S0.036');
+        const reset = lines.findIndex(l => l.startsWith('M572 S0 '));
+        const firstFoam = lines.findIndex(l => l.includes('V*='));
+        expect(imported).toBeGreaterThan(-1);
+        expect(reset).toBeGreaterThan(imported);
+        expect(reset).toBeLessThan(firstFoam);
+        expect(lines.slice(reset, firstFoam)).toEqual(expect.arrayContaining(['M204 P1000 T1000', 'M205 X8 Y8']));
+        // Once is enough.
+        expect(lines.filter(l => l.startsWith('M572 S0 '))).toHaveLength(1);
+    });
+
+    it('turns linear advance off before foam on a single-nozzle printer too', () => {
+        const printer = new Printer();
+        printer.multipleToolheads = false;
+        const lines = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M900 K0.05'] }),
+            at(20, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]).split('\n');
+        const lastAdvance = lines.slice(0, lines.findIndex(l => l.includes('V*='))).filter(l => l.startsWith('M900')).pop();
+        expect(lastAdvance).toMatch(/^M900 K0 /);
+    });
+
+    it('writes nothing extra when no outside slicer changed the motion settings', () => {
+        const gcode = new Printer().generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true }),
+            at(20, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]);
+        expect(gcode).not.toMatch(/back to the app's own motion settings/);
+    });
+
+    it('starts an XL and an MK3S print with pressure advance off', () => {
+        const xl = new Printer();
+        xl.multipleToolheads = true;
+        const xlStart = xl.build_start_gcode(0, [0]);
+        expect(xlStart).toMatch(/^M572 S0 /m);
+        expect(xlStart).not.toMatch(/^M900/m);
+
+        const mk3 = new Printer();
+        mk3.multipleToolheads = false;
+        const mk3Start = mk3.build_start_gcode(0, [0]);
+        expect(mk3Start).toMatch(/^M900 K0 /m);
+        expect(mk3Start).not.toMatch(/^M900 K(?!0 )/m);
+        expect(mk3Start).not.toMatch(/^M572/m);
     });
 });

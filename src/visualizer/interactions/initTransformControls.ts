@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import Visualizer from '../Visualizer';
-import { syncAuxTransforms } from '../gui/modelActions';
+import { syncAuxTransforms, syncTransformFields } from '../gui/modelActions';
+import { layOnFace } from '../gui/placement';
 import { pointerToNdc } from './pointerToNdc';
 
 /** Gizmo mode for each transform type offered in a model's Transform folder. */
@@ -36,6 +37,19 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
         const ndc = pointerToNdc(event, canvas);
         mouse.set(ndc.x, ndc.y);
         raycaster.setFromCamera(mouse, visualizer.camera);
+
+        // "Lay on Face" is waiting for a click on its model: lay it on the face that was hit.
+        const layOnFaceModel = visualizer.layOnFaceModel;
+        if (layOnFaceModel && event.button === 0) {
+            const hit = raycaster.intersectObject(layOnFaceModel.mesh, false)[0];
+            if (hit?.face) {
+                const normalMatrix = new THREE.Matrix3().getNormalMatrix(layOnFaceModel.mesh.matrixWorld);
+                const worldNormal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+                visualizer.disarmLayOnFace();
+                layOnFace(visualizer, layOnFaceModel, worldNormal);
+            }
+            return;
+        }
 
         // Gather interactive objects from foamModelList and everydayModelList.
         const selectableObjects: THREE.Object3D[] = [];
@@ -73,20 +87,7 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
         const obj = visualizer.uuid_to_modelObj_Map.get(mesh.uuid);
         if (!obj) return;
 
-        const mode = obj.transformType;
-        if (mode === 'move') {
-            obj.transformX.x = parseFloat(mesh.position.x.toFixed(2));
-            obj.transformY.y = parseFloat(mesh.position.y.toFixed(2));
-            obj.transformZ.z = parseFloat(mesh.position.z.toFixed(2));
-        } else if (mode === 'rotate') {
-            obj.transformX.x = parseFloat((mesh.rotation.x * (180 / Math.PI)).toFixed(2));
-            obj.transformY.y = parseFloat((mesh.rotation.y * (180 / Math.PI)).toFixed(2));
-            obj.transformZ.z = parseFloat((mesh.rotation.z * (180 / Math.PI)).toFixed(2));
-        } else if (mode === 'scale') {
-            obj.transformX.x = parseFloat(mesh.scale.x.toFixed(2));
-            obj.transformY.y = parseFloat(mesh.scale.y.toFixed(2));
-            obj.transformZ.z = parseFloat(mesh.scale.z.toFixed(2));
-        }
+        syncTransformFields(obj);
         syncAuxTransforms(obj);
     });
 

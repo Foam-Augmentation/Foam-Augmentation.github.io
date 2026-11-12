@@ -11,6 +11,8 @@ import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleE
 import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, PRUSA_ONLY_REGULAR_KEYS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
 import { notify } from './notify';
 import { isPrusaSlicerAvailable } from '../toolpath/prusaSlicer';
+import { dropMeshToBed, placementChanged } from './placement';
+import { addObjectProfileControls, refreshProfileControls } from './profileControls';
 
 // Extend BufferGeometry to include boundsTree property
 declare module 'three' {
@@ -155,25 +157,29 @@ function addTransformFolder(
     zController.onChange((value: number) => applyAxis('z', value));
     [xController, yController, zController].forEach(controller => setTip(controller.domElement, axisTip));
 
-    /** A moved print no longer matches the plate slice. */
-    const placementChanged = (): void => {
-        if ('kind' in modelObj) visualizer.invalidatePlateSlice(modelObj);
-    };
-    addButton(transformFolder, 'Snap Model to Plate', 'Move the model down (or up) so it rests on the print bed.', () => {
-        mesh.geometry.computeBoundingBox();
-        const bbox = mesh.geometry.boundingBox!;
-        mesh.position.setZ((bbox.max.z - bbox.min.z) * mesh.scale.z / 2);
-        syncAuxTransforms(modelObj);
+    /** Brings the auxiliary meshes, the fields and the toolpath in line with the moved mesh. */
+    const moved = (): void => {
+        if ('kind' in modelObj) {
+            placementChanged(visualizer, modelObj);
+        } else {
+            syncAuxTransforms(modelObj);
+        }
         showCurrentValues();
-        placementChanged();
+    };
+    addButton(transformFolder, 'Snap Model to Plate', 'Move the model down (or up) so its lowest point rests on the print bed.', () => {
+        dropMeshToBed(mesh);
+        moved();
     });
     addButton(transformFolder, 'Center Model', 'Move the model to the middle of the print bed.', () => {
         mesh.position.setX(visualizer.printer.machine_depth / 2);
         mesh.position.setY(visualizer.printer.machine_depth_y / 2);
-        syncAuxTransforms(modelObj);
-        showCurrentValues();
-        placementChanged();
+        moved();
     });
+    if ('kind' in modelObj) {
+        addButton(transformFolder, 'Lay on Face', 'Then click a face of the model: it is turned so that face rests on the bed (shortcut F). Esc cancels.', () => {
+            visualizer.armLayOnFace(modelObj);
+        });
+    }
 
     showCurrentValues();
     transformFolder.close();
@@ -425,6 +431,7 @@ export function addBumpsFolder(
 export function addRegularPrintFolder(
     modelGUIitem: GUI,
     modelObj: EverydayModel,
+    visualizer: Visualizer,
 ): void {
     const regularFolder = addFolderWithTip(
         modelGUIitem,
@@ -465,6 +472,10 @@ export function addRegularPrintFolder(
     controllers.get('useProfileSpeeds')?.onChange(updateEnabled);
     regularControlUpdaters.set(modelObj, updateEnabled);
     updateEnabled();
+
+    // Prusa's print and filament profiles, last: their choices are filled in once PrusaSlicer's
+    // profiles have been read.
+    addObjectProfileControls(regularFolder, modelObj, visualizer);
 }
 
 /**
@@ -478,6 +489,7 @@ export function watchPrusaSlicerAvailability(visualizer: Visualizer): void {
     if (typeof window === 'undefined') return;
     const check = async (): Promise<void> => {
         const available = await isPrusaSlicerAvailable();
+        refreshProfileControls(visualizer, available);
         if (available === prusaSlicerAvailable) return;
         prusaSlicerAvailable = available;
         visualizer.everydayModelList.forEach(model => regularControlUpdaters.get(model)?.());
@@ -576,7 +588,7 @@ function buildModelFolder(
     // from whatever the parameters are at that moment.
     if (listType === 'everyday') {
         const everydayModel = modelObj as EverydayModel;
-        addRegularPrintFolder(modelGUIitem, everydayModel);
+        addRegularPrintFolder(modelGUIitem, everydayModel, visualizer);
         addParamsFolder_EverydayModel(modelGUIitem, everydayModel, visualizer);
         addAugmentFolder(modelGUIitem, everydayModel);
         addBumpsFolder(modelGUIitem, everydayModel);
@@ -646,5 +658,7 @@ export function refreshModelControls(visualizer: Visualizer): void {
     models.forEach(model => {
         (model.guiItem as GUI | undefined)?.controllersRecursive().forEach(controller => controller.updateDisplay());
         differenceMarkUpdaters.get(model)?.();
+        // Which regular-print rows are greyed out depends on the values too (supports on, profile speeds).
+        regularControlUpdaters.get(model as EverydayModel)?.();
     });
 }

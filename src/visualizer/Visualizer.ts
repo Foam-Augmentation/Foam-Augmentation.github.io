@@ -14,8 +14,10 @@ import { ViewCube, ViewName } from './gui/ViewCube';
 import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { initObjectList, renderObjectList } from './gui/objectList';
 import { initPreviewBar, refreshPreviewBar } from './gui/previewBar';
+import { initShortcuts } from './gui/shortcuts';
 import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
 import type { PlateSlice } from './toolpath/plateSlice';
+import { DEFAULT_PRUSA_PRINTER_PROFILE } from './toolpath/prusaSlicer';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
 
@@ -122,6 +124,8 @@ export default class Visualizer {
         printHeadMaxY: number;
         bedLeveling: boolean;
         testSweep: boolean;
+        /** Prusa's printer profile PrusaSlicer slices regular prints with ('' for none). */
+        prusaPrinterProfile: string;
         multipleToolheads: boolean;
         purgeTower: boolean;
 
@@ -234,6 +238,8 @@ export default class Visualizer {
             printHeadMaxY: 70,
             bedLeveling: false,
             testSweep: false,
+            // The app's printer is an XL with 0.4 mm nozzles until set otherwise.
+            prusaPrinterProfile: DEFAULT_PRUSA_PRINTER_PROFILE,
             multipleToolheads: true,
             purgeTower: true,
 
@@ -244,6 +250,9 @@ export default class Visualizer {
             testDeltaL: 3,
             testSize: 15,
         };
+        // The printer only hears about the other settings when they are edited; the profile it
+        // slices with has to be right from the start.
+        this.printer.prusaPrinterProfile = this.config.prusaPrinterProfile;
 
         // Initialize lasso selection state.
         this.lassoState = {
@@ -290,6 +299,7 @@ export default class Visualizer {
         initEmptyState(this);
         initObjectList(this);
         initPreviewBar(this);
+        initShortcuts(this);
         this.updateActionStates();
     }
 
@@ -587,8 +597,37 @@ export default class Visualizer {
     public clearSelection(): void {
         this.transformControls.detach();
         this.selectionArmed = false;
+        this.disarmLayOnFace();
         this.selectModel(null);
         this.updateModeHints();
+    }
+
+    // ----- lay on face -----
+
+    /**
+     * The object "Lay on Face" is waiting for a click on, or null. The next click on it lays it
+     * on the face that was clicked (see initTransformControls.ts).
+     */
+    public layOnFaceModel: EverydayModel | null = null;
+
+    /**
+     * Waits for a click on one of an object's faces, to lay the object on it.
+     *
+     * @param model - The object to lay down.
+     */
+    public armLayOnFace(model: EverydayModel): void {
+        this.selectionArmed = false;
+        this.transformControls.detach();
+        this.layOnFaceModel = model;
+        this.renderer.domElement.style.cursor = 'crosshair';
+        notify(`Click the face of “${model.name}” that should rest on the bed. Esc cancels.`, 'info');
+    }
+
+    /** Stops waiting for a "Lay on Face" click. */
+    public disarmLayOnFace(): void {
+        if (!this.layOnFaceModel) return;
+        this.layOnFaceModel = null;
+        this.renderer.domElement.style.cursor = '';
     }
 
     /**
@@ -600,6 +639,9 @@ export default class Visualizer {
     public releaseModel(model: EverydayModel | FoamModel): void {
         if (this.transformControls.object === model.mesh) {
             this.transformControls.detach();
+        }
+        if (this.layOnFaceModel === model) {
+            this.disarmLayOnFace();
         }
         if (this._selectedModel === model) {
             this.selectModel(null);
@@ -627,7 +669,7 @@ export default class Visualizer {
         const mouseButtons = this.orbitControls.mouseButtons as { LEFT?: THREE.MOUSE | null; RIGHT?: THREE.MOUSE | null };
         mouseButtons.LEFT = armedModel ? null : THREE.MOUSE.ROTATE;
         mouseButtons.RIGHT = armedModel ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
-        this.renderer.domElement.style.cursor = armedModel ? 'crosshair' : '';
+        this.renderer.domElement.style.cursor = armedModel || this.layOnFaceModel ? 'crosshair' : '';
 
         renderModeHints(
             {
@@ -793,6 +835,7 @@ export default class Visualizer {
         this.printer.checkCollisions = this.config.checkCollisions;
         this.printer.bedLeveling = this.config.bedLeveling;
         this.printer.testSweep = this.config.testSweep;
+        this.printer.prusaPrinterProfile = this.config.prusaPrinterProfile;
         this.printer.multipleToolheads = this.config.multipleToolheads;
         this.printer.purgeTower = this.config.purgeTower;
         this.syncExtrudersToPrinter();

@@ -853,6 +853,28 @@ body.file-drag-over #dropOverlay {
     outline: none;
 }
 
+.object-panel-actions {
+    display: flex;
+    gap: 6px;
+}
+
+#arrangeButton {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 600 12px var(--font);
+    cursor: pointer;
+}
+
+#arrangeButton:hover,
+#arrangeButton:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-hover);
+    outline: none;
+}
+
 /* the menu that asks what kind of object to add */
 #addObjectMenu {
     position: absolute;
@@ -938,6 +960,7 @@ body.file-drag-over #dropOverlay {
 }
 
 .object-select:focus-visible,
+.object-duplicate:focus-visible,
 .object-delete:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
@@ -1000,6 +1023,21 @@ body.file-drag-over #dropOverlay {
 .object-delete:hover {
     background: rgba(242, 102, 92, 0.2);
     color: var(--danger);
+}
+
+.object-duplicate {
+    flex: none;
+    width: 26px;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: 14px/1 var(--font);
+    cursor: pointer;
+}
+
+.object-duplicate:hover {
+    background: var(--surface-hover);
+    color: var(--text);
 }
 
 /* export actions */

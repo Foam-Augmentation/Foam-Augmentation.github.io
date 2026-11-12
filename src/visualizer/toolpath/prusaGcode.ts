@@ -57,6 +57,8 @@ const INTEGRATION_SETTINGS: PrusaConfig = {
     wipe_tower: '0',
     complete_objects: '0',
     gcode_label_objects: 'octoprint',
+    // Plain text G-code: Prusa's own printer profiles (the XL's among them) ask for binary G-code.
+    binary_gcode: '0',
 };
 
 /** The PrusaSlicer settings behind each choice of where supports go. */
@@ -111,6 +113,11 @@ export function validatePrusaOptions(printer: Printer, config: RegularPrintConfi
     const nozzleDiameter = printer.extruders[config.extruder]?.nozzleDiameter;
     if (nozzleDiameter !== undefined && config.firstLayerHeight > nozzleDiameter) {
         fail(`the first layer height (${config.firstLayerHeight} mm) cannot be more than the nozzle diameter (${nozzleDiameter} mm).`);
+    }
+    for (const [label, name] of [['print profile', config.printProfile], ['filament profile', config.filamentProfile]] as const) {
+        if (typeof name !== 'string' || name.length > 200 || /[\r\n]/.test(name)) {
+            fail(`the ${label} must be a profile name (it is ${JSON.stringify(name)}).`);
+        }
     }
     if (typeof config.useProfileSpeeds !== 'boolean') {
         fail('"Use Profile Speeds" must be on or off.');
@@ -230,6 +237,7 @@ function readWords(code: string): Map<string, number> {
  * - A move that extrudes becomes a regular segment carrying its exact `extrusion` and `speed`.
  * - A move that does not extrude becomes a travel. A travel that retracts while it moves (a wipe)
  *   keeps its negative `extrusion`.
+ * - Acceleration, jerk and pressure advance (M204, M205, M572, M900) are kept as `preGcode` too.
  * - Retractions and fan commands, which do not move the head, are kept as `preGcode` on the
  *   point after them. A final retraction with no move after it is dropped: the next toolpath
  *   starts with its own moves, and PrusaSlicer has no matching unretract waiting.
@@ -347,6 +355,10 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
             path.push(point);
         } else if (command === 'G10' || command === 'G11' || command === 'M106' || command === 'M107') {
             // Firmware retraction and the part cooling fan.
+            pending.push(code);
+        } else if (command === 'M204' || command === 'M205' || command === 'M572' || command === 'M900') {
+            // Acceleration, jerk and pressure advance, per feature and from the filament profile.
+            // The emitter sets its own back before the app's next move (see Printer.appMotionGcode).
             pending.push(code);
         } else if (command === 'M82') {
             fail('it uses absolute extrusion; use_relative_e_distances must be on');

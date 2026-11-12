@@ -17,7 +17,11 @@
     <aside id="objectPanel" aria-label="Objects">
         <header class="object-panel-header">
             <h2>Objects</h2>
-            <button type="button" id="addObjectButton" aria-haspopup="true" aria-expanded="false">+ Add</button>
+            <span class="object-panel-actions">
+                <button type="button" id="arrangeButton"
+                    title="Arrange the Foam and Regular Prints on the bed, clear of each other, of the Augmentation objects (which stay put) and of the print head's reach (shortcut A)">Arrange</button>
+                <button type="button" id="addObjectButton" aria-haspopup="true" aria-expanded="false">+ Add</button>
+            </span>
             <div id="addObjectMenu" hidden></div>
         </header>
         <ul id="objectList"></ul>

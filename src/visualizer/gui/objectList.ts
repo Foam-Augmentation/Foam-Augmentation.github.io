@@ -9,7 +9,8 @@
  */
 import type Visualizer from '../Visualizer';
 import { EverydayModel, ObjectKind } from '../types/modelTypes';
-import { importSTLModel } from '../loaders/modelLoader';
+import { duplicateModel, importSTLModel } from '../loaders/modelLoader';
+import { arrangePlate } from './placement';
 import { exportPlateGcode, saveAugmentGcode, slicePlate } from '../toolpath/gcodeActions';
 import { KIND_INFO } from './modelActions';
 import { countObjects, formatBytes, objectStatus, plateSummaryLines } from './objectSummary';
@@ -60,6 +61,16 @@ function buildRow(visualizer: Visualizer, model: EverydayModel): HTMLLIElement {
 
   select.append(swatch, text, badge);
 
+  const duplicate = document.createElement('button');
+  duplicate.type = 'button';
+  duplicate.className = 'object-duplicate';
+  duplicate.title = model.kind === 'augment'
+    ? `Duplicate “${model.name}” (Ctrl+D); the copy starts without a foam area`
+    : `Duplicate “${model.name}” (Ctrl+D)`;
+  duplicate.setAttribute('aria-label', `Duplicate “${model.name}”`);
+  duplicate.textContent = '⧉';
+  duplicate.addEventListener('click', () => { duplicateModel(visualizer, model); });
+
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'object-delete';
@@ -68,7 +79,7 @@ function buildRow(visualizer: Visualizer, model: EverydayModel): HTMLLIElement {
   remove.textContent = '×';
   remove.addEventListener('click', () => confirmAndDeleteModel(visualizer, model));
 
-  row.append(select, remove);
+  row.append(select, duplicate, remove);
   return row;
 }
 
@@ -200,6 +211,8 @@ export function initObjectList(visualizer: Visualizer): void {
     });
   }
 
+  document.getElementById('arrangeButton')
+    ?.addEventListener('click', () => arrangePlate(visualizer));
   document.getElementById('exportAugmentButton')
     ?.addEventListener('click', () => { void saveAugmentGcode(visualizer); });
   document.getElementById('slicePrintsButton')

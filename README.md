@@ -9,9 +9,16 @@ Press `+ Add` in the `Objects` list and pick what the model is:
 - `Foam Print`: the whole model is printed as foam.
 - `Regular Print`: the model is printed as an ordinary solid plastic part.
 
-Then select an `stl` file. You can also drop STL files on the window (they come in as `Augmentation`), or press `Load Example` on the start card to add a small built-in model. The app loads the model into the center of the print bed.
+Then select an `stl` file. You can also drop STL files on the window (they come in as `Augmentation`), or press `Load Example` on the start card to add a small built-in model. The app puts the model in the free space nearest the middle of the print bed (see below).
 
 Every object shows in the `Objects` list with its type. Click an object there (or in the 3D view) to select it: it gets an outline in the 3D view, and the left panel shows that object's settings under `Selected Object`. The `Type` control at the top of its settings changes what the object is, and you can move, rotate and scale it in its `Transform` folder.
+
+Placing objects on the bed:
+- A new object (imported, dropped, or a copy) is put in the free space nearest the middle of the bed (a copy: nearest the original), clear of the other objects.
+- `Arrange` at the top of the `Objects` list (shortcut `A`) packs the Foam and Regular Prints around the middle of the bed, 6 mm apart and clear of the purge line and purge tower. Augmentation objects stay where they are: they are real objects on the bed. Anything taller than the nozzle is also kept out of the print head's reach around a Foam Print or an Augmentation (Printer Settings › Print Head Min/Max X/Y), so the head cannot hit it while it prints foam.
+- `⧉` on an object's row (shortcut `Ctrl+D`) adds a copy with the same type, orientation and settings. A copy of an Augmentation starts without a foam area.
+- In the `Transform` folder, `Lay on Face` (shortcut `F`) waits for a click on the object, then turns it so the clicked face rests on the bed (`Esc` cancels). `Snap Model to Plate` rests the object's lowest point on the bed, however it is rotated.
+- When a file is sliced or exported, the app warns by name about any object that stands in the print head's reach while foam prints next to it.
 <div align="center" style="margin: 20px;">
     <img src="src/images/select-model.png" width="300">
 </div>
@@ -114,6 +121,7 @@ Every control in the panel has a tooltip with the same description as below; hov
     - `Purge Line`: If checked, the slicer will generate a purge line.
     - `Check Collisions`: If checked, the slicer will check for collisions when augmenting and give a suggested H* value to avoid collisions. Note that this will make slicing take longer.
     - `Bed Leveling`: If checked, the printer will probe the bed for automatic leveling.
+    - `PrusaSlicer Printer` *(desktop app with PrusaSlicer)*: Prusa's printer profile PrusaSlicer slices Regular Prints with (retraction, wipe and other printer settings), read from the PrusaSlicer install. It starts as the Prusa XL Input Shaper with a 0.4 mm nozzle. It also decides which print and filament profiles the objects can choose.
     - `Test Sweep (Dry Run)`: If checked, the printer will follow the toolpath without heating or extruding, allowing you to test if the print head will collide with your object safely.
 # Print Parameters
 These are in each everyday model's folder.
@@ -168,6 +176,8 @@ These are in the folder of each `Regular Print` object. Settings marked *(PrusaS
 - `Extruder`: Which extruder prints the part.
 - `Print Speed (mm/min)`: Speed of the print head while extruding.
 - `First Layer Speed (mm/min)` *(PrusaSlicer)*: Speed of every move on the first layer.
+- `Print Profile` *(PrusaSlicer)*: Prusa's print profile to start from (speeds with `Use Profile Speeds`, accelerations, seams, bridging, ...). The settings above win where they overlap. Only the profiles that suit the `PrusaSlicer Printer` are offered.
+- `Filament Profile` *(PrusaSlicer)*: Prusa's filament profile (cooling, fan, retraction, pressure advance). Temperatures still come from the extruder's settings.
 - `Use Profile Speeds` *(PrusaSlicer)*: Use the speeds of your PrusaSlicer profile (or PrusaSlicer's defaults) instead of Print Speed and First Layer Speed.
 
 # Presets
@@ -192,6 +202,10 @@ The same app also runs as a desktop app (Electron), which can slice **Regular Pr
 ```bash
 npm run desktop
 ```
+
+The app reads Prusa's own printer, print and filament profiles from the PrusaSlicer install (`resources/profiles/PrusaResearch.ini`); it does not ship them. They are applied in this order, each winning over the one before: the `PrusaSlicer Printer` and the object's `Print Profile` and `Filament Profile`, then your own config from step 2, then the app's own settings.
+
+PrusaSlicer's accelerations, jerk and pressure advance (from the print and filament profiles) are kept for the regular parts. Before any move the app makes itself (foam, shells, purge), it sets its own back: pressure advance off (`M572 S0` on the XL, `M900 K0` on the MK3S), 1000 mm/s² acceleration and 8 mm/s jerk. A foam thread is laid at a fixed ratio V* to the head speed, and pressure advance would push extra filament out whenever the head speeds up. The start G-code now also turns pressure advance off: `M572 S0` on the XL, instead of the MK3-style `M900` lines it wrote before, and `M900 K0` on the MK3S, instead of `M900 K0.05` and `K30`, which turned it on.
 
 Without PrusaSlicer, or in the web version, Regular Print objects are sliced with the built-in slicer as before. Foam and augmentation slicing is unchanged.
 

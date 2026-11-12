@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import Visualizer from '../Visualizer';
-import { refreshModelGUIList } from '../gui/refreshModelGUIList';
+import { refreshModelControls, refreshModelGUIList } from '../gui/refreshModelGUIList';
+import { dropMeshToBed, placeNewMesh } from '../gui/placement';
 import { FoamModel, EverydayModel, ObjectKind } from '../types/modelTypes';
 import { applyModelAppearance, DEFAULT_REGULAR_SETTINGS, newObjectId } from '../gui/modelActions';
 import { MeshBVH } from 'three-mesh-bvh';
@@ -213,23 +214,35 @@ export function loadExampleModel(visualizer: Visualizer): void {
     addModelFromGeometry(visualizer, createExampleGeometry(), 'example-puck', 'everyday');
 }
 
+/** How a new model is placed, besides resting on the bed. */
+export interface NewModelPlacement {
+    /** Turn and scale it like this (and rest it on the bed). Defaults to as it comes. */
+    orientation?: { quaternion: THREE.Quaternion, scale: THREE.Vector3 };
+    /** Where to look for free space first. Defaults to the middle of the bed. */
+    near?: { x: number, y: number };
+}
+
 /**
- * Turns a geometry into a model: centres it, places it in the middle of the print bed, adds it
- * to the scene and the model list, and brings it into view.
+ * Turns a geometry into a model: centres it, rests it on the print bed in the free space nearest
+ * the middle (or `placement.near`), adds it to the scene and the model list, selects it and
+ * brings it into view.
  *
  * @param visualizer - The Visualizer instance.
  * @param geometry - The model's geometry, with its bounding box computed.
  * @param name - The model's name (normally the file name).
  * @param type - Which list the model goes into.
  * @param kind - For an everyday model: what the object is (see ObjectKind).
+ * @param placement - How to turn the model and where to put it.
+ * @returns The new model.
  */
 export function addModelFromGeometry(
     visualizer: Visualizer,
     geometry: THREE.BufferGeometry,
     name: string,
     type: 'foam' | 'everyday',
-    kind: ObjectKind = 'augment'
-): void {
+    kind: ObjectKind = 'augment',
+    placement: NewModelPlacement = {},
+): EverydayModel | FoamModel {
     {
         // Use the bounding box to determine the center.
         const bbox = geometry.boundingBox!;
@@ -272,8 +285,18 @@ export function addModelFromGeometry(
             visualizer.printer.machine_depth_y / 2,
             zOffset
         );
+        if (placement.orientation) {
+            mesh.quaternion.copy(placement.orientation.quaternion);
+            mesh.scale.copy(placement.orientation.scale);
+            dropMeshToBed(mesh);
+        }
+        // Clear of every object already on the plate, where there is room.
+        if (type === 'everyday' && !placeNewMesh(visualizer, mesh, kind, placement.near)) {
+            notify(`There is no free space on the bed for “${name}”, so it overlaps another object. Move it or press Arrange.`, 'warning');
+        }
 
         // Save the model in the appropriate list and update the uuid mapping.
+        let created: EverydayModel | FoamModel;
         if (type === 'foam') {
             const foamModelObj: FoamModel = {
                 name,
@@ -286,6 +309,7 @@ export function addModelFromGeometry(
             };
             visualizer.foamModelList.push(foamModelObj);
             visualizer.uuid_to_modelObj_Map.set(mesh.uuid, foamModelObj);
+            created = foamModelObj;
         } else {
             const everydayModelObj: EverydayModel = {
                 objectId: newObjectId(),
@@ -370,6 +394,7 @@ export function addModelFromGeometry(
             visualizer.everydayModelList.push(everydayModelObj);
             visualizer.uuid_to_modelObj_Map.set(mesh.uuid, everydayModelObj);
             applyModelAppearance(everydayModelObj, false);
+            created = everydayModelObj;
         }
 
         // Add the mesh to the scene.
@@ -387,7 +412,49 @@ export function addModelFromGeometry(
         if (type === 'everyday') {
             visualizer.selectModel(visualizer.everydayModelList[visualizer.everydayModelList.length - 1]);
         }
+        return created;
     }
+}
+
+/**
+ * The name for a copy of a model: its name with the next free number, e.g. "bottle.stl (2)".
+ *
+ * @param names - The names already on the plate.
+ * @param name - The name of the model being copied.
+ * @returns A name no model has.
+ */
+export function copyName(names: string[], name: string): string {
+    const base = name.replace(/ \(\d+\)$/, '');
+    let n = 2;
+    while (names.includes(`${base} (${n})`)) n++;
+    return `${base} (${n})`;
+}
+
+/**
+ * Adds a copy of an object next to it: the same mesh, turned and scaled the same, with the same
+ * type and settings, in the free space nearest to it. An augmentation's selected areas are not
+ * copied: the copy starts without one.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param source - The object to copy.
+ * @returns The copy. It is selected.
+ */
+export function duplicateModel(visualizer: Visualizer, source: EverydayModel): EverydayModel {
+    const names = visualizer.everydayModelList.map(model => model.name);
+    // The copy has its own geometry: deleting one of the two disposes only its own.
+    const copy = addModelFromGeometry(visualizer, source.mesh.geometry.clone(), copyName(names, source.name), 'everyday', source.kind, {
+        orientation: { quaternion: source.mesh.quaternion, scale: source.mesh.scale },
+        near: { x: source.mesh.position.x, y: source.mesh.position.y },
+    }) as EverydayModel;
+    // Into the objects the copy's controls are bound to, not replacing them.
+    Object.assign(copy.regularConfig, structuredClone(source.regularConfig));
+    Object.assign(copy.toolpathConfig, structuredClone(source.toolpathConfig));
+    Object.assign(copy.initialConfig, structuredClone(source.initialConfig));
+    copy.initialOffset = source.initialOffset;
+    // A gradient is never changed in place (loading an SVG replaces it), so the two can share it.
+    copy.gradient = source.gradient;
+    refreshModelControls(visualizer);
+    return copy;
 }
 
 

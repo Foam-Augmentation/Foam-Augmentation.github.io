@@ -125,6 +125,13 @@ export function parseValue(spec: ParamSpec, raw: string): { value: PresetValue }
     return { error: `expected one of ${spec.options.join(', ')}, got "${text}"` };
   }
 
+  if (spec.type === 'text') {
+    if (text.length > spec.maxLength) return { error: `expected at most ${spec.maxLength} characters` };
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f]/.test(text)) return { error: 'expected text without control characters' };
+    return { value: text };
+  }
+
   // Number("") is 0 and Number("abc") is NaN; neither may reach the G-code.
   const value = text === '' ? NaN : Number(text);
   if (!Number.isFinite(value)) {
@@ -175,12 +182,14 @@ export function parsePreset(text: string): ParsedPreset {
 
     const where = `line ${index + 1}`;
     const split = trimmed.search(/\s/);
-    if (split === -1) {
+    // A text setting written with nothing after its key is empty ("none").
+    const isText = (k: string) => (specFor(SETTING_SPECS, k) ?? (k.startsWith('regular.') ? specFor(REGULAR_SPECS, k.slice('regular.'.length)) : undefined))?.type === 'text';
+    if (split === -1 && !isText(trimmed)) {
       preset.errors.push(`${where}: "${trimmed}" has no value`);
       return;
     }
-    const key = trimmed.slice(0, split);
-    const raw = trimmed.slice(split + 1).trim();
+    const key = split === -1 ? trimmed : trimmed.slice(0, split);
+    const raw = split === -1 ? '' : trimmed.slice(split + 1).trim();
 
     /** Validates `raw` against `spec` and hands the typed value to `store`. */
     const take = (spec: ParamSpec, store: (value: PresetValue) => void) => {

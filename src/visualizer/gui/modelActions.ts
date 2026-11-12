@@ -144,6 +144,27 @@ export function syncAuxTransforms(model: AnyModel): void {
 }
 
 /**
+ * Copies the main mesh's position, rotation (degrees) or scale, whichever the model's Transform
+ * folder shows, into the numbers behind its X, Y and Z fields.
+ *
+ * Call this after moving a mesh from code; the fields follow on their own once their values change.
+ *
+ * @param model - The model whose fields should follow its mesh.
+ */
+export function syncTransformFields(model: AnyModel): void {
+  const mesh = model.mesh;
+  const values = model.transformType === 'move'
+    ? [mesh.position.x, mesh.position.y, mesh.position.z]
+    : model.transformType === 'rotate'
+      ? [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z].map(radians => radians * (180 / Math.PI))
+      : [mesh.scale.x, mesh.scale.y, mesh.scale.z];
+  const round = (value: number) => parseFloat(value.toFixed(2));
+  model.transformX.x = round(values[0]);
+  model.transformY.y = round(values[1]);
+  model.transformZ.z = round(values[2]);
+}
+
+/**
  * Removes a model completely: selection state, GUI folder, list and map entries, the main
  * mesh, and every auxiliary object (highlights, sample points, toolpath preview, bounding
  * box helpers, sensing objects, bump mesh), disposing their GPU resources.
