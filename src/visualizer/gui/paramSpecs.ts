@@ -9,6 +9,10 @@
  *
  * Keep this file free of DOM and three.js imports so it can be unit-tested under Node.
  */
+import { INFILL_PATTERNS, SUPPORT_MODES, SUPPORT_STYLES } from '../toolpath/regularPrintOptions';
+
+/** Ends the tooltip of every regular-print setting that only PrusaSlicer uses. */
+const PRUSA_ONLY_TIP = 'Only used when the desktop app slices with PrusaSlicer.';
 
 /** A numeric parameter with an inclusive valid range. */
 export interface NumberSpec {
@@ -48,7 +52,16 @@ export interface EnumSpec {
   optionLabels: Readonly<Record<string, string>>;
 }
 
-export type ParamSpec = NumberSpec | BooleanSpec | EnumSpec;
+/** A parameter that holds a name or other short text (e.g. a PrusaSlicer profile). Empty means "none". */
+export interface TextSpec {
+  type: 'text';
+  label: string;
+  tip: string;
+  /** The longest text allowed. */
+  maxLength: number;
+}
+
+export type ParamSpec = NumberSpec | BooleanSpec | EnumSpec | TextSpec;
 
 /** Shorthand for a numeric spec. */
 function num(
@@ -66,6 +79,11 @@ function num(
 /** Shorthand for a boolean spec. */
 function bool(label: string, tip: string): BooleanSpec {
   return { type: 'boolean', label, tip };
+}
+
+/** Shorthand for a text spec. */
+function text(label: string, tip: string, maxLength = 200): TextSpec {
+  return { type: 'text', label, tip, maxLength };
 }
 
 /**
@@ -115,6 +133,7 @@ export const SETTING_SPECS = {
   checkCollisions: bool('Check Collisions', 'When augmenting, check whether the print head would hit the object and suggest an H* that avoids it. Makes slicing slower.'),
   bedLeveling: bool('Bed Leveling', 'Probe the bed for automatic leveling before printing.'),
   testSweep: bool('Test Sweep (Dry Run)', 'Follow the toolpath without heating or extruding, to check that the print head clears the object.'),
+  prusaPrinterProfile: text('PrusaSlicer Printer', `Prusa's printer profile the desktop app slices Regular Prints with: retraction, wipe and the other printer settings PrusaSlicer uses. The bed size, nozzle and temperatures still come from Printer Settings. It also decides which print and filament profiles each object can choose. ${PRUSA_ONLY_TIP}`),
 
   // ----- test pattern (preset files only; no control in the panel) -----
   startHStarTest: num('Test Start H*', 0, 200, 0.01, 'First H* of the test pattern.'),
@@ -132,6 +151,7 @@ export const EXTRUDER_SPECS = {
   dieSwelling: num('Die Swell Factor', 0.1, 2, 0.01, 'How much the thread widens as it leaves the nozzle (thread diameter ÷ nozzle diameter).', false, [0.5, 2]),
   print_temp_extruder: num('Print Temperature (°C)', 0, 300, 1, 'Nozzle temperature while this extruder is printing.', false, [150, 300]),
   idle_temp_extruder: num('Idle Temperature (°C)', 0, 300, 1, 'Standby temperature while this extruder is parked.'),
+  filamentDensity: num('Filament Density (g/cm³)', 0.5, 3, 0.01, 'Density of the filament in this extruder, for the filament weight in the slice summary. TPU is about 1.21, PLA 1.24, PETG 1.27.', false, [0.8, 2]),
   printHead_speed_when_free_move: num('Travel Speed (mm/min)', 1, 10000, 1, 'Print head speed for moves that do not extrude.', false, [100, 6000]),
   color: num('Color', 0, 0xffffff, 1, 'Display colour of this extruder\'s toolpath (RGB as a number).', true),
 } as const;
@@ -222,7 +242,68 @@ export const REGULAR_SPECS = {
   topBottomLayers: num('Top / Bottom Layers', 0, 20, 1, 'How many solid layers close every top and bottom surface.', true, [0, 10]),
   extruder: num('Extruder', 0, 9, 1, 'Which extruder prints this part (0 is the first one). Its temperature and nozzle come from Printer Settings › Extruders.', true, [0, 4]),
   printSpeed: num('Print Speed (mm/min)', 60, 12000, 10, 'Speed of the print head while extruding.', false, [300, 6000]),
+
+  // ----- used only when the desktop app slices with PrusaSlicer (see PRUSA_ONLY_REGULAR_KEYS) -----
+  firstLayerHeight: num('First Layer Height (mm)', 0.05, 1, 0.01, `Thickness of the first layer. A thicker first layer sticks better and evens out a slightly uneven bed. It cannot be more than the nozzle diameter. ${PRUSA_ONLY_TIP}`, false, [0.1, 0.4]),
+  firstLayerSpeed: num('First Layer Speed (mm/min)', 60, 12000, 10, `Speed of every move on the first layer. Slower helps the part stick. ${PRUSA_ONLY_TIP}`, false, [300, 3000]),
+  useProfileSpeeds: bool('Use Profile Speeds', `Use the speeds of your PrusaSlicer profile (Slicer menu), or PrusaSlicer's defaults if none is chosen, instead of Print Speed and First Layer Speed. ${PRUSA_ONLY_TIP}`),
+  infillPattern: {
+    type: 'enum',
+    label: 'Infill Pattern',
+    tip: `Pattern of the sparse infill. A solid part (100 % infill) is filled with straight lines whatever is chosen here. ${PRUSA_ONLY_TIP}`,
+    options: INFILL_PATTERNS,
+    optionLabels: {
+      grid: 'Grid',
+      gyroid: 'Gyroid',
+      rectilinear: 'Rectilinear',
+      alignedrectilinear: 'Aligned Rectilinear',
+      triangles: 'Triangles',
+      stars: 'Stars',
+      cubic: 'Cubic',
+      adaptivecubic: 'Adaptive Cubic',
+      supportcubic: 'Support Cubic',
+      lightning: 'Lightning',
+      honeycomb: 'Honeycomb',
+      '3dhoneycomb': '3D Honeycomb',
+      concentric: 'Concentric',
+    },
+  } as EnumSpec,
+  supports: {
+    type: 'enum',
+    label: 'Supports',
+    tip: `Where supports are printed under overhangs. Build Plate Only never puts supports on top of the part itself. ${PRUSA_ONLY_TIP}`,
+    options: SUPPORT_MODES,
+    optionLabels: { none: 'None', buildplate: 'Build Plate Only', everywhere: 'Everywhere' },
+  } as EnumSpec,
+  supportStyle: {
+    type: 'enum',
+    label: 'Support Style',
+    tip: `Grid: a sturdy block, easy to remove. Snug: hugs the overhang and uses less material. Organic: branching trees that touch the part only where needed. ${PRUSA_ONLY_TIP}`,
+    options: SUPPORT_STYLES,
+    optionLabels: { grid: 'Grid', snug: 'Snug', organic: 'Organic (Tree)' },
+  } as EnumSpec,
+  supportThreshold: num('Overhang Threshold (°)', 0, 90, 1, `Surfaces flatter than this angle, measured from the bed, get support; steeper ones are printed without. 0 lets PrusaSlicer decide from how far each layer overhangs the one below. ${PRUSA_ONLY_TIP}`, true),
+  brimWidth: num('Brim Width (mm)', 0, 50, 0.5, `Width of a flat ring printed around the part on the first layer, to stop corners lifting. 0 prints no brim. ${PRUSA_ONLY_TIP}`, false, [0, 20]),
+  printProfile: text('Print Profile', `Prusa's print profile to start from: speeds (with Use Profile Speeds), accelerations, seams, bridging and the rest. The settings above still win where they overlap. The list follows the PrusaSlicer Printer in Slicer Settings. ${PRUSA_ONLY_TIP}`),
+  filamentProfile: text('Filament Profile', `Prusa's filament profile: cooling, fan, retraction and pressure advance for that material. Temperatures still come from the extruder's settings. ${PRUSA_ONLY_TIP}`),
 } as const;
+
+/**
+ * Regular-print settings that only PrusaSlicer uses. The built-in slicer (the web version, or
+ * the desktop app without PrusaSlicer) ignores them, so the panel greys them out there.
+ */
+export const PRUSA_ONLY_REGULAR_KEYS: readonly RegularKey[] = [
+  'firstLayerHeight',
+  'firstLayerSpeed',
+  'useProfileSpeeds',
+  'infillPattern',
+  'supports',
+  'supportStyle',
+  'supportThreshold',
+  'brimWidth',
+  'printProfile',
+  'filamentProfile',
+];
 
 export type SettingKey = keyof typeof SETTING_SPECS;
 export type RegularKey = keyof typeof REGULAR_SPECS;

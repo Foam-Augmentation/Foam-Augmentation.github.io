@@ -1,6 +1,7 @@
 // src/types/modelTypes.ts
 import * as THREE from 'three';
 import { Gradient } from '../loaders/modelLoader'
+import type { RegularPrintConfig } from '../toolpath/regularSlicer';
 
 /**
  * Represents a GUI item, typically a folder from a GUI library.
@@ -130,26 +131,21 @@ export interface PointCloudPoint {
  */
 export type ObjectKind = 'augment' | 'foam' | 'regular';
 
-/** Settings of a model printed as an ordinary solid part (`kind === 'regular'`). */
-export interface RegularPrintSettings {
-    /** Layer height (mm). */
-    layerHeight: number;
-    /** Number of wall loops around every layer. */
-    perimeters: number;
-    /** Sparse infill density, 0 to 100 (%). */
-    infillDensity: number;
-    /** Number of solid layers under every top surface and over every bottom surface. */
-    topBottomLayers: number;
-    /** Index of the extruder that prints the part. */
-    extruder: number;
-    /** Speed of extruding moves (mm/min). */
-    printSpeed: number;
-}
+/**
+ * Settings of a model printed as an ordinary solid part (`kind === 'regular'`). The same object
+ * is what the slicers take, so it is defined once, next to the built-in slicer.
+ */
+export type RegularPrintSettings = RegularPrintConfig;
 
 /**
  * EverydayModel: an object on the plate. Extends BasicModel.
  */
 export interface EverydayModel extends BasicModel {
+    /**
+     * A number that identifies the object for as long as the app runs; it is never reused. The
+     * toolpath points of the object carry it (`PathPoint.objectId`).
+     */
+    objectId: number;
     /** What the object is: something to augment, a foam print or a regular print. */
     kind: ObjectKind;
     /** Print settings used while `kind` is `regular`. */

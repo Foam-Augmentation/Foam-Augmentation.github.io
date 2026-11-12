@@ -452,6 +452,17 @@ body {
     display: none;
 }
 
+/* why some Regular Print Settings are greyed out (no PrusaSlicer) */
+.regular-prusa-note {
+    margin: 4px 12px 6px 4px;
+    padding: 6px 10px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
 /* the Type control heads the object's settings */
 .lil-gui .controller.kind-control {
     margin-bottom: 8px;
@@ -842,6 +853,28 @@ body.file-drag-over #dropOverlay {
     outline: none;
 }
 
+.object-panel-actions {
+    display: flex;
+    gap: 6px;
+}
+
+#arrangeButton {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 600 12px var(--font);
+    cursor: pointer;
+}
+
+#arrangeButton:hover,
+#arrangeButton:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-hover);
+    outline: none;
+}
+
 /* the menu that asks what kind of object to add */
 #addObjectMenu {
     position: absolute;
@@ -927,6 +960,7 @@ body.file-drag-over #dropOverlay {
 }
 
 .object-select:focus-visible,
+.object-duplicate:focus-visible,
 .object-delete:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
@@ -991,6 +1025,21 @@ body.file-drag-over #dropOverlay {
     color: var(--danger);
 }
 
+.object-duplicate {
+    flex: none;
+    width: 26px;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: 14px/1 var(--font);
+    cursor: pointer;
+}
+
+.object-duplicate:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
 /* export actions */
 .object-panel-footer {
     display: flex;
@@ -1038,4 +1087,152 @@ body.file-drag-over #dropOverlay {
 .export-note {
     font-size: 11px;
     opacity: 0.85;
+    overflow-wrap: anywhere;
+}
+
+/* toolpath preview controls, across the top of the free part of the canvas */
+#previewBar {
+    position: fixed;
+    top: var(--panel-margin);
+    left: calc(var(--panel-space) + 4px);
+    /* stop short of the view cube */
+    right: calc(var(--objects-space) + 140px);
+    max-width: 640px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: rgba(29, 33, 39, 0.94);
+    box-shadow: var(--shadow);
+    color: var(--text);
+    font: 12px var(--font);
+    z-index: 900;
+}
+
+#previewBar[hidden] {
+    display: none;
+}
+
+.preview-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+}
+
+.preview-title {
+    font-weight: 600;
+}
+
+.preview-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-muted);
+}
+
+.preview-control select {
+    padding: 2px 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+}
+
+.preview-control input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+#previewStep {
+    flex: 1 1 160px;
+    min-width: 120px;
+    accent-color: var(--accent);
+}
+
+.preview-step-label {
+    flex: 1 1 200px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.preview-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    font-size: 11px;
+}
+
+.preview-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+}
+
+.preview-legend-item.static {
+    cursor: default;
+}
+
+.preview-swatch {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--swatch);
+    border-radius: 2px;
+    background: var(--swatch);
+    box-sizing: border-box;
+}
+
+/* a hidden feature: hollow swatch and dimmed name, so it does not rest on colour alone */
+.preview-legend-item[aria-pressed="false"] {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+
+.preview-legend-item[aria-pressed="false"] .preview-swatch {
+    background: transparent;
+}
+
+.preview-scale-title {
+    color: var(--text-muted);
+}
+
+.preview-scale-none {
+    color: var(--text-muted);
+}
+
+.preview-gradient {
+    width: 160px;
+    height: 8px;
+    border-radius: 4px;
+}
+
+/* what the last plate slice holds, between Slice Prints and Export Print G-Code */
+#plateSummary {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+#plateSummary[hidden] {
+    display: none;
+}
+
+#plateSummary.stale {
+    border-style: dashed;
+    color: var(--text-muted);
 }

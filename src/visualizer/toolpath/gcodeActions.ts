@@ -10,9 +10,12 @@ import {
     makePurgeLine,
     visualizeToolpath,
 } from './generateFoamToolpath';
-import { sliceRegularParts } from './prusaSlicer';
+import { sliceRegularParts, type RegularSlicerUsed } from './prusaSlicer';
 import { disposeObject3D } from '../gui/modelActions';
-import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
+import { plateFingerprint, summarizePlate } from './plateSlice';
+import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
+import { describeEstimate } from '../gui/objectSummary';
+import { describeHeadConflicts } from '../gui/placement';
 import { saveGcodeToFile } from './saveGcodeToFile';
 import { defaultDownloadName } from '../gui/downloadName';
 import { TRAVEL_CLEARANCE, TRAVEL_PREVIEW_COLOR } from './toolpathConstants';
@@ -70,17 +73,39 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
             return;
         }
 
-        const gcode = buildPrintGcode(visualizer.printer, toolpaths);
+        const { gcode, estimate } = buildPrintGcodeWithEstimate(visualizer.printer, toolpaths);
         saveGcodeToFile(gcode, defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'));
-        notify(`G-code for ${toolpaths.length} model${toolpaths.length === 1 ? '' : 's'} saved.`, 'success');
+        notify(`G-code for ${toolpaths.length} model${toolpaths.length === 1 ? '' : 's'} saved. ${describeEstimate(estimate)}.`, 'success');
+        warnAboutHeadConflicts(visualizer, models);
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);
     });
 }
 
+/** At most this many head conflicts are spelled out; the rest are counted. */
+const MAX_REPORTED_CONFLICTS = 3;
+
 /**
- * Slices the regular-print objects into one toolpath and shows it in the scene.
+ * Warns when printing foam at one of the objects in a file would bring the print head into
+ * another one of them that is taller than the nozzle (see utils/arrange.ts). Arrange keeps such
+ * objects apart; this catches objects the user placed by hand.
+ *
+ * @param {Visualizer} visualizer The visualizer, for the printer.
+ * @param {EverydayModel[]} models The objects the file prints at.
+ */
+function warnAboutHeadConflicts(visualizer: Visualizer, models: EverydayModel[]): void {
+    const conflicts = describeHeadConflicts(visualizer, models);
+    if (!conflicts.length) return;
+    const more = conflicts.length - MAX_REPORTED_CONFLICTS;
+    notify(
+        `${conflicts.slice(0, MAX_REPORTED_CONFLICTS).join(' ')}${more > 0 ? ` (and ${more} more)` : ''} Move them apart, or press Arrange.`,
+        'warning'
+    );
+}
+
+/**
+ * Slices the regular-print objects into one toolpath.
  *
  * In the desktop app with PrusaSlicer installed, PrusaSlicer slices them; otherwise the built-in
  * slicer does (all of them together, layer by layer). Anything the user should know about which
@@ -88,20 +113,24 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
  *
  * @param {Visualizer} visualizer The visualizer holding the printer and the scene.
  * @param {EverydayModel[]} models The objects whose kind is `regular`.
- * @returns {Promise<PathPoint[]>} The toolpath; empty if there is nothing to print.
+ * @returns {Promise<{ toolpath: PathPoint[], slicer: RegularSlicerUsed }>} The toolpath (empty if
+ *          there is nothing to print) and which slicer made it.
  * @throws {Error} If an object's regular-print settings are invalid, or PrusaSlicer fails.
  */
-async function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[]): Promise<PathPoint[]> {
+async function sliceRegularModels(
+    visualizer: Visualizer,
+    models: EverydayModel[],
+): Promise<{ toolpath: PathPoint[], slicer: RegularSlicerUsed }> {
     // Whatever was previewed for these objects before is about to be out of date.
     models.forEach(model => {
         disposeObject3D(model.toolpathVisualizationObject);
         model.toolpathVisualizationObject = undefined;
     });
     if (!models.length) {
-        return [];
+        return { toolpath: [], slicer: 'builtin' };
     }
 
-    const { toolpath, notes } = await sliceRegularParts(
+    const { toolpath, slicer, notes } = await sliceRegularParts(
         visualizer.printer,
         models.map(model => ({
             // Rotation and scale are baked into the copy; the position is added as an offset.
@@ -109,18 +138,11 @@ async function sliceRegularModels(visualizer: Visualizer, models: EverydayModel[
             offset: model.mesh.position.clone(),
             config: model.regularConfig,
             name: model.name,
+            objectId: model.objectId,
         }))
     );
     notes.forEach(note => notify(note, 'warning'));
-    if (!toolpath.length) {
-        return [];
-    }
-
-    const preview = new THREE.Group();
-    visualizeToolpath(toolpath, preview, visualizer.printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
-    visualizer.scene.add(preview);
-    models[0].toolpathVisualizationObject = preview;
-    return toolpath;
+    return { toolpath, slicer };
 }
 
 /**
@@ -173,9 +195,10 @@ function highestZ(toolpath: PathPoint[]): number {
 }
 
 /**
- * Handler for "Slice & Export Prints": slices every Foam Print and Regular Print object on the
- * plate, builds one G-code file and downloads it. The work runs behind a busy overlay because
- * slicing blocks the page.
+ * Handler for "Slice Prints": slices every Foam Print and Regular Print object on the plate into
+ * one G-code file, shows its toolpath and keeps the file for "Export Print G-Code" (see
+ * {@link exportPlateGcode}), so the result can be looked at before it is saved. The work runs
+ * behind a busy overlay because slicing blocks the page.
  *
  * Regular prints come first, all of them together layer by layer; the foam prints follow.
  * Between the two the head rises clear of everything printed so far and crosses to the first
@@ -185,9 +208,9 @@ function highestZ(toolpath: PathPoint[]): number {
  * Problems are reported to the user as toasts; the returned promise never rejects.
  *
  * @param {Visualizer} visualizer The visualizer holding the models and the printer.
- * @returns {Promise<void>} Resolves once the file has been handed to the browser (or nothing was saved).
+ * @returns {Promise<void>} Resolves once the plate is sliced (or nothing was).
  */
-export function slicePlateAndSave(visualizer: Visualizer): Promise<void> {
+export function slicePlate(visualizer: Visualizer): Promise<void> {
     const foamModels = visualizer.everydayModelList.filter(model => model.kind === 'foam');
     const regularModels = visualizer.everydayModelList.filter(model => model.kind === 'regular');
     const models = [...regularModels, ...foamModels];
@@ -196,14 +219,22 @@ export function slicePlateAndSave(visualizer: Visualizer): Promise<void> {
         return Promise.resolve();
     }
 
+    // Taken before slicing, so an export can tell whether the plate changed since.
+    const fingerprint = plateFingerprint(visualizer.config, visualizer.everydayModelList);
+
     return withBusy('Slicing plate…', async () => {
         const printer = visualizer.printer;
-        const regularPath = await sliceRegularModels(visualizer, regularModels);
+        // The old slice's preview goes now, so it is never shown next to the new one.
+        visualizer.invalidatePlateSlice();
+
+        const regular = await sliceRegularModels(visualizer, regularModels);
+        const regularPath = regular.toolpath;
         // The purge line is printed once, at the very start of the file. The foam slicer adds
         // its own when it is the only thing printed; with regular prints first, it goes in front
         // of those instead.
+        // The whole plate is drawn below, in print order; the foam slicer need not draw its part.
         const foamPath = foamModels.length
-            ? generateFoamToolpath(visualizer, foamModels, regularPath.length ? { purgeLine: false } : {})
+            ? generateFoamToolpath(visualizer, foamModels, { preview: false, ...(regularPath.length ? { purgeLine: false } : {}) })
             : [];
 
         const toolpaths: PathPoint[][] = [];
@@ -228,17 +259,58 @@ export function slicePlateAndSave(visualizer: Visualizer): Promise<void> {
             return;
         }
 
-        const gcode = buildPrintGcode(printer, toolpaths);
-        saveGcodeToFile(gcode, defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'));
-        notify('Plate sliced and G-code saved.', 'success');
-        if (regularPath.length && foamPath.length) {
-            notify(
-                'This file prints the regular parts first and the foam parts after them. Nothing checks that the print head clears the finished regular parts while it prints foam next to them: keep them well apart.',
-                'warning'
-            );
-        }
+        const { gcode, estimate } = buildPrintGcodeWithEstimate(printer, toolpaths);
+        const summary = summarizePlate(toolpaths.flat(), gcode, {
+            regularSlicer: regularModels.length ? regular.slicer : undefined,
+            estimate,
+            filamentDiameter: printer.diameter_filament,
+            densities: printer.extruders.map(extruder => extruder.filamentDensity),
+        });
+
+        // One preview of the whole file, in the order it prints, moves between objects included.
+        const preview = new THREE.Group();
+        visualizeToolpath(combineToolpaths(toolpaths), preview, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+            (point, extruder) => printer.moveSpeed(point, extruder));
+        visualizer.scene.add(preview);
+        const previews = [preview];
+
+        visualizer.setPlateSlice({
+            gcode,
+            fileName: defaultDownloadName(models.length === 1 ? models[0].name : 'toolpath', 'gcode'),
+            summary,
+            fingerprint,
+            previews,
+            stale: false,
+        });
+
+        notify('Plate sliced. Check the preview and the summary, then press Export Print G-Code.', 'success');
+        warnAboutHeadConflicts(visualizer, models);
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);
     });
+}
+
+/**
+ * Handler for "Export Print G-Code": saves the G-code of the last plate slice.
+ *
+ * Refuses, with a message, when there is no slice or the plate has changed since it was made:
+ * the file would no longer print what is on the plate.
+ *
+ * @param {Visualizer} visualizer The visualizer holding the plate slice.
+ */
+export function exportPlateGcode(visualizer: Visualizer): void {
+    const slice = visualizer.plateSlice;
+    if (!slice) {
+        notify('Slice the plate first: press Slice Prints.', 'warning');
+        return;
+    }
+    // Every change the app knows of marks the slice stale; the fingerprint also catches the rest.
+    if (slice.stale || plateFingerprint(visualizer.config, visualizer.everydayModelList) !== slice.fingerprint) {
+        visualizer.invalidatePlateSlice();
+        notify('The plate changed after it was sliced, so this G-code no longer matches it. Press Slice Prints again.', 'warning');
+        return;
+    }
+    saveGcodeToFile(slice.gcode, slice.fileName);
+    notify('Print G-code saved.', 'success');
 }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import ClipperLib from 'clipper-lib';
 import type Printer from '../../printer/Printer';
-import type { PathPoint } from './pathTypes';
+import { FEATURE, type PathPoint } from './pathTypes';
 import {
     CLIPPER_SCALE,
     connectSegments,
@@ -11,6 +11,7 @@ import {
     PolygonWithHoles,
 } from '../utils/TreeSlicer';
 import { TRAVEL_CLEARANCE } from './toolpathConstants';
+import type { InfillPattern, SupportMode, SupportStyle } from './regularPrintOptions';
 
 // ---------------------------------------------------------------------------------------------
 // Regular (solid plastic) slicer: perimeters, solid top/bottom layers and rectilinear infill.
@@ -66,9 +67,42 @@ export interface RegularPrintConfig {
     extruder: number;
     /** Head speed (mm/min) of extrusion moves. Travel moves use the extruder's travel speed. */
     printSpeed: number;
+
+    // The settings below are only used when the desktop app slices with PrusaSlicer (see
+    // prusaGcode.ts). The built-in slicer ignores them.
+
+    /** Thickness (mm) of the first layer. */
+    firstLayerHeight: number;
+    /** Head speed (mm/min) of every move on the first layer. Ignored while `useProfileSpeeds` is set. */
+    firstLayerSpeed: number;
+    /**
+     * Use the speeds of the user's PrusaSlicer profile (or PrusaSlicer's defaults) instead of
+     * `printSpeed` and `firstLayerSpeed`.
+     */
+    useProfileSpeeds: boolean;
+    /** Pattern of the sparse infill. */
+    infillPattern: InfillPattern;
+    /** Where supports are printed. */
+    supports: SupportMode;
+    /** What the supports look like. */
+    supportStyle: SupportStyle;
+    /**
+     * Surfaces flatter than this angle (degrees from the bed) get support. 0 lets PrusaSlicer
+     * decide from how far each layer overhangs the one below.
+     */
+    supportThreshold: number;
+    /** Width (mm) of the brim around the part's first layer. 0 prints none. */
+    brimWidth: number;
+    /** Prusa's print profile to start from ('' for none). See prusaProfiles.ts. */
+    printProfile: string;
+    /** Prusa's filament profile to use ('' for none). */
+    filamentProfile: string;
 }
 
-/** A sensible starting point for a regular print: 0.2 mm layers, 2 walls, 20 % infill, 4 solid layers. */
+/**
+ * A sensible starting point for a regular print: 0.2 mm layers, 2 walls, 20 % infill, 4 solid layers.
+ * The PrusaSlicer-only settings follow PrusaSlicer's own profile for the Prusa XL.
+ */
 export const DEFAULT_REGULAR_CONFIG: RegularPrintConfig = {
     layerHeight: 0.2,
     perimeters: 2,
@@ -76,6 +110,16 @@ export const DEFAULT_REGULAR_CONFIG: RegularPrintConfig = {
     topBottomLayers: 4,
     extruder: 0,
     printSpeed: 1800,
+    firstLayerHeight: 0.2,
+    firstLayerSpeed: 1500,
+    useProfileSpeeds: false,
+    infillPattern: 'grid',
+    supports: 'none',
+    supportStyle: 'snug',
+    supportThreshold: 45,
+    brimWidth: 0,
+    printProfile: '',
+    filamentProfile: '',
 };
 
 /** One model to print as a regular part. */
@@ -92,6 +136,14 @@ export interface RegularPart {
     offset?: THREE.Vector3;
     /** What to call the part in error messages. Defaults to "Part N". */
     name?: string;
+    /** The object the part is (`EverydayModel.objectId`), put on every point of its toolpath. */
+    objectId?: number;
+}
+
+/** What the points of one stretch of extrusion are: the layer they are on and the feature they print. */
+interface PointTags {
+    layer: number;
+    feature: string;
 }
 
 /** A 2D point in mm. */
@@ -124,6 +176,8 @@ interface PartContext {
     lineWidth: number;
     /** The x/y offset (mm) added to every point. */
     offset: Point2;
+    /** The object the part is, if known (see RegularPart.objectId). */
+    objectId?: number;
 }
 
 /** Where the print head is while a toolpath is being built. Null before the first move. */
@@ -576,8 +630,16 @@ function chainInfillLines(lines: InfillLine[], from: Point2, maxLinkLength: numb
  * @param {HeadState} head Where the head is; updated to the target.
  * @param {THREE.Vector3} target Where to move to.
  * @param {number} extruder The extruder that must be active from here on.
+ * @param {{ objectId?: number, layer?: number }} [owner] The object and layer the travel is part
+ *        of; put on the move to the target, not on the approach moves before it.
  */
-function travelTo(path: PathPoint[], head: HeadState, target: THREE.Vector3, extruder: number): void {
+function travelTo(
+    path: PathPoint[],
+    head: HeadState,
+    target: THREE.Vector3,
+    extruder: number,
+    owner: { objectId?: number, layer?: number } = {},
+): void {
     const from = head.position;
     if (from === null) {
         path.push({
@@ -597,7 +659,7 @@ function travelTo(path: PathPoint[], head: HeadState, target: THREE.Vector3, ext
             });
         }
         // The extruder is named even when the head is already in place, so a tool change still happens here.
-        path.push({ point: target.clone(), travel: true, extruder });
+        path.push({ point: target.clone(), travel: true, extruder, ...owner });
     }
     head.position = target.clone();
 }
@@ -610,14 +672,15 @@ function travelTo(path: PathPoint[], head: HeadState, target: THREE.Vector3, ext
  * @param {Point2[]} polyline The points to print through, in the part's own coordinates.
  * @param {PartContext} part The part being printed, for its offset, extruder, layer height and speed.
  * @param {number} z The height (mm) the nozzle prints at.
+ * @param {PointTags} tags The layer and feature of the polyline.
  */
-function printPolyline(path: PathPoint[], head: HeadState, polyline: Point2[], part: PartContext, z: number): void {
+function printPolyline(path: PathPoint[], head: HeadState, polyline: Point2[], part: PartContext, z: number, tags: PointTags): void {
     if (polyline.length < 2) {
         return;
     }
     const toBed = (point: Point2) => new THREE.Vector3(point.x + part.offset.x, point.y + part.offset.y, z);
 
-    travelTo(path, head, toBed(polyline[0]), part.config.extruder);
+    travelTo(path, head, toBed(polyline[0]), part.config.extruder, { objectId: part.objectId, layer: tags.layer });
     for (let i = 1; i < polyline.length; i++) {
         const point = toBed(polyline[i]);
         if (point.distanceTo(head.position!) < MIN_MOVE_LENGTH) {
@@ -630,6 +693,9 @@ function printPolyline(path: PathPoint[], head: HeadState, polyline: Point2[], p
             // The emitter works the extrusion amount out from the line width and this height.
             layerHeight: part.config.layerHeight,
             speed: part.config.printSpeed,
+            objectId: part.objectId,
+            layer: tags.layer,
+            feature: tags.feature,
         });
         head.position = point.clone();
     }
@@ -698,6 +764,7 @@ function headInPart(head: HeadState, part: PartContext): Point2 {
  * @param {number} angle The direction of the lines in radians.
  * @param {PartContext} part The part being printed.
  * @param {number} z The height (mm) the nozzle prints at.
+ * @param {PointTags} tags The layer, and whether this is solid or sparse infill.
  */
 function printInfill(
     path: PathPoint[],
@@ -707,6 +774,7 @@ function printInfill(
     angle: number,
     part: PartContext,
     z: number,
+    tags: PointTags,
 ): void {
     const loops = fromClipperPaths(area);
     if (!loops.length) {
@@ -715,7 +783,7 @@ function printInfill(
     const lines = cutInfillLines(loops, spacing, angle, MIN_INFILL_LINE_FACTOR * part.lineWidth);
     const polylines = chainInfillLines(lines, headInPart(head, part), INFILL_LINK_FACTOR * spacing, loops);
     for (const polyline of polylines) {
-        printPolyline(path, head, polyline, part, z);
+        printPolyline(path, head, polyline, part, z, tags);
     }
 }
 
@@ -758,7 +826,8 @@ function printIsland(
             for (let k = 0; k <= loop.length; k++) {
                 closed.push(loop[(startIndex + k) % loop.length]);
             }
-            printPolyline(path, head, closed, part, z);
+            const feature = n === 0 ? FEATURE.externalPerimeter : FEATURE.perimeter;
+            printPolyline(path, head, closed, part, z, { layer: layer.layerIndex, feature });
         }
     }
 
@@ -775,12 +844,12 @@ function printIsland(
     const angle = layer.layerIndex % 2 === 0 ? INFILL_ANGLE : -INFILL_ANGLE;
 
     if (solid.length) {
-        printInfill(path, head, solid, lineWidth, angle, part, z);
+        printInfill(path, head, solid, lineWidth, angle, part, z, { layer: layer.layerIndex, feature: FEATURE.solidInfill });
     }
     if (sparse.length) {
         // At 100 % the lines touch (spacing = line width); at 20 % they are five line widths apart.
         const spacing = lineWidth / (config.infillDensity / SOLID_INFILL_DENSITY);
-        printInfill(path, head, sparse, spacing, angle, part, z);
+        printInfill(path, head, sparse, spacing, angle, part, z, { layer: layer.layerIndex, feature: FEATURE.internalInfill });
     }
 }
 
@@ -844,6 +913,7 @@ export function generateRegularToolpath(printer: Printer, parts: RegularPart[]):
             config: part.config,
             lineWidth: printer.threadDiameter(part.config.extruder),
             offset: { x: part.offset?.x ?? 0, y: part.offset?.y ?? 0 },
+            objectId: part.objectId,
         });
         layersByIndex.push(new Map(layers.map(layer => [layer.layerIndex, layer])));
         for (const layer of layers) {

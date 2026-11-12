@@ -2,6 +2,14 @@ import * as THREE from 'three';
 import type Printer from '../../printer/Printer';
 import type { PathPoint } from './pathTypes';
 import type { RegularPrintConfig } from './regularSlicer';
+import {
+    INFILL_PATTERNS,
+    SOLID_FALLBACK_PATTERN,
+    SOLID_INFILL_PATTERNS,
+    SUPPORT_MODES,
+    SUPPORT_STYLES,
+    type SupportMode,
+} from './regularPrintOptions';
 
 // ---------------------------------------------------------------------------------------------
 // The parts of the PrusaSlicer integration that do not need Electron: the settings PrusaSlicer is
@@ -31,6 +39,8 @@ const MM_PER_MIN_TO_MM_PER_S = 1 / 60;
  * - No arcs: the parser and the preview only understand straight moves.
  * - No skirt or wipe tower: our purge line and purge tower do that job.
  * - No sequential printing: every object is printed layer by layer together.
+ * - Object labels as comments (`; printing object ... id:N copy 0`), so each move can be traced
+ *   back to its part. Comments only: nothing the printer acts on.
  */
 const INTEGRATION_SETTINGS: PrusaConfig = {
     use_relative_e_distances: '1',
@@ -46,16 +56,85 @@ const INTEGRATION_SETTINGS: PrusaConfig = {
     skirts: '0',
     wipe_tower: '0',
     complete_objects: '0',
-    gcode_label_objects: 'disabled',
+    gcode_label_objects: 'octoprint',
+    // Plain text G-code: Prusa's own printer profiles (the XL's among them) ask for binary G-code.
+    binary_gcode: '0',
 };
 
+/** The PrusaSlicer settings behind each choice of where supports go. */
+const SUPPORT_SETTINGS: Record<SupportMode, PrusaConfig> = {
+    none: { support_material: '0' },
+    // Automatic supports on: with plain STL parts there are no support enforcers, so supports
+    // that only follow enforcers would never print anything.
+    buildplate: { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '1' },
+    everywhere: { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '0' },
+};
+
+/** mm/min as the mm/s string PrusaSlicer takes. */
+function toPrusaSpeed(mmPerMin: number): string {
+    return (mmPerMin * MM_PER_MIN_TO_MM_PER_S).toFixed(2);
+}
+
 /**
- * The PrusaSlicer settings for one regular part: the integration settings, the printer's machine
- * and nozzle, and the part's own print settings. Everything else (supports, retraction, cooling,
- * seams, infill pattern, ...) is left to the user's PrusaSlicer profile, or PrusaSlicer's defaults.
+ * Checks the regular-print settings that only PrusaSlicer uses (the built-in slicer ignores
+ * them, see validateRegularConfig for the rest), so a bad value gets a clear message instead of
+ * a PrusaSlicer error.
  *
  * @param {Printer} printer The printer the part is printed on.
  * @param {RegularPrintConfig} config How to print the part.
+ * @param {string} name What to call the part in the message.
+ * @throws {Error} If a setting has a value PrusaSlicer cannot slice with.
+ */
+export function validatePrusaOptions(printer: Printer, config: RegularPrintConfig, name: string): void {
+    const fail = (problem: string): never => {
+        throw new Error(`Regular print settings of "${name}": ${problem}`);
+    };
+    const oneOf = (value: unknown, options: readonly string[]) => typeof value === 'string' && options.includes(value);
+
+    if (!oneOf(config.supports, SUPPORT_MODES)) {
+        fail(`"${config.supports}" is not a supports choice (${SUPPORT_MODES.join(', ')}).`);
+    }
+    if (!oneOf(config.supportStyle, SUPPORT_STYLES)) {
+        fail(`"${config.supportStyle}" is not a support style (${SUPPORT_STYLES.join(', ')}).`);
+    }
+    if (!oneOf(config.infillPattern, INFILL_PATTERNS)) {
+        fail(`"${config.infillPattern}" is not an infill pattern (${INFILL_PATTERNS.join(', ')}).`);
+    }
+    if (!Number.isInteger(config.supportThreshold) || config.supportThreshold < 0 || config.supportThreshold > 90) {
+        fail(`the overhang threshold must be a whole number of degrees from 0 to 90 (it is ${config.supportThreshold}).`);
+    }
+    if (!Number.isFinite(config.brimWidth) || config.brimWidth < 0) {
+        fail(`the brim width must be 0 or more (it is ${config.brimWidth}).`);
+    }
+    if (!Number.isFinite(config.firstLayerHeight) || config.firstLayerHeight <= 0) {
+        fail(`the first layer height must be greater than 0 (it is ${config.firstLayerHeight}).`);
+    }
+    // PrusaSlicer refuses a first layer taller than the nozzle is wide.
+    const nozzleDiameter = printer.extruders[config.extruder]?.nozzleDiameter;
+    if (nozzleDiameter !== undefined && config.firstLayerHeight > nozzleDiameter) {
+        fail(`the first layer height (${config.firstLayerHeight} mm) cannot be more than the nozzle diameter (${nozzleDiameter} mm).`);
+    }
+    for (const [label, name] of [['print profile', config.printProfile], ['filament profile', config.filamentProfile]] as const) {
+        if (typeof name !== 'string' || name.length > 200 || /[\r\n]/.test(name)) {
+            fail(`the ${label} must be a profile name (it is ${JSON.stringify(name)}).`);
+        }
+    }
+    if (typeof config.useProfileSpeeds !== 'boolean') {
+        fail('"Use Profile Speeds" must be on or off.');
+    }
+    if (!config.useProfileSpeeds && (!Number.isFinite(config.firstLayerSpeed) || config.firstLayerSpeed <= 0)) {
+        fail(`the first layer speed must be greater than 0 (it is ${config.firstLayerSpeed}).`);
+    }
+}
+
+/**
+ * The PrusaSlicer settings for one regular part: the integration settings, the printer's machine
+ * and nozzle, and the part's own print settings (layers, walls, infill, supports, brim and, unless
+ * the part uses the profile's speeds, its speeds). Everything else (retraction, cooling, seams,
+ * support details, ...) is left to the user's PrusaSlicer profile, or PrusaSlicer's defaults.
+ *
+ * @param {Printer} printer The printer the part is printed on.
+ * @param {RegularPrintConfig} config How to print the part. Check it with validatePrusaOptions first.
  * @returns {PrusaConfig} The settings to pass to PrusaSlicer.
  */
 export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): PrusaConfig {
@@ -65,7 +144,17 @@ export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): 
     }
     const width = printer.machine_depth;
     const depth = printer.machine_depth_y;
-    const printSpeed = (config.printSpeed * MM_PER_MIN_TO_MM_PER_S).toFixed(2);
+    const printSpeed = toPrusaSpeed(config.printSpeed);
+    const speeds: PrusaConfig = config.useProfileSpeeds ? {} : {
+        perimeter_speed: printSpeed,
+        infill_speed: printSpeed,
+        solid_infill_speed: printSpeed,
+        first_layer_speed: toPrusaSpeed(config.firstLayerSpeed),
+    };
+    const solid = config.infillDensity >= 100;
+    const fillPattern = solid && !SOLID_INFILL_PATTERNS.includes(config.infillPattern)
+        ? SOLID_FALLBACK_PATTERN
+        : config.infillPattern;
 
     return {
         ...INTEGRATION_SETTINGS,
@@ -81,14 +170,17 @@ export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): 
         travel_speed: (extruder.printHead_speed_when_free_move * MM_PER_MIN_TO_MM_PER_S).toFixed(2),
         // The part's own settings, as set in the object list.
         layer_height: String(config.layerHeight),
-        first_layer_height: String(config.layerHeight),
+        first_layer_height: String(config.firstLayerHeight),
         perimeters: String(config.perimeters),
         fill_density: `${config.infillDensity}%`,
+        fill_pattern: fillPattern,
         top_solid_layers: String(config.topBottomLayers),
         bottom_solid_layers: String(config.topBottomLayers),
-        perimeter_speed: printSpeed,
-        infill_speed: printSpeed,
-        solid_infill_speed: printSpeed,
+        ...SUPPORT_SETTINGS[config.supports],
+        support_material_style: config.supportStyle,
+        support_material_threshold: String(config.supportThreshold),
+        brim_width: String(config.brimWidth),
+        ...speeds,
     };
 }
 
@@ -115,7 +207,17 @@ export function formatPrusaIni(config: PrusaConfig): string {
 export interface ParsePrusaGcodeOptions {
     /** The extruder that prints the moves. Set on the first point so the emitter picks that tool. */
     extruder: number;
+    /**
+     * Our object id (`PathPoint.objectId`) of each part PrusaSlicer sliced, in the order the
+     * parts were given to it: PrusaSlicer numbers its objects in that order, from 0.
+     */
+    objectIds?: readonly (number | undefined)[];
 }
+
+/** PrusaSlicer's object label comment, `printing object <name> id:<n> copy <n>`. */
+const OBJECT_START = /^printing object .* id:(\d+) copy \d+$/;
+/** The comment that closes an object label. */
+const OBJECT_STOP = /^stop printing object /;
 
 /** Splits a G-code word like `X12.5` into its letter and number. */
 function readWords(code: string): Map<string, number> {
@@ -135,10 +237,14 @@ function readWords(code: string): Map<string, number> {
  * - A move that extrudes becomes a regular segment carrying its exact `extrusion` and `speed`.
  * - A move that does not extrude becomes a travel. A travel that retracts while it moves (a wipe)
  *   keeps its negative `extrusion`.
+ * - Acceleration, jerk and pressure advance (M204, M205, M572, M900) are kept as `preGcode` too.
  * - Retractions and fan commands, which do not move the head, are kept as `preGcode` on the
  *   point after them. A final retraction with no move after it is dropped: the next toolpath
  *   starts with its own moves, and PrusaSlicer has no matching unretract waiting.
- * - Feature changes (`;TYPE:Perimeter`) are carried over as debug comments.
+ * - Feature changes (`;TYPE:Perimeter`) are carried over as debug comments, and every extrusion
+ *   carries the feature it prints as `feature`.
+ * - Every point after the first `;LAYER_CHANGE` carries its layer (0 = the first), and every point
+ *   inside an object label carries that object's id from `options.objectIds`.
  * - Everything else (temperatures, progress, `G92 E0`, the tool select) is our emitter's job and dropped.
  *
  * Moves before the head's x, y and z are all known only update where the head is.
@@ -157,6 +263,9 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
     let feed: number | undefined;
     let pending: string[] = [];
     let pendingType: string | undefined;
+    let feature: string | undefined;
+    let layer = -1;
+    let objectId: number | undefined;
     let extruded = false;
 
     const lines = gcode.split(/\r?\n/);
@@ -168,6 +277,16 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
 
         if (comment.startsWith('TYPE:')) {
             pendingType = comment.slice('TYPE:'.length);
+            feature = pendingType;
+        } else if (comment === 'LAYER_CHANGE') {
+            layer++;
+        } else if (OBJECT_STOP.test(comment)) {
+            objectId = undefined;
+        } else {
+            const start = OBJECT_START.exec(comment);
+            if (start) {
+                objectId = options.objectIds?.[Number(start[1])];
+            }
         }
         if (!code) {
             continue;
@@ -224,9 +343,22 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
                 point.debug = `PrusaSlicer: ${pendingType}`;
                 pendingType = undefined;
             }
+            if (point.regularSegment && feature !== undefined) {
+                point.feature = feature;
+            }
+            if (layer >= 0) {
+                point.layer = layer;
+            }
+            if (objectId !== undefined) {
+                point.objectId = objectId;
+            }
             path.push(point);
         } else if (command === 'G10' || command === 'G11' || command === 'M106' || command === 'M107') {
             // Firmware retraction and the part cooling fan.
+            pending.push(code);
+        } else if (command === 'M204' || command === 'M205' || command === 'M572' || command === 'M900') {
+            // Acceleration, jerk and pressure advance, per feature and from the filament profile.
+            // The emitter sets its own back before the app's next move (see Printer.appMotionGcode).
             pending.push(code);
         } else if (command === 'M82') {
             fail('it uses absolute extrusion; use_relative_e_distances must be on');

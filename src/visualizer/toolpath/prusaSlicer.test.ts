@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import Printer from '../../printer/Printer';
 import { DEFAULT_REGULAR_CONFIG, type RegularPart } from './regularSlicer';
-import { sliceRegularParts, type PrusaSlicerBridge } from './prusaSlicer';
+import { isPrusaSlicerAvailable, sliceRegularParts, type PrusaSlicerBridge } from './prusaSlicer';
 
 function cube(x: number, config = DEFAULT_REGULAR_CONFIG): RegularPart {
     return {
@@ -66,5 +66,90 @@ describe('sliceRegularParts', () => {
     it('uses the built-in slicer quietly in a plain browser', async () => {
         const result = await sliceRegularParts(new Printer(), [cube(40)], undefined);
         expect(result).toMatchObject({ slicer: 'builtin', notes: [] });
+    });
+
+    it('sends the part\'s supports and brim to PrusaSlicer', async () => {
+        const bridge = fakeBridge(true);
+        await sliceRegularParts(new Printer(), [cube(40, { ...DEFAULT_REGULAR_CONFIG, supports: 'buildplate', brimWidth: 4 })], bridge);
+        const { ini } = bridge.slice.mock.calls[0][0];
+        expect(ini).toContain('support_material = 1');
+        expect(ini).toContain('support_material_buildplate_only = 1');
+        expect(ini).toContain('brim_width = 4');
+    });
+
+    it('checks the PrusaSlicer-only settings before running PrusaSlicer, and only then', async () => {
+        const bad = { ...DEFAULT_REGULAR_CONFIG, firstLayerHeight: 0.9 };
+        const bridge = fakeBridge(true);
+        await expect(sliceRegularParts(new Printer(), [cube(40, bad)], bridge)).rejects.toThrow(/first layer height/);
+        expect(bridge.slice).not.toHaveBeenCalled();
+
+        // The built-in slicer does not use them, so they cannot stop it.
+        const result = await sliceRegularParts(new Printer(), [cube(40, bad)], undefined);
+        expect(result.slicer).toBe('builtin');
+    });
+});
+
+describe('isPrusaSlicerAvailable', () => {
+    it('is false in a plain browser', async () => {
+        expect(await isPrusaSlicerAvailable(undefined)).toBe(false);
+    });
+
+    it('follows what the desktop app reports', async () => {
+        expect(await isPrusaSlicerAvailable(fakeBridge(true))).toBe(true);
+        expect(await isPrusaSlicerAvailable(fakeBridge(false))).toBe(false);
+    });
+
+    it('is false when the desktop app cannot be asked', async () => {
+        const bridge = { ...fakeBridge(true), status: async () => { throw new Error('no answer'); } };
+        expect(await isPrusaSlicerAvailable(bridge)).toBe(false);
+    });
+});
+
+describe('Prusa profiles in the slicing request', () => {
+    const BUNDLE = [
+        '[printer:Original Prusa XL Input Shaper 0.4 nozzle]',
+        'printer_technology = FFF',
+        'nozzle_diameter = 0.4',
+        'retract_length = 0.8',
+        '[print:0.20mm SPEED @XLIS 0.4]',
+        'perimeter_acceleration = 3000',
+        'compatible_printers_condition = nozzle_diameter[0]==0.4',
+        '[filament:Generic PLA @XLIS]',
+        'start_filament_gcode = "M572 S0.036"',
+    ].join('\n');
+
+    function bridgeWithBundle(): PrusaSlicerBridge & { slice: ReturnType<typeof vi.fn> } {
+        return { ...fakeBridge(true), vendorProfiles: async () => ({ text: BUNDLE }) };
+    }
+
+    it('sends the chosen printer, print and filament profiles to be loaded under the app\'s settings', async () => {
+        const printer = new Printer();
+        printer.prusaPrinterProfile = 'Original Prusa XL Input Shaper 0.4 nozzle';
+        const bridge = bridgeWithBundle();
+        const config = { ...DEFAULT_REGULAR_CONFIG, printProfile: '0.20mm SPEED @XLIS 0.4', filamentProfile: 'Generic PLA @XLIS' };
+        await sliceRegularParts(printer, [cube(40, config)], bridge);
+        const { profileIni, ini } = bridge.slice.mock.calls[0][0];
+        expect(profileIni).toContain('retract_length = 0.8');
+        expect(profileIni).toContain('perimeter_acceleration = 3000');
+        expect(profileIni).toContain('start_filament_gcode = "M572 S0.036"');
+        expect(profileIni).not.toContain('compatible_printers_condition');
+        // The app's own settings stay in their own file, loaded last.
+        expect(ini).toContain('layer_height = ');
+        expect(ini).not.toContain('retract_length');
+    });
+
+    it('leaves out a profile the bundle does not have, and says so', async () => {
+        const printer = new Printer();
+        printer.prusaPrinterProfile = 'Original Prusa XL Input Shaper 0.4 nozzle';
+        const bridge = bridgeWithBundle();
+        const result = await sliceRegularParts(printer, [cube(40, { ...DEFAULT_REGULAR_CONFIG, printProfile: 'Gone' })], bridge);
+        expect(bridge.slice.mock.calls[0][0].profileIni).toContain('retract_length = 0.8');
+        expect(result.notes.some(note => /print profile “Gone”/.test(note))).toBe(true);
+    });
+
+    it('sends no profile file when none is chosen', async () => {
+        const bridge = bridgeWithBundle();
+        await sliceRegularParts(new Printer(), [cube(40)], bridge);
+        expect(bridge.slice.mock.calls[0][0].profileIni).toBeUndefined();
     });
 });

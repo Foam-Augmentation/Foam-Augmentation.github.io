@@ -5,16 +5,17 @@
  * A preset is plain text with one `key value` pair per line; `#` starts a comment line.
  *
  *     # AugPrint Foam Slicer preset
- *     presetVersion 2
+ *     presetVersion 3
  *     bedTemp 60                     <- global setting (Visualizer.config)
  *     extruderCount 2
  *     extruder0.nozzleDiameter 0.4   <- per-extruder setting
  *     hStar 9                        <- model parameter (toolpathConfig)
  *     initial.hStar 9                <- model initial-layer parameter (initialConfig)
  *     initialOffset 0
+ *     regular.layerHeight 0.2        <- model regular-print setting (regularConfig)
  *
- * Files written before the version line existed (version 1) have the same shape minus the
- * `presetVersion`, `initial.*` and `initialOffset` lines, so they still import.
+ * Older files still import: version 2 has no `regular.*` lines, and version 1 (written before
+ * the version line existed) also has no `presetVersion`, `initial.*` and `initialOffset` lines.
  *
  * Import is parse → validate → commit: `parsePreset` never touches application state, and a
  * preset with any invalid line is rejected as a whole, so a bad file cannot leave the
@@ -32,11 +33,13 @@ import {
   InitialKey,
   ModelKey,
   ParamSpec,
+  REGULAR_SPECS,
+  RegularKey,
   SettingKey,
 } from './paramSpecs';
 
 /** Version written by `serializePreset`. Bump when the format changes incompatibly. */
-export const PRESET_VERSION = 2;
+export const PRESET_VERSION = 3;
 
 /** Upper bound on the extruder count a preset may ask for. */
 export const MAX_EXTRUDERS = 16;
@@ -57,6 +60,8 @@ export interface ModelTarget {
   /** The model's initial-layer `ToolpathConfig`. */
   initialConfig: object;
   initialOffset: number;
+  /** The model's regular-print settings (`RegularPrintSettings`), if it has them. */
+  regularConfig?: object;
 }
 
 /** The result of parsing a preset file. Nothing is applied until `errors` is empty. */
@@ -75,6 +80,8 @@ export interface ParsedPreset {
   initial: Partial<Record<InitialKey, number | boolean>>;
   /** Validated initial-layer offset. */
   initialOffset?: number;
+  /** Validated regular-print settings (regularConfig). */
+  regular: Partial<Record<RegularKey, PresetValue>>;
   /** Lines that were ignored (unknown keys). The preset can still be applied. */
   warnings: string[];
   /** Lines that are invalid. The preset must not be applied if there are any. */
@@ -91,7 +98,8 @@ export function hasModelSection(preset: ParsedPreset): boolean {
   return (
     Object.keys(preset.model).length > 0 ||
     Object.keys(preset.initial).length > 0 ||
-    preset.initialOffset !== undefined
+    preset.initialOffset !== undefined ||
+    Object.keys(preset.regular).length > 0
   );
 }
 
@@ -115,6 +123,13 @@ export function parseValue(spec: ParamSpec, raw: string): { value: PresetValue }
   if (spec.type === 'enum') {
     if (spec.options.indexOf(text) !== -1) return { value: text };
     return { error: `expected one of ${spec.options.join(', ')}, got "${text}"` };
+  }
+
+  if (spec.type === 'text') {
+    if (text.length > spec.maxLength) return { error: `expected at most ${spec.maxLength} characters` };
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f]/.test(text)) return { error: 'expected text without control characters' };
+    return { value: text };
   }
 
   // Number("") is 0 and Number("abc") is NaN; neither may reach the G-code.
@@ -155,6 +170,7 @@ export function parsePreset(text: string): ParsedPreset {
     extruders: {},
     model: {},
     initial: {},
+    regular: {},
     warnings: [],
     errors: [],
   };
@@ -166,12 +182,14 @@ export function parsePreset(text: string): ParsedPreset {
 
     const where = `line ${index + 1}`;
     const split = trimmed.search(/\s/);
-    if (split === -1) {
+    // A text setting written with nothing after its key is empty ("none").
+    const isText = (k: string) => (specFor(SETTING_SPECS, k) ?? (k.startsWith('regular.') ? specFor(REGULAR_SPECS, k.slice('regular.'.length)) : undefined))?.type === 'text';
+    if (split === -1 && !isText(trimmed)) {
       preset.errors.push(`${where}: "${trimmed}" has no value`);
       return;
     }
-    const key = trimmed.slice(0, split);
-    const raw = trimmed.slice(split + 1).trim();
+    const key = split === -1 ? trimmed : trimmed.slice(0, split);
+    const raw = split === -1 ? '' : trimmed.slice(split + 1).trim();
 
     /** Validates `raw` against `spec` and hands the typed value to `store`. */
     const take = (spec: ParamSpec, store: (value: PresetValue) => void) => {
@@ -232,6 +250,17 @@ export function parsePreset(text: string): ParsedPreset {
         preset.warnings.push(`${where}: unknown initial-layer parameter "${field}" ignored`);
       } else {
         take(spec, value => { preset.initial[field as InitialKey] = value as number | boolean; });
+      }
+      return;
+    }
+
+    if (key.startsWith('regular.')) {
+      const field = key.slice('regular.'.length);
+      const spec = specFor(REGULAR_SPECS, field);
+      if (!spec) {
+        preset.warnings.push(`${where}: unknown regular-print setting "${field}" ignored`);
+      } else {
+        take(spec, value => { preset.regular[field as RegularKey] = value; });
       }
       return;
     }
@@ -320,6 +349,9 @@ export function applyPresetToModel(preset: ParsedPreset, model: ModelTarget): vo
   if (preset.initialOffset !== undefined) {
     model.initialOffset = preset.initialOffset;
   }
+  if (model.regularConfig) {
+    Object.assign(model.regularConfig, preset.regular);
+  }
 }
 
 /**
@@ -361,6 +393,14 @@ export function serializePreset(settings: SettingsTarget, model?: ModelTarget | 
       if (initialConfig[key] !== undefined) lines.push(`initial.${key} ${initialConfig[key]}`);
     }
     lines.push(`initialOffset ${model.initialOffset}`);
+
+    if (model.regularConfig) {
+      const regularConfig = model.regularConfig as { [key: string]: unknown };
+      lines.push('', '# Regular-print settings');
+      for (const key of Object.keys(REGULAR_SPECS)) {
+        if (regularConfig[key] !== undefined) lines.push(`regular.${key} ${regularConfig[key]}`);
+      }
+    }
   }
 
   return lines.join('\n') + '\n';

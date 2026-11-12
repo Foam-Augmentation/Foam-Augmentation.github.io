@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import Printer from '../../printer/Printer';
-import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode } from './prusaGcode';
+import type { PathPoint } from './pathTypes';
+import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode, validatePrusaOptions } from './prusaGcode';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 
 // Shaped like PrusaSlicer's own output with relative E: a layer change, a retract/unretract around
@@ -79,6 +81,62 @@ describe('parsePrusaGcode', () => {
         expect(parsePrusaGcode('G1 Z.2\nG1 X1 Y1\n', { extruder: 0 })).toEqual([]);
     });
 
+    it('gives every extrusion the feature it prints, and travel none', () => {
+        expect(path.map(p => p.feature)).toEqual([
+            undefined, 'External perimeter', 'External perimeter', undefined, undefined, 'Solid infill',
+        ]);
+    });
+});
+
+// Shaped like PrusaSlicer 2.9's output with gcode_label_objects = octoprint: the labels are
+// declared once up front, then each layer prints the objects in turn.
+const LABELLED = `
+; printing object C:/tmp/part-0.stl id:0 copy 0
+; stop printing object C:/tmp/part-0.stl id:0 copy 0
+; printing object C:/tmp/part-1.stl id:1 copy 0
+; stop printing object C:/tmp/part-1.stl id:1 copy 0
+;LAYER_CHANGE
+;Z:0.2
+G1 Z.2 F720
+; printing object C:/tmp/part-1.stl id:1 copy 0
+G1 X200 Y100 F9000
+;TYPE:External perimeter
+G1 X201 Y100 E.1
+; stop printing object C:/tmp/part-1.stl id:1 copy 0
+; printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X100 Y100
+;TYPE:Support material
+G1 X101 Y100 E.1
+; stop printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X150 Y100
+;LAYER_CHANGE
+;Z:0.4
+G1 Z.4
+; printing object C:/tmp/part-0.stl id:0 copy 0
+G1 X102 Y100 E.1
+`;
+
+describe('parsePrusaGcode with object labels', () => {
+    const path = parsePrusaGcode(LABELLED, { extruder: 0, objectIds: [40, 41] });
+
+    it('maps PrusaSlicer\'s object ids, in the order the parts were sent, to ours', () => {
+        expect(path.map(p => [p.point.x, p.objectId])).toEqual([
+            [200, 41], [201, 41], [100, 40], [101, 40], [150, undefined], [150, undefined], [102, 40],
+        ]);
+    });
+
+    it('counts layers from 0 at each layer change', () => {
+        expect(path.map(p => p.layer)).toEqual([0, 0, 0, 0, 0, 1, 1]);
+    });
+
+    it('carries a feature on until the next one', () => {
+        expect(path.filter(p => p.regularSegment).map(p => p.feature)).toEqual(['External perimeter', 'Support material', 'Support material']);
+    });
+
+    it('leaves the objects unassigned without ids to map them to', () => {
+        expect(parsePrusaGcode(LABELLED, { extruder: 0 }).every(p => p.objectId === undefined)).toBe(true);
+    });
+
     it('refuses G-code it cannot reproduce', () => {
         expect(() => parsePrusaGcode('M82\n', { extruder: 0 })).toThrow(/absolute extrusion/);
         expect(() => parsePrusaGcode('G1 Z1\nG1 X1 Y1\nG2 X2 Y2 I1 J0 E.1\n', { extruder: 0 })).toThrow(/arcs/);
@@ -93,6 +151,7 @@ describe('buildPrusaConfig', () => {
         expect(config).toMatchObject({
             use_relative_e_distances: '1',
             arc_fitting: 'disabled',
+            gcode_label_objects: 'octoprint',
             start_gcode: '',
             fill_density: '35%',
             perimeters: String(DEFAULT_REGULAR_CONFIG.perimeters),
@@ -104,6 +163,86 @@ describe('buildPrusaConfig', () => {
 
     it('rejects an extruder that does not exist', () => {
         expect(() => buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, extruder: 9 })).toThrow(/Extruder 9/);
+    });
+
+    it('maps the first layer, infill pattern, supports and brim', () => {
+        const config = buildPrusaConfig(new Printer(), {
+            ...DEFAULT_REGULAR_CONFIG,
+            layerHeight: 0.1,
+            firstLayerHeight: 0.3,
+            firstLayerSpeed: 1200,
+            infillPattern: 'gyroid',
+            supports: 'everywhere',
+            supportStyle: 'organic',
+            supportThreshold: 40,
+            brimWidth: 5,
+        });
+        expect(config).toMatchObject({
+            layer_height: '0.1',
+            first_layer_height: '0.3',
+            first_layer_speed: '20.00',
+            fill_pattern: 'gyroid',
+            support_material: '1',
+            support_material_auto: '1',
+            support_material_buildplate_only: '0',
+            support_material_style: 'organic',
+            support_material_threshold: '40',
+            brim_width: '5',
+        });
+    });
+
+    it.each([
+        ['none', { support_material: '0' }],
+        ['buildplate', { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '1' }],
+        ['everywhere', { support_material: '1', support_material_auto: '1', support_material_buildplate_only: '0' }],
+    ] as const)('turns supports "%s" into the matching PrusaSlicer switches', (supports, expected) => {
+        expect(buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, supports })).toMatchObject(expected);
+    });
+
+    it('fills a solid part with straight lines when the chosen pattern cannot be solid', () => {
+        const solid = (infillPattern: typeof DEFAULT_REGULAR_CONFIG.infillPattern) =>
+            buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, infillDensity: 100, infillPattern }).fill_pattern;
+        expect(solid('gyroid')).toBe('rectilinear');
+        expect(solid('grid')).toBe('rectilinear');
+        expect(solid('concentric')).toBe('concentric');
+        expect(buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, infillDensity: 99, infillPattern: 'gyroid' }).fill_pattern).toBe('gyroid');
+    });
+
+    it('leaves every speed to the profile when the part uses the profile speeds', () => {
+        const config = buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, useProfileSpeeds: true });
+        for (const key of ['perimeter_speed', 'infill_speed', 'solid_infill_speed', 'first_layer_speed']) {
+            expect(config).not.toHaveProperty(key);
+        }
+        // The travel speed is the machine's, not a print speed: it stays.
+        expect(config).toHaveProperty('travel_speed');
+    });
+});
+
+describe('validatePrusaOptions', () => {
+    const printer = new Printer();
+
+    it('accepts the defaults', () => {
+        expect(() => validatePrusaOptions(printer, DEFAULT_REGULAR_CONFIG, 'Part')).not.toThrow();
+    });
+
+    it.each([
+        ['an unknown supports choice', { supports: 'tree' }],
+        ['an unknown support style', { supportStyle: 'tree' }],
+        ['an unknown infill pattern', { infillPattern: 'hilbertcurve' }],
+        ['a fractional overhang threshold', { supportThreshold: 45.5 }],
+        ['an overhang threshold over 90', { supportThreshold: 91 }],
+        ['a negative brim', { brimWidth: -1 }],
+        ['a zero first layer height', { firstLayerHeight: 0 }],
+        ['a first layer taller than the nozzle', { firstLayerHeight: 0.5 }],
+        ['a zero first layer speed', { firstLayerSpeed: 0 }],
+        ['a profile-speeds value that is not on or off', { useProfileSpeeds: 'yes' }],
+    ])('rejects %s', (_, overrides) => {
+        const config = { ...DEFAULT_REGULAR_CONFIG, ...overrides } as unknown as typeof DEFAULT_REGULAR_CONFIG;
+        expect(() => validatePrusaOptions(printer, config, 'Part')).toThrow(/Regular print settings of "Part"/);
+    });
+
+    it('does not ask for a first layer speed the profile replaces', () => {
+        expect(() => validatePrusaOptions(printer, { ...DEFAULT_REGULAR_CONFIG, useProfileSpeeds: true, firstLayerSpeed: 0 }, 'Part')).not.toThrow();
     });
 });
 
@@ -130,5 +269,72 @@ describe('emitting parsed PrusaSlicer moves', () => {
         expect(lines).toContain('M106 S255');
         // The fan change comes right before the wipe it was in front of.
         expect(lines.indexOf('M106 S255')).toBe(lines.indexOf('G1 X15.000000 Y20.000000 Z0.200000 E-0.300000 F1800') - 1);
+    });
+});
+
+describe('acceleration and pressure advance from PrusaSlicer', () => {
+    const at = (x: number, extra: Partial<PathPoint> = {}): PathPoint => ({ point: new THREE.Vector3(x, 10, 0.2), ...extra });
+
+    it('keeps M204, M205, M572 and M900 for the next move', () => {
+        const path = parsePrusaGcode('G1 Z.2\nG1 X1 Y1\nM572 S0.036\nM204 P3000\nG1 X2 Y1 E.1\nM205 X8 Y8\nM900 K0\nG1 X3 Y1 E.1\n', { extruder: 0 });
+        expect(path[1].preGcode).toEqual(['M572 S0.036', 'M204 P3000']);
+        expect(path[2].preGcode).toEqual(['M205 X8 Y8', 'M900 K0']);
+    });
+
+    it('turns pressure advance off again before the first foam move after PrusaSlicer\'s moves', () => {
+        const printer = new Printer();
+        const gcode = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M572 S0.036', 'M204 P3000'] }),
+            at(20, { regularSegment: true, extrusion: 0.5, speed: 1800 }),
+            at(30, { vStar: 0.2, hStar: 6, edot: 50 }),
+            at(40, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]);
+        const lines = gcode.split('\n');
+        const imported = lines.indexOf('M572 S0.036');
+        const reset = lines.findIndex(l => l.startsWith('M572 S0 '));
+        const firstFoam = lines.findIndex(l => l.includes('V*='));
+        expect(imported).toBeGreaterThan(-1);
+        expect(reset).toBeGreaterThan(imported);
+        expect(reset).toBeLessThan(firstFoam);
+        expect(lines.slice(reset, firstFoam)).toEqual(expect.arrayContaining(['M204 P1000 T1000', 'M205 X8 Y8']));
+        // Once is enough.
+        expect(lines.filter(l => l.startsWith('M572 S0 '))).toHaveLength(1);
+    });
+
+    it('turns linear advance off before foam on a single-nozzle printer too', () => {
+        const printer = new Printer();
+        printer.multipleToolheads = false;
+        const lines = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M900 K0.05'] }),
+            at(20, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]).split('\n');
+        const lastAdvance = lines.slice(0, lines.findIndex(l => l.includes('V*='))).filter(l => l.startsWith('M900')).pop();
+        expect(lastAdvance).toMatch(/^M900 K0 /);
+    });
+
+    it('writes nothing extra when no outside slicer changed the motion settings', () => {
+        const gcode = new Printer().generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true }),
+            at(20, { vStar: 0.2, hStar: 6, edot: 50 }),
+        ]);
+        expect(gcode).not.toMatch(/back to the app's own motion settings/);
+    });
+
+    it('starts an XL and an MK3S print with pressure advance off', () => {
+        const xl = new Printer();
+        xl.multipleToolheads = true;
+        const xlStart = xl.build_start_gcode(0, [0]);
+        expect(xlStart).toMatch(/^M572 S0 /m);
+        expect(xlStart).not.toMatch(/^M900/m);
+
+        const mk3 = new Printer();
+        mk3.multipleToolheads = false;
+        const mk3Start = mk3.build_start_gcode(0, [0]);
+        expect(mk3Start).toMatch(/^M900 K0 /m);
+        expect(mk3Start).not.toMatch(/^M900 K(?!0 )/m);
+        expect(mk3Start).not.toMatch(/^M572/m);
     });
 });

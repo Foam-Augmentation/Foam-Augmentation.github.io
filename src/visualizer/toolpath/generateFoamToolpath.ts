@@ -24,7 +24,8 @@ import {
     extractShellRegionsFromLayer,
 } from '../utils/TreeSlicer';
 import { notify } from '../gui/notify';
-import type { PathPoint } from './pathTypes';
+import { FEATURE, type PathPoint } from './pathTypes';
+import { buildToolpathPreview } from './toolpathPreview';
 import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
 import { getRequiredZOffset } from './collision';
 import {
@@ -273,6 +274,10 @@ function fillToolpath(
                     role: role,
                     layerHeight: nextPoint.layerHeight,
                     initialMaterial: nextPoint.initialMaterial,
+                    // The points in between are part of the move to nextPoint.
+                    objectId: nextPoint.objectId,
+                    layer: nextPoint.layer,
+                    feature: nextPoint.feature,
                     extruder: point.extruder,
                     hStar: point.hStar,
                     vStar: point.vStar,
@@ -983,6 +988,18 @@ function makeChunkPath(
             continue;
         }
 
+        // Every point of the region is on the same layer of the model's stack. A shell region is
+        // sliced finer than the foam; it counts as part of the foam layer it sits in.
+        const layer = layerOf(region.height);
+        // Sensing regions are the ones on another extruder than the foam's (see Printer.getVTPSettings).
+        const foamFeature = useInitial ? FEATURE.initialFoam : region.extruder !== 0 ? FEATURE.sensingFoam : FEATURE.foam;
+        for (const point of path) {
+            point.layer = layer;
+            if (!point.travel) {
+                point.feature = region.shell ? (point.ironing ? FEATURE.ironing : FEATURE.shell) : foamFeature;
+            }
+        }
+
         const prevPathLen = chunkPath.length;
         pushAll(chunkPath, path);
         chunkPath[prevPathLen].travel = true;
@@ -1154,7 +1171,11 @@ function makeChunkTreePath(
         const chunk = roots[printIndex];
         const printExtruder = chunk.regions[0].extruder;
         const chunkPath = makeChunkPath(chunk, lastPoint, printedRegions, modelHeight, scanX, TOOLPATH_FILL_DISTANCE, layerHeights);
-        chunkPath.forEach(p => p.extruder = printExtruder);
+        const objectId = chunk.modelObj!.objectId;
+        chunkPath.forEach(p => {
+            p.extruder = printExtruder;
+            p.objectId = objectId;
+        });
         if (chunkPath.length) {
             chunkPath[0].debug = `NEW CHUNK. Min: ${chunk.regions[0].height}, MAX: ${chunk.regions[chunk.regions.length-1].height}, shell ${chunk.shell}, extruder ${printExtruder}, scanX ${scanX}` + (chunkPath[0].debug ? " | " + chunkPath[0].debug : "");
         }
@@ -1316,6 +1337,11 @@ export interface FoamToolpathOptions {
      * the nozzle.
      */
     purgeLine?: boolean;
+    /**
+     * Whether to draw the toolpath in the scene (on the first model's `toolpathVisualizationObject`).
+     * Defaults to true. Pass false when the caller draws a bigger toolpath it is part of.
+     */
+    preview?: boolean;
 }
 
 /**
@@ -1382,7 +1408,9 @@ export function generateFoamToolpath(
         });
 
         if (printer.generateBoundary) {
-            boundaryPath = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, false).concat(boundaryPath);
+            const boundary = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, false);
+            tagBoundary(boundary, modelObj);
+            boundaryPath = boundary.concat(boundaryPath);
         }
 
         // Update parameters for printing
@@ -1444,11 +1472,13 @@ export function generateFoamToolpath(
     pushAll(toolpath, boundaryPath);
     pushAll(toolpath, modelPath);
 
-    const visualizationGroup = new THREE.Group();
-    visualizeToolpath(toolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
-
-    visualizer.scene.add(visualizationGroup);
-    modelObjs[0].toolpathVisualizationObject = visualizationGroup;
+    if (options.preview ?? true) {
+        const visualizationGroup = new THREE.Group();
+        visualizeToolpath(toolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+            (point, extruder) => printer.moveSpeed(point, extruder));
+        visualizer.scene.add(visualizationGroup);
+        modelObjs[0].toolpathVisualizationObject = visualizationGroup;
+    }
     return toolpath;
 }
 
@@ -1514,6 +1544,22 @@ function makeBoundaryPath(
 
 
 /**
+ * Marks the boundary points of a boundary path as belonging to the model they surround. The
+ * pause and travel points around them stay unassigned.
+ *
+ * @param {PathPoint[]} path A path from makeBoundaryPath. Modified in place.
+ * @param {EverydayModel} modelObj The model the boundary surrounds.
+ */
+function tagBoundary(path: PathPoint[], modelObj: EverydayModel): void {
+    for (const point of path) {
+        if (point.role === 'boundary') {
+            point.objectId = modelObj.objectId;
+        }
+    }
+}
+
+
+/**
  * Builds the purge line printed once at the start of a print: a couple of passes along the
  * front edge of the bed, one bed margin in from the edges, so it follows the configured bed size.
  *
@@ -1550,62 +1596,29 @@ export function makePurgeLine(printer: Printer): PathPoint[] {
 
 
 /**
- * Visualizes a toolpath, showing travel movements and print movements
- * as separate colors.
- * 
- * @param toolpath The toolpath to visualize
- * @param visualizationGroup The visualization group to add the visualization to.
- * @param printColors The colors for print extrusions, indexed by extruder.
- * @param travelColor The color the visualization should be for travel movements.
+ * Draws a toolpath into a group: its extruding moves coloured by feature, and its travel moves,
+ * as one preview (see toolpathPreview.ts). The preview is kept on the group as
+ * `userData.preview`, so the preview bar can recolour it and show it layer by layer.
+ *
+ * @param toolpath The toolpath to draw.
+ * @param visualizationGroup The group to draw into.
+ * @param printColors The colour of each tool, by tool number.
+ * @param travelColor The colour of travel moves.
+ * @param speedOf The head speed (mm/min) of the move to a point, for colouring by speed.
  */
 export function visualizeToolpath(
     toolpath: PathPoint[],
     visualizationGroup: THREE.Group,
     printColors: number[],
-    travelColor: number
+    travelColor: number,
+    speedOf?: (point: PathPoint, extruder: number) => number | undefined,
 ): void {
     if (!toolpath.length) {
         return;
     }
-    let allVertices: number[] = [];
-    let lastPoint = toolpath[0];
-
-    const visualizeSegment = () => {
-        if (allVertices.length > 0) {
-            const geometry = new THREE.BufferGeometry();
-
-            geometry.setAttribute(
-                'position',
-                new THREE.Float32BufferAttribute(new Float32Array(allVertices), 3)
-            );
-
-            // Print moves are colored per extruder so material changes are visible.
-            // Anything past the end of the palette falls back to the first color.
-            const printColor = printColors[lastPoint.extruder ?? 0] ?? printColors[0];
-            const material = new THREE.LineBasicMaterial({
-                color: lastPoint.travel ? travelColor : printColor,
-                linewidth: 2,
-            });
-
-            const line = new THREE.Line(geometry, material);
-            visualizationGroup.add(line);
-        }
-        allVertices = [];
-    };
-
-    for (const point of toolpath) {   
-        if ((lastPoint.travel as boolean) != (point.travel as boolean)) {
-            visualizeSegment();
-            if (point.travel) {
-                allVertices.push(lastPoint.point.x, lastPoint.point.y, lastPoint.point.z);
-            }
-        }
-        allVertices.push(point.point.x, point.point.y, point.point.z);
-
-        lastPoint = point;
-    }
-
-    visualizeSegment()
+    const preview = buildToolpathPreview(toolpath, { toolColors: printColors, travelColor, speedOf });
+    visualizationGroup.add(preview.extrusion, preview.travel);
+    visualizationGroup.userData.preview = preview;
 }
 
 
@@ -1950,6 +1963,7 @@ export function generateAugmentFoamToolpath(
                 toolpath.push({
                     ...point,
                     debug: undefined,
+                    layer: point.layer === undefined ? undefined : point.layer + layer,
                     point: new THREE.Vector3(
                         point.point.x,
                         point.point.y,
@@ -2022,7 +2036,9 @@ export function generateAugmentFoamToolpath(
         pushAll(fullToolpath, makePurgeLine(printer));
     }
     if (printer.generateBoundary) {
-        pushAll(fullToolpath, makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, true));
+        const boundary = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, true);
+        tagBoundary(boundary, modelObj);
+        pushAll(fullToolpath, boundary);
     } else {
         fullToolpath.push({
             point: new THREE.Vector3(0, 0, safeZ),
@@ -2038,7 +2054,8 @@ export function generateAugmentFoamToolpath(
     pushAll(fullToolpath, toolpath);
 
     // --- 4. Visualize the toolpath
-    visualizeToolpath(fullToolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR);
+    visualizeToolpath(fullToolpath, visualizationGroup, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+        (point, extruder) => printer.moveSpeed(point, extruder));
 
     visualizer.scene.add(visualizationGroup);
     modelObj.toolpathVisualizationObject = visualizationGroup;

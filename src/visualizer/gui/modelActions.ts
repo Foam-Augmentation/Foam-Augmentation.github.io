@@ -9,19 +9,25 @@
 import * as THREE from 'three';
 import type Visualizer from '../Visualizer';
 import { EverydayModel, FoamModel, ObjectKind, RegularPrintSettings } from '../types/modelTypes';
+import { DEFAULT_REGULAR_CONFIG } from '../toolpath/regularSlicer';
 
 /** Either kind of model the app handles. */
 export type AnyModel = EverydayModel | FoamModel;
 
-/** Settings a model starts with when it is printed as a regular part. */
-export const DEFAULT_REGULAR_SETTINGS: RegularPrintSettings = {
-  layerHeight: 0.2,
-  perimeters: 2,
-  infillDensity: 20,
-  topBottomLayers: 4,
-  extruder: 0,
-  printSpeed: 1800,
-};
+/** Settings a model starts with when it is printed as a regular part. Copy it before changing it. */
+export const DEFAULT_REGULAR_SETTINGS: Readonly<RegularPrintSettings> = DEFAULT_REGULAR_CONFIG;
+
+/** The last object id handed out by {@link newObjectId}. */
+let lastObjectId = 0;
+
+/**
+ * Hands out the id of a new object on the plate (`EverydayModel.objectId`).
+ *
+ * @returns A positive whole number no other object has had since the app started.
+ */
+export function newObjectId(): number {
+  return ++lastObjectId;
+}
 
 /**
  * How each kind of object is shown: its name, a one-line description, the colour of its
@@ -135,6 +141,27 @@ export function syncAuxTransforms(model: AnyModel): void {
   for (const points of [everyday.pointsMesh_foam, everyday.pointsMesh_sense]) {
     points?.position.copy(mesh.position);
   }
+}
+
+/**
+ * Copies the main mesh's position, rotation (degrees) or scale, whichever the model's Transform
+ * folder shows, into the numbers behind its X, Y and Z fields.
+ *
+ * Call this after moving a mesh from code; the fields follow on their own once their values change.
+ *
+ * @param model - The model whose fields should follow its mesh.
+ */
+export function syncTransformFields(model: AnyModel): void {
+  const mesh = model.mesh;
+  const values = model.transformType === 'move'
+    ? [mesh.position.x, mesh.position.y, mesh.position.z]
+    : model.transformType === 'rotate'
+      ? [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z].map(radians => radians * (180 / Math.PI))
+      : [mesh.scale.x, mesh.scale.y, mesh.scale.z];
+  const round = (value: number) => parseFloat(value.toFixed(2));
+  model.transformX.x = round(values[0]);
+  model.transformY.y = round(values[1]);
+  model.transformZ.z = round(values[2]);
 }
 
 /**

@@ -9,10 +9,11 @@
  */
 import type Visualizer from '../Visualizer';
 import { EverydayModel, ObjectKind } from '../types/modelTypes';
-import { importSTLModel } from '../loaders/modelLoader';
-import { saveAugmentGcode, slicePlateAndSave } from '../toolpath/gcodeActions';
+import { duplicateModel, importSTLModel } from '../loaders/modelLoader';
+import { arrangePlate } from './placement';
+import { exportPlateGcode, saveAugmentGcode, slicePlate } from '../toolpath/gcodeActions';
 import { KIND_INFO } from './modelActions';
-import { countObjects, objectStatus } from './objectSummary';
+import { countObjects, formatBytes, objectStatus, plateSummaryLines } from './objectSummary';
 import { confirmAndDeleteModel } from './refreshModelGUIList';
 
 /** The kinds, in the order they are offered in the Add menu. */
@@ -51,7 +52,7 @@ function buildRow(visualizer: Visualizer, model: EverydayModel): HTMLLIElement {
   name.textContent = model.name;
   const status = document.createElement('span');
   status.className = 'object-status';
-  status.textContent = objectStatus(model);
+  status.textContent = objectStatus(model, visualizer.plateSlice);
   text.append(name, status);
 
   const badge = document.createElement('span');
@@ -59,6 +60,16 @@ function buildRow(visualizer: Visualizer, model: EverydayModel): HTMLLIElement {
   badge.textContent = info.label;
 
   select.append(swatch, text, badge);
+
+  const duplicate = document.createElement('button');
+  duplicate.type = 'button';
+  duplicate.className = 'object-duplicate';
+  duplicate.title = model.kind === 'augment'
+    ? `Duplicate “${model.name}” (Ctrl+D); the copy starts without a foam area`
+    : `Duplicate “${model.name}” (Ctrl+D)`;
+  duplicate.setAttribute('aria-label', `Duplicate “${model.name}”`);
+  duplicate.textContent = '⧉';
+  duplicate.addEventListener('click', () => { duplicateModel(visualizer, model); });
 
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -68,7 +79,7 @@ function buildRow(visualizer: Visualizer, model: EverydayModel): HTMLLIElement {
   remove.textContent = '×';
   remove.addEventListener('click', () => confirmAndDeleteModel(visualizer, model));
 
-  row.append(select, remove);
+  row.append(select, duplicate, remove);
   return row;
 }
 
@@ -121,9 +132,26 @@ export function renderObjectList(visualizer: Visualizer): void {
     counts.regular > 0 ? plural(counts.regular, 'regular print') : '',
   ].filter(Boolean);
   setExportButton(
-    'exportPrintButton',
+    'slicePrintsButton',
     prints.length > 0,
     prints.length > 0 ? prints.join(', ') : 'No foam or regular prints'
+  );
+
+  const slice = visualizer.plateSlice;
+  const summary = document.getElementById('plateSummary');
+  if (summary) {
+    summary.hidden = !slice;
+    summary.classList.toggle('stale', Boolean(slice?.stale));
+    summary.replaceChildren(...(slice ? plateSummaryLines(slice) : []).map(line => {
+      const element = document.createElement('div');
+      element.textContent = line;
+      return element;
+    }));
+  }
+  setExportButton(
+    'exportPrintsButton',
+    Boolean(slice && !slice.stale),
+    !slice ? 'Slice the prints first' : slice.stale ? 'Out of date: slice again' : `${slice.fileName} · ${formatBytes(slice.summary.bytes)}`
   );
 }
 
@@ -183,10 +211,14 @@ export function initObjectList(visualizer: Visualizer): void {
     });
   }
 
+  document.getElementById('arrangeButton')
+    ?.addEventListener('click', () => arrangePlate(visualizer));
   document.getElementById('exportAugmentButton')
     ?.addEventListener('click', () => { void saveAugmentGcode(visualizer); });
-  document.getElementById('exportPrintButton')
-    ?.addEventListener('click', () => { void slicePlateAndSave(visualizer); });
+  document.getElementById('slicePrintsButton')
+    ?.addEventListener('click', () => { void slicePlate(visualizer); });
+  document.getElementById('exportPrintsButton')
+    ?.addEventListener('click', () => exportPlateGcode(visualizer));
 
   renderObjectList(visualizer);
 }

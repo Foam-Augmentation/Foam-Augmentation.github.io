@@ -16,6 +16,8 @@ export interface Extruder {
   print_temp_extruder: number;
   /** Standby temperature while parked (in °C). Hot enough to reheat fast, cool enough not to ooze. */
   idle_temp_extruder: number;
+  /** Density of the filament (g/cm³), for the filament weight of a print. */
+  filamentDensity: number;
   color: number;
 }
 
@@ -33,6 +35,7 @@ export function createDefaultExtruder(): Extruder {
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
+    filamentDensity: 1.21,
     color: 0x5fd38d
   };
 }
@@ -66,7 +69,15 @@ export interface EmitterState {
    * A tool with no entry has not printed anything that cares yet. Single-head machines only use key 0.
    */
   initialMaterialLoaded: Map<number, boolean>;
+  /**
+   * True once moves from an outside slicer (PrusaSlicer) changed the acceleration, jerk or
+   * pressure advance. The app's own moves put its motion settings back first (see appMotionGcode).
+   */
+  importedMotion?: boolean;
 }
+
+/** G-code commands from an outside slicer that change how the printer moves and extrudes. */
+const MOTION_COMMAND = /^(M204|M205|M572|M900)\b/;
 
 /** Temperature (°C) everything is held at during a test sweep, i.e. cold. */
 const TEST_SWEEP_TEMPERATURE = 20;
@@ -101,6 +112,11 @@ export default class Printer {
 
   public bedLeveling: boolean;
   public testSweep: boolean;
+  /**
+   * The name of Prusa's printer profile PrusaSlicer slices regular prints with, from the bundle
+   * that comes with PrusaSlicer. Empty for none (PrusaSlicer's defaults).
+   */
+  public prusaPrinterProfile: string;
 
   /**
    * Whether the machine has independent toolheads that can be parked and picked (e.g. Prusa XL).
@@ -149,6 +165,7 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 230,
         idle_temp_extruder: 70,
+        filamentDensity: 1.21, // TPU
         color: 0x5fd38d
       },
       {//conductive TPU extruder
@@ -158,6 +175,7 @@ export default class Printer {
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 240,
         idle_temp_extruder: 70,
+        filamentDensity: 1.21, // TPU
         color: 0xf2a65a
       }
     ];
@@ -198,6 +216,7 @@ export default class Printer {
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
     this.bedLeveling = true;
     this.testSweep = false;
+    this.prusaPrinterProfile = '';
     this.multipleToolheads = true;
     this.activeExtruder = 0;
     this.toolchangeRetract = 3.0;
@@ -579,14 +598,43 @@ ${m555}
 ${setup}
 
 M83  ; extruder relative mode
-M900 K0.05 ; Filament gcode LA 1.5
-M900 K30 ; Filament gcode LA 1.0
+${this.pressureAdvanceGcode().join("\n")}
 
 G0 Z0.200 F2400.000
 
 M204 P1000 T1000
 
 `;
+  }
+
+  /**
+   * The pressure (linear) advance the app's own moves run with: off. A foam thread is laid at a
+   * fixed ratio V* to the head speed, and pressure advance would push extra filament out whenever
+   * the head speeds up. The XL (Prusa's input-shaper firmware) takes M572; the MK3S takes M900,
+   * where K0 turns linear advance off in both its versions (1.0 and 1.5).
+   *
+   * @returns {string[]} The G-code lines.
+   */
+  public pressureAdvanceGcode(): string[] {
+    return this.multipleToolheads
+      ? ["M572 S0 ; pressure advance off: foam needs the extrusion to follow the head exactly"]
+      : ["M900 K0 ; linear advance off: foam needs the extrusion to follow the head exactly"];
+  }
+
+  /**
+   * The motion settings the app's own moves (foam, shells, purge, the built-in slicer) run with:
+   * its pressure advance, acceleration and jerk. Written again after PrusaSlicer's moves, which
+   * bring their own.
+   *
+   * @returns {string[]} The G-code lines.
+   */
+  public appMotionGcode(): string[] {
+    return [
+      "; back to the app's own motion settings",
+      ...this.pressureAdvanceGcode(),
+      "M204 P1000 T1000",
+      "M205 X8 Y8",
+    ];
   }
 
   /**
@@ -708,17 +756,47 @@ M204 P1000 T1000
     edot: number,
     extruderIndex: number,
   ): string {
-    const extruder = this.requireExtruder(extruderIndex);
-    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
-    const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
-
-    const S = gamma / (beta * vStar);
-    const F = edot / S;
+    const { filamentPerMm: S, headSpeed: F } = this.foamMotion(vStar, edot, this.requireExtruder(extruderIndex));
 
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
     const extrudedAmount = this.norm(p1, p0) * S;
 
     return `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
+  }
+
+  /**
+   * How a foam (viscous thread) move runs: the filament it feeds per mm of head travel, and the
+   * head speed that keeps the thread speed in ratio V* with it at feed rate Edot.
+   *
+   * @param {number} vStar V* (head speed / thread speed).
+   * @param {number} edot Filament feed rate (mm/min).
+   * @param {Extruder} extruder The extruder, for its nozzle diameter and die swell.
+   * @returns {{ filamentPerMm: number, headSpeed: number }} Filament (mm per mm) and head speed (mm/min).
+   */
+  public foamMotion(vStar: number, edot: number, extruder: Extruder): { filamentPerMm: number, headSpeed: number } {
+    const beta = (Math.PI / 4) * Math.pow(this.diameter_filament, 2);
+    const gamma = (Math.PI / 4) * Math.pow(extruder.dieSwelling * extruder.nozzleDiameter, 2);
+    const filamentPerMm = gamma / (beta * vStar);
+    return { filamentPerMm, headSpeed: edot / filamentPerMm };
+  }
+
+  /**
+   * The head speed (mm/min) of the move to a toolpath point, as {@link generate_foam_gcode}
+   * writes it (outside a test sweep). For the preview.
+   *
+   * @param {PathPoint} point The point the move goes to.
+   * @param {number} extruderIndex The extruder that makes the move.
+   * @returns {number | undefined} The speed, or undefined if the extruder does not exist.
+   */
+  public moveSpeed(point: PathPoint, extruderIndex: number): number | undefined {
+    const extruder = this.extruders[extruderIndex];
+    if (!extruder) return undefined;
+    const travelSpeed = extruder.printHead_speed_when_free_move;
+    if (point.extrusion !== undefined && (point.regularSegment || point.travel)) return point.speed ?? travelSpeed;
+    if (point.ironing) return IRONING_SPEED;
+    if (point.regularSegment || point.travel) return point.speed ?? travelSpeed;
+    if (point.vStar === undefined || point.edot === undefined) return undefined;
+    return this.foamMotion(point.vStar, point.edot, extruder).headSpeed;
   }
 
 
@@ -863,6 +941,17 @@ M204 P1000 T1000
 
       if (point.preGcode?.length && !this.testSweep) {
         body_gcode.push(...point.preGcode);
+        if (point.preGcode.some(line => MOTION_COMMAND.test(line))) {
+          state.importedMotion = true;
+        }
+      }
+
+      // A move the app made itself (not an outside slicer's, which carries its own extrusion)
+      // runs with the app's motion settings, whatever the outside slicer set before it.
+      const ownExtrusion = !point.travel && point.extrusion === undefined;
+      if (ownExtrusion && state.importedMotion) {
+        body_gcode.push(...this.appMotionGcode());
+        state.importedMotion = false;
       }
 
       if (point.extrusion !== undefined && (point.regularSegment || point.travel) && !this.testSweep) {

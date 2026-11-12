@@ -13,7 +13,11 @@ import Printer, { Extruder, createDefaultExtruder } from '../printer/Printer';
 import { ViewCube, ViewName } from './gui/ViewCube';
 import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { initObjectList, renderObjectList } from './gui/objectList';
-import { applyModelAppearance } from './gui/modelActions';
+import { initPreviewBar, refreshPreviewBar } from './gui/previewBar';
+import { initShortcuts } from './gui/shortcuts';
+import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
+import type { PlateSlice } from './toolpath/plateSlice';
+import { DEFAULT_PRUSA_PRINTER_PROFILE } from './toolpath/prusaSlicer';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
 
@@ -83,6 +87,12 @@ export default class Visualizer {
      */
     public pendingModelPreset: ((model: EverydayModel) => void) | null = null;
 
+    /**
+     * The last slice of the plate's Foam Print and Regular Print objects, waiting to be exported,
+     * or null before the first slice. Set by `setPlateSlice`; marked stale by `invalidatePlateSlice`.
+     */
+    public plateSlice: PlateSlice | null = null;
+
 
     /**
      * Configuration for selection and toolpath parameters.
@@ -114,6 +124,8 @@ export default class Visualizer {
         printHeadMaxY: number;
         bedLeveling: boolean;
         testSweep: boolean;
+        /** Prusa's printer profile PrusaSlicer slices regular prints with ('' for none). */
+        prusaPrinterProfile: string;
         multipleToolheads: boolean;
         purgeTower: boolean;
 
@@ -226,6 +238,8 @@ export default class Visualizer {
             printHeadMaxY: 70,
             bedLeveling: false,
             testSweep: false,
+            // The app's printer is an XL with 0.4 mm nozzles until set otherwise.
+            prusaPrinterProfile: DEFAULT_PRUSA_PRINTER_PROFILE,
             multipleToolheads: true,
             purgeTower: true,
 
@@ -236,6 +250,9 @@ export default class Visualizer {
             testDeltaL: 3,
             testSize: 15,
         };
+        // The printer only hears about the other settings when they are edited; the profile it
+        // slices with has to be right from the start.
+        this.printer.prusaPrinterProfile = this.config.prusaPrinterProfile;
 
         // Initialize lasso selection state.
         this.lassoState = {
@@ -281,6 +298,8 @@ export default class Visualizer {
 
         initEmptyState(this);
         initObjectList(this);
+        initPreviewBar(this);
+        initShortcuts(this);
         this.updateActionStates();
     }
 
@@ -297,6 +316,7 @@ export default class Visualizer {
 
         renderObjectList(this);
         setEmptyStateVisible(this.everydayModelList.length === 0 && this.foamModelList.length === 0);
+        refreshPreviewBar(this);
     }
 
     /**
@@ -330,7 +350,53 @@ export default class Visualizer {
         (['augment', 'foam', 'regular'] as ObjectKind[]).forEach(k => classes?.toggle(`kind-${k}`, k === kind));
 
         applyModelAppearance(model, this._selectedModel === model);
+        // An object that starts or stops printing changes the plate slice.
+        this.invalidatePlateSlice(model);
         this.updateActionStates();
+    }
+
+    // ----- plate slice -----
+
+    /**
+     * Keeps a new plate slice for export, replacing (and removing the preview of) the last one.
+     *
+     * @param slice - The new slice.
+     */
+    public setPlateSlice(slice: PlateSlice): void {
+        this.discardPlateSlicePreview();
+        this.plateSlice = slice;
+        this.updateActionStates();
+    }
+
+    /**
+     * Marks the plate slice as out of date because something it was made from changed, and
+     * removes its preview, which no longer shows what would print. Export then asks for a new slice.
+     *
+     * @param model - The object that changed. An augmentation that is not part of the slice
+     *                cannot change it, so it is ignored. Omit when a global setting changed.
+     */
+    public invalidatePlateSlice(model?: EverydayModel): void {
+        const slice = this.plateSlice;
+        if (!slice || slice.stale) return;
+        if (model && model.kind === 'augment' && !slice.summary.objects.has(model.objectId)) return;
+
+        slice.stale = true;
+        this.discardPlateSlicePreview();
+        this.updateActionStates();
+    }
+
+    /** Removes the toolpath preview drawn for the plate slice, if it is still there. */
+    private discardPlateSlicePreview(): void {
+        const previews = this.plateSlice?.previews ?? [];
+        if (!previews.length) return;
+        // The previews hang off the objects they were drawn for; let go of them there too.
+        for (const model of this.everydayModelList) {
+            if (model.toolpathVisualizationObject && previews.includes(model.toolpathVisualizationObject)) {
+                model.toolpathVisualizationObject = undefined;
+            }
+        }
+        previews.forEach(preview => disposeObject3D(preview));
+        this.plateSlice!.previews = [];
     }
 
     // ----- camera framing -----
@@ -403,6 +469,9 @@ export default class Visualizer {
      *                every model that has a selected area.
      */
     public scheduleToolpathRefresh(model?: EverydayModel): void {
+        // Whatever changes a preview can change the plate slice too.
+        this.invalidatePlateSlice(model);
+
         const candidates = model ? [model] : this.everydayModelList;
         candidates
             .filter(m => m.kind === 'augment' && m.selectedRegularFoamMesh)
@@ -528,8 +597,37 @@ export default class Visualizer {
     public clearSelection(): void {
         this.transformControls.detach();
         this.selectionArmed = false;
+        this.disarmLayOnFace();
         this.selectModel(null);
         this.updateModeHints();
+    }
+
+    // ----- lay on face -----
+
+    /**
+     * The object "Lay on Face" is waiting for a click on, or null. The next click on it lays it
+     * on the face that was clicked (see initTransformControls.ts).
+     */
+    public layOnFaceModel: EverydayModel | null = null;
+
+    /**
+     * Waits for a click on one of an object's faces, to lay the object on it.
+     *
+     * @param model - The object to lay down.
+     */
+    public armLayOnFace(model: EverydayModel): void {
+        this.selectionArmed = false;
+        this.transformControls.detach();
+        this.layOnFaceModel = model;
+        this.renderer.domElement.style.cursor = 'crosshair';
+        notify(`Click the face of “${model.name}” that should rest on the bed. Esc cancels.`, 'info');
+    }
+
+    /** Stops waiting for a "Lay on Face" click. */
+    public disarmLayOnFace(): void {
+        if (!this.layOnFaceModel) return;
+        this.layOnFaceModel = null;
+        this.renderer.domElement.style.cursor = '';
     }
 
     /**
@@ -541,6 +639,9 @@ export default class Visualizer {
     public releaseModel(model: EverydayModel | FoamModel): void {
         if (this.transformControls.object === model.mesh) {
             this.transformControls.detach();
+        }
+        if (this.layOnFaceModel === model) {
+            this.disarmLayOnFace();
         }
         if (this._selectedModel === model) {
             this.selectModel(null);
@@ -568,7 +669,7 @@ export default class Visualizer {
         const mouseButtons = this.orbitControls.mouseButtons as { LEFT?: THREE.MOUSE | null; RIGHT?: THREE.MOUSE | null };
         mouseButtons.LEFT = armedModel ? null : THREE.MOUSE.ROTATE;
         mouseButtons.RIGHT = armedModel ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
-        this.renderer.domElement.style.cursor = armedModel ? 'crosshair' : '';
+        this.renderer.domElement.style.cursor = armedModel || this.layOnFaceModel ? 'crosshair' : '';
 
         renderModeHints(
             {
@@ -734,6 +835,7 @@ export default class Visualizer {
         this.printer.checkCollisions = this.config.checkCollisions;
         this.printer.bedLeveling = this.config.bedLeveling;
         this.printer.testSweep = this.config.testSweep;
+        this.printer.prusaPrinterProfile = this.config.prusaPrinterProfile;
         this.printer.multipleToolheads = this.config.multipleToolheads;
         this.printer.purgeTower = this.config.purgeTower;
         this.syncExtrudersToPrinter();
@@ -757,6 +859,7 @@ export default class Visualizer {
         const last = this.config.extruders[this.config.extruders.length - 1];
         this.config.extruders.push(last ? { ...last } : createDefaultExtruder());
         this.syncExtrudersToPrinter();
+        this.invalidatePlateSlice();
         return this.config.extruders.length - 1;
     }
 
@@ -778,6 +881,7 @@ export default class Visualizer {
         }
         this.config.extruders.splice(index, 1);
         this.syncExtrudersToPrinter();
+        this.invalidatePlateSlice();
         return true;
     }
 }

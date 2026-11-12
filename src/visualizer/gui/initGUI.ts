@@ -4,7 +4,8 @@ import Visualizer from '../Visualizer';
 import { importSTLModel } from '../loaders/modelLoader';
 import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
-import { refreshModelControls } from './refreshModelGUIList';
+import { refreshModelControls, watchPrusaSlicerAvailability } from './refreshModelGUIList';
+import { addPrinterProfileControl, refreshProfileControls } from './profileControls';
 import { addButton, addFolderWithTip, addParam, folderTitleElement, initTooltips, setTip } from './guiHelpers';
 import { SETTING_SPECS, SettingKey } from './paramSpecs';
 
@@ -122,6 +123,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
         controller.updateDisplay();
       });
       refreshModelControls(visualizer);
+      refreshProfileControls(visualizer);
+      visualizer.invalidatePlateSlice();
 
       const titleElement = folderTitleElement(presetFolder);
       if (titleElement) {
@@ -187,12 +190,16 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     ['useFermatSpirals', 'generateBoundary', 'purgeLine', 'checkCollisions', 'bedLeveling', 'testSweep'],
     syncPrinter
   );
+  addPrinterProfileControl(slicerFolder, visualizer);
   slicerFolder.onFinishChange(refreshPreviews);
   slicerFolder.close();
   settingFolder.close();
 
   // Turn on tooltips for every control in the panel, including ones added later.
   initTooltips(gui.domElement);
+
+  // Grey out the regular-print settings only PrusaSlicer uses while it is not available.
+  watchPrusaSlicerAvailability(visualizer);
 
   // Open the GUI.
   gui.open();
