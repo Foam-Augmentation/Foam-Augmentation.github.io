@@ -1,0 +1,1240 @@
+.tippy-box[data-animation=fade][data-state=hidden]{opacity:0}[data-tippy-root]{max-width:calc(100vw - 10px)}.tippy-box{position:relative;background-color:#333;color:#fff;border-radius:4px;font-size:14px;line-height:1.4;white-space:normal;outline:0;transition-property:transform,visibility,opacity}.tippy-box[data-placement^=top]>.tippy-arrow{bottom:0}.tippy-box[data-placement^=top]>.tippy-arrow:before{bottom:-7px;left:0;border-width:8px 8px 0;border-top-color:initial;transform-origin:center top}.tippy-box[data-placement^=bottom]>.tippy-arrow{top:0}.tippy-box[data-placement^=bottom]>.tippy-arrow:before{top:-7px;left:0;border-width:0 8px 8px;border-bottom-color:initial;transform-origin:center bottom}.tippy-box[data-placement^=left]>.tippy-arrow{right:0}.tippy-box[data-placement^=left]>.tippy-arrow:before{border-width:8px 0 8px 8px;border-left-color:initial;right:-7px;transform-origin:center left}.tippy-box[data-placement^=right]>.tippy-arrow{left:0}.tippy-box[data-placement^=right]>.tippy-arrow:before{left:-7px;border-width:8px 8px 8px 0;border-right-color:initial;transform-origin:center right}.tippy-box[data-inertia][data-state=visible]{transition-timing-function:cubic-bezier(.54,1.5,.38,1.11)}.tippy-arrow{width:16px;height:16px;color:#333}.tippy-arrow:before{content:"";position:absolute;border-color:transparent;border-style:solid}.tippy-content{position:relative;padding:5px 9px;z-index:1}
+/* ==========================================================================
+   AugPrint Foam Slicer: one theme for the panel and every overlay.
+   Colours and sizes are defined once here; nothing below uses a raw hex value
+   except where it defines a token.
+   ========================================================================== */
+
+:root {
+    /* surfaces, darkest to lightest */
+    --canvas-top: #2a2f37;
+    --canvas-bottom: #15181d;
+    --surface: #1d2127;
+    --surface-raised: #272c34;
+    --surface-hover: #323843;
+    --surface-active: #3d4552;
+    --border: #353b46;
+
+    /* text */
+    --text: #e6e9ee;
+    --text-muted: #9aa3b0;
+
+    /* accent: interactive things and the selected model */
+    --accent: #5b9cff;
+    --accent-strong: #3d84f5;
+    --accent-soft: rgba(91, 156, 255, 0.16);
+
+    /* foam: the foam area on the model, and anything said about it */
+    --foam: #ff9d3c;
+    --foam-soft: rgba(255, 157, 60, 0.16);
+
+    /* what an object is (see KIND_INFO in gui/modelActions.ts) */
+    --kind-augment: var(--foam);
+    --kind-foam: #4cc3b0;
+    --kind-regular: #8fa3ff;
+
+    /* status */
+    --success: #4cc38a;
+    --warning: #f5b83d;
+    --danger: #f2665c;
+
+    --radius: 6px;
+    --radius-large: 10px;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
+    --font: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+
+    /* the panel, and the strip of window it takes up (panel + its margins) */
+    --panel-margin: 12px;
+    --panel-width: clamp(340px, 24vw, 380px);
+    --panel-space: calc(var(--panel-width) + 2 * var(--panel-margin));
+    /* the Objects panel on the right, and the strip of window it takes up */
+    --objects-width: 280px;
+    --objects-space: calc(var(--objects-width) + 2 * var(--panel-margin));
+    /* horizontal centre of the part of the window the two panels leave free */
+    --canvas-center: calc(var(--panel-space) + (100vw - var(--panel-space) - var(--objects-space)) / 2);
+    /* width of that free part */
+    --canvas-width: calc(100vw - var(--panel-space) - var(--objects-space));
+}
+
+/* ----- page: the canvas fills the window, so the page itself never scrolls ----- */
+html,
+body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    /* the 3D canvas is transparent; this is what shows behind the scene */
+    background: radial-gradient(120% 90% at 60% 20%, var(--canvas-top) 0%, var(--canvas-bottom) 100%);
+    color: var(--text);
+    font-family: var(--font);
+}
+
+#myCanvasContainer canvas {
+    display: block;
+}
+
+/* ==========================================================================
+   The panel (lil-gui)
+   ========================================================================== */
+
+/* lil-gui declares its variables on every `.lil-gui` element (each folder is one), so the
+   theme has to be set on all of them, not just the root. */
+.lil-gui.root,
+.lil-gui.root .lil-gui {
+    --background-color: var(--surface);
+    --text-color: var(--text);
+    --title-background-color: transparent;
+    --title-text-color: var(--text);
+    --widget-color: var(--surface-raised);
+    --hover-color: var(--surface-hover);
+    --focus-color: var(--surface-active);
+    --number-color: var(--accent);
+    --string-color: var(--text);
+    --font-family: var(--font);
+    --font-size: 12px;
+    --input-font-size: 12px;
+    --padding: 8px;
+    --spacing: 5px;
+    --widget-height: 24px;
+    --widget-border-radius: 4px;
+    --widget-padding: 0 0 0 6px;
+    --slider-knob-width: 3px;
+    --slider-input-width: 30%;
+    --slider-input-min-width: 52px;
+    --scrollbar-width: 8px;
+    /* labels carry units, so give them half the row */
+    --name-width: 50%;
+}
+
+.lil-gui.root {
+    position: absolute;
+    top: var(--panel-margin);
+    left: var(--panel-margin);
+    width: var(--panel-width);
+    max-height: calc(100% - 2 * var(--panel-margin));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+/* nested folders sit on the panel's surface */
+.lil-gui.root .lil-gui {
+    background: transparent;
+}
+
+.lil-gui.root > .children {
+    padding-bottom: 6px;
+}
+
+.lil-gui.root > .children::-webkit-scrollbar {
+    background: transparent;
+}
+
+.lil-gui.root > .children::-webkit-scrollbar-thumb {
+    background: var(--surface-active);
+    border: 2px solid var(--surface);
+}
+
+/* ----- titles ----- */
+
+/* long folder titles (e.g. "Presets (Applied: <file name>)") are cut off instead of wrapping
+   onto the folder below */
+.lil-gui .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-weight: 600;
+    transition: background-color 0.12s, color 0.12s;
+}
+
+.lil-gui .title:hover,
+.lil-gui .title:active {
+    background: var(--surface-raised);
+    color: var(--text);
+    opacity: 1;
+}
+
+.lil-gui .title:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    text-decoration: none;
+}
+
+.lil-gui .title:before {
+    padding-right: 6px;
+    color: var(--text-muted);
+}
+
+/* the panel title: the product name. It must keep its height when the content overflows. */
+.lil-gui.root > .title,
+.lil-gui .title.lil-gui-1st-title {
+    flex-shrink: 0;
+    --title-height: 40px;
+    height: 40px;
+    line-height: 38px;
+    padding: 0 12px;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+    color: var(--text);
+    font-size: 14px;
+    letter-spacing: 0.01em;
+}
+
+/* top-level sections */
+.lil-gui.root > .children > .lil-gui > .title {
+    --title-height: 34px;
+    height: 34px;
+    line-height: 32px;
+    margin-top: 4px;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.lil-gui.root > .children > .lil-gui:first-of-type > .title {
+    border-top: 0;
+}
+
+.lil-gui .title.lil-gui-2nd-title {
+    font-size: 13px;
+}
+
+.lil-gui .title.lil-gui-3rd-title {
+    font-size: 12px;
+}
+
+/* indent for nested folders; kept small so deeply nested controls still have room */
+.lil-gui .children {
+    margin-left: 10px;
+}
+
+.lil-gui.root > .children {
+    margin-left: 0;
+}
+
+/* a thin guide line shows which rows belong to an open nested folder */
+.lil-gui .lil-gui .lil-gui > .children {
+    border-left: 1px solid var(--border);
+}
+
+/* ----- rows ----- */
+
+/* let long labels wrap onto a second line instead of squeezing the slider */
+.lil-gui .controller:not(.function) .name {
+    width: var(--name-width);
+    white-space: normal;
+    line-height: 1.25;
+    color: var(--text-muted);
+}
+
+.lil-gui .controller:hover .name {
+    color: var(--text);
+}
+
+.lil-gui input,
+.lil-gui .controller.option .display {
+    border: 1px solid transparent;
+    transition: border-color 0.12s, background-color 0.12s;
+}
+
+.lil-gui input:hover {
+    border-color: var(--border);
+}
+
+.lil-gui input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+}
+
+.lil-gui .controller.number input {
+    font-variant-numeric: tabular-nums;
+}
+
+/* sliders: a quiet track with an accent fill */
+.lil-gui .controller.number .slider {
+    height: 6px;
+    border-radius: 3px;
+    padding-right: 0;
+    background-color: var(--surface-active);
+    /* transparent borders make the 6 px track easy to grab without making it look taller */
+    box-sizing: content-box;
+    border: solid transparent;
+    border-width: 9px 0;
+    background-clip: padding-box;
+}
+
+.lil-gui .controller.number .slider.active {
+    background-color: var(--surface-active);
+}
+
+.lil-gui .controller.number .slider .fill {
+    height: 100%;
+    border-radius: 3px;
+    border-right: 0;
+    background: var(--accent);
+}
+
+/* checkboxes */
+.lil-gui .controller.boolean input {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-raised);
+}
+
+.lil-gui .controller.boolean input:checked {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+
+/* dropdowns */
+.lil-gui .controller.option .display {
+    border-color: var(--border);
+}
+
+.lil-gui .controller.option:hover .display {
+    background: var(--surface-hover);
+}
+
+/* ----- buttons ----- */
+.lil-gui button {
+    height: 28px;
+    line-height: 26px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    font-weight: 500;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.lil-gui button:hover {
+    border-color: var(--surface-active);
+    background: var(--surface-hover);
+}
+
+.lil-gui button:active {
+    background: var(--surface-active);
+}
+
+.lil-gui button:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* the action that finishes a job, and importing a model (see initGUI.ts) */
+.lil-gui .controller.primary-action button {
+    border-color: var(--accent-strong);
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 600;
+}
+
+.lil-gui .controller.primary-action button:hover {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+/* arming an area selection (see refreshModelGUIList.ts) */
+.lil-gui .controller.foam-action button {
+    border-color: var(--foam);
+    background: var(--foam-soft);
+    color: var(--foam);
+}
+
+.lil-gui .controller.foam-action button:hover {
+    background: rgba(255, 157, 60, 0.28);
+}
+
+.lil-gui .controller.disabled {
+    opacity: 0.4;
+}
+
+/* ----- icons and title-bar buttons ----- */
+.lil-gui-icon {
+    width: 16px;
+    height: 16px;
+    margin: 0 6px 0 0;
+    vertical-align: -3px;
+    opacity: 0.85;
+}
+
+/* delete buttons in folder title bars (models, extruders) */
+.delete-icon {
+    width: 14px;
+    height: 14px;
+    vertical-align: middle;
+    opacity: 0.6;
+}
+
+/* `.lil-gui button` makes every button a full-width widget, so the selector has to out-rank it */
+.lil-gui .delete-btn {
+    flex: none;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    margin: 0 2px 0 auto;
+    padding: 4px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    line-height: 0;
+    cursor: pointer;
+}
+
+.lil-gui .delete-btn:hover {
+    border: 0;
+    background: rgba(242, 102, 92, 0.2);
+}
+
+.lil-gui .delete-btn:hover .delete-icon {
+    opacity: 1;
+}
+
+.lil-gui .delete-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    box-shadow: none;
+}
+
+/* title bars that end in a delete button: text on the left, button pushed to the right */
+.everyday-model-item > .title,
+.foam-model-item > .title,
+.extruder-item > .title {
+    display: flex;
+    align-items: center;
+}
+
+/* ----- model cards ----- */
+
+/* model name in a model folder's title bar */
+.model-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+}
+
+/* ----- the selected object's settings ----- */
+
+/* every object has a folder, but only the selected one's is shown */
+.lil-gui .foam-model-item,
+.lil-gui .everyday-model-item {
+    display: none;
+    margin: 4px 8px 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.lil-gui .foam-model-item.selectedModel,
+.lil-gui .everyday-model-item.selectedModel {
+    display: block;
+}
+
+/* shown in place of the settings while no object is selected */
+.no-selection-note {
+    margin: 6px 12px 10px 4px;
+    padding: 10px 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.lil-gui.has-selection .no-selection-note {
+    display: none;
+}
+
+/* why some Regular Print Settings are greyed out (no PrusaSlicer) */
+.regular-prusa-note {
+    margin: 4px 12px 6px 4px;
+    padding: 6px 10px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/* the Type control heads the object's settings */
+.lil-gui .controller.kind-control {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* each kind of object shows only the settings that apply to it */
+.everyday-model-item.kind-augment .regular-folder,
+.everyday-model-item.kind-foam .regular-folder,
+.everyday-model-item.kind-foam .params-folder-sense,
+.everyday-model-item.kind-foam .bump-folder,
+.everyday-model-item.kind-foam .mesh-selection-folder,
+.everyday-model-item.kind-regular .params-folder,
+.everyday-model-item.kind-regular .params-folder-initial,
+.everyday-model-item.kind-regular .params-folder-sense,
+.everyday-model-item.kind-regular .augment-folder,
+.everyday-model-item.kind-regular .bump-folder,
+.everyday-model-item.kind-regular .gradient-folder,
+.everyday-model-item.kind-regular .mesh-selection-folder {
+    display: none;
+}
+
+/* a value in the initial-layer or sensing parameters that differs from the foam parameter */
+.lil-gui .controller.differs-from-foam .name {
+    color: var(--warning);
+}
+
+.lil-gui .controller.differs-from-foam .name::after {
+    content: " \2022";
+}
+
+.controller-wrapper {
+    width: 100%;
+}
+
+.lil-gui .transform-folder {
+    --name-width: 20%;
+}
+
+/* tooltips */
+.tippy-box {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    font: 12px/1.45 var(--font);
+}
+
+.tippy-box > .tippy-arrow {
+    color: var(--surface-raised);
+}
+
+/* ==========================================================================
+   Things on the canvas
+   ========================================================================== */
+
+/* view cube (see gui/ViewCube.ts) and the "Fit View" button under it (see Visualizer.ts) */
+.view-cube {
+    position: absolute;
+    top: var(--panel-margin);
+    right: calc(var(--objects-space) + 4px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: rgba(29, 33, 39, 0.72);
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    z-index: 1000;
+}
+
+#fitViewButton {
+    position: absolute;
+    top: calc(var(--panel-margin) + 130px);
+    right: calc(var(--objects-space) + 4px);
+    width: 122px;
+    padding: 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(29, 33, 39, 0.9);
+    color: var(--text-muted);
+    font: 500 12px var(--font);
+    cursor: pointer;
+    z-index: 1000;
+    transition: color 0.12s, border-color 0.12s, background-color 0.12s;
+}
+
+#fitViewButton:hover,
+#fitViewButton:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-raised);
+    color: var(--text);
+    outline: none;
+}
+
+/* shared look of the floating cards over the canvas */
+#emptyState,
+#selectionHint,
+.toast-message {
+    border: 1px solid var(--border);
+    background: rgba(29, 33, 39, 0.94);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(6px);
+}
+
+/* getting-started card, shown while no model is loaded (see gui/emptyState.ts).
+   Centred in the part of the window the panel leaves free. */
+#emptyState {
+    position: fixed;
+    top: 50%;
+    left: var(--canvas-center);
+    transform: translate(-50%, -50%);
+    box-sizing: border-box;
+    width: min(440px, calc(var(--canvas-width) - 24px));
+    padding: 24px 28px;
+    border-radius: var(--radius-large);
+    font: 13px/1.55 var(--font);
+    z-index: 900;
+}
+
+#emptyState h2 {
+    margin: 0 0 4px;
+    font-size: 20px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+}
+
+#emptyState p {
+    margin: 0 0 16px;
+    color: var(--text-muted);
+}
+
+#emptyState ol {
+    margin: 20px 0 0;
+    padding: 16px 0 0 18px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+}
+
+#emptyState li + li {
+    margin-top: 6px;
+}
+
+#emptyState b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.empty-state-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.empty-state-actions button,
+.selection-hint-button {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 500 13px var(--font);
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.empty-state-actions button:hover,
+.empty-state-actions button:focus-visible {
+    border-color: var(--surface-active);
+    background: var(--surface-hover);
+    outline: none;
+}
+
+.empty-state-actions button.empty-state-primary {
+    border-color: var(--accent-strong);
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 600;
+}
+
+.empty-state-actions button.empty-state-primary:hover,
+.empty-state-actions button.empty-state-primary:focus-visible {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+/* outline shown while files are dragged over the window */
+#dropOverlay {
+    position: fixed;
+    inset: 8px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--accent);
+    border-radius: var(--radius-large);
+    background: var(--accent-soft);
+    color: #fff;
+    font: 600 18px var(--font);
+    pointer-events: none;
+    z-index: 10002;
+}
+
+body.file-drag-over #dropOverlay {
+    display: flex;
+}
+
+/* instructions shown on the canvas while area selection is armed (see gui/bottomTooltip.ts) */
+#selectionHint {
+    position: fixed;
+    top: var(--panel-margin);
+    left: var(--canvas-center);
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    max-width: min(560px, calc(var(--canvas-width) - 300px));
+    align-items: center;
+    gap: 14px;
+    padding: 10px 12px 10px 16px;
+    border-color: var(--foam);
+    border-radius: var(--radius-large);
+    box-shadow: var(--shadow), inset 4px 0 0 var(--foam);
+    font: 13px/1.45 var(--font);
+    z-index: 9998;
+}
+
+.selection-hint-button {
+    flex: none;
+    padding: 6px 12px;
+    border-color: var(--foam);
+    background: var(--foam-soft);
+    color: var(--foam);
+    white-space: nowrap;
+}
+
+.selection-hint-button:hover,
+.selection-hint-button:focus-visible {
+    background: rgba(255, 157, 60, 0.28);
+    outline: none;
+}
+
+/* pill at the bottom of the canvas that says what Esc will do right now (see gui/bottomTooltip.ts) */
+#escDiv {
+    position: fixed;
+    bottom: 16px;
+    left: var(--canvas-center);
+    transform: translateX(-50%);
+    box-sizing: border-box;
+    max-width: calc(var(--canvas-width) - 24px);
+    padding: 7px 16px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(21, 24, 29, 0.88);
+    color: var(--text-muted);
+    box-shadow: var(--shadow);
+    font: 12px var(--font);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 9999;
+}
+
+/* toast messages (see gui/notify.ts); they stack above the Esc pill */
+#toastContainer {
+    position: fixed;
+    right: calc(var(--objects-space) + 4px);
+    bottom: 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(420px, calc(100vw - 32px));
+    z-index: 10000;
+    font: 13px/1.45 var(--font);
+}
+
+.toast-message {
+    padding: 10px 14px 10px 16px;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow), inset 4px 0 0 var(--accent);
+    cursor: pointer;
+    animation: toast-in 0.18s ease-out;
+}
+
+.toast-success { box-shadow: var(--shadow), inset 4px 0 0 var(--success); }
+.toast-warning { box-shadow: var(--shadow), inset 4px 0 0 var(--warning); }
+.toast-error { box-shadow: var(--shadow), inset 4px 0 0 var(--danger); }
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* blocking overlay shown while slicing / generating (see gui/notify.ts) */
+#busyOverlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(13, 15, 18, 0.6);
+    color: var(--text);
+    font: 500 16px var(--font);
+    backdrop-filter: blur(2px);
+    z-index: 10001;
+    cursor: progress;
+}
+
+/* spinner in front of the overlay's label */
+#busyOverlay::before {
+    content: "";
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--surface-active);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: busy-spin 0.8s linear infinite;
+}
+
+@keyframes busy-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #busyOverlay::before,
+    .toast-message {
+        animation: none;
+    }
+}
+
+/* ==========================================================================
+   The Objects panel (see gui/objectList.ts)
+   ========================================================================== */
+
+#objectPanel {
+    position: fixed;
+    top: var(--panel-margin);
+    right: var(--panel-margin);
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    width: var(--objects-width);
+    max-height: calc(100% - 2 * var(--panel-margin));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    font: 12px/1.35 var(--font);
+    z-index: 1001;
+}
+
+.object-panel-header {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    height: 40px;
+    padding: 0 8px 0 12px;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-large) var(--radius-large) 0 0;
+    background: linear-gradient(180deg, var(--surface-raised), var(--surface));
+}
+
+.object-panel-header h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+#addObjectButton {
+    padding: 5px 10px;
+    border: 1px solid var(--accent-strong);
+    border-radius: var(--radius);
+    background: var(--accent-strong);
+    color: #fff;
+    font: 600 12px var(--font);
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+#addObjectButton:hover,
+#addObjectButton:focus-visible {
+    border-color: var(--accent);
+    background: var(--accent);
+    outline: none;
+}
+
+.object-panel-actions {
+    display: flex;
+    gap: 6px;
+}
+
+#arrangeButton {
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: 600 12px var(--font);
+    cursor: pointer;
+}
+
+#arrangeButton:hover,
+#arrangeButton:focus-visible {
+    border-color: var(--accent);
+    background: var(--surface-hover);
+    outline: none;
+}
+
+/* the menu that asks what kind of object to add */
+#addObjectMenu {
+    position: absolute;
+    top: 36px;
+    right: 8px;
+    left: 8px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow);
+    z-index: 2;
+}
+
+.add-object-item,
+.object-select {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    padding: 8px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.add-object-item:hover,
+.add-object-item:focus-visible {
+    background: var(--surface-hover);
+    outline: none;
+}
+
+#objectList {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: 0;
+    padding: 6px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+#objectListEmpty {
+    margin: 0;
+    padding: 6px 14px 14px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+#objectListEmpty b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+/* one object: a colour bar for its kind, its name and status, and its kind as a badge */
+.object-row {
+    display: flex;
+    align-items: stretch;
+    margin-bottom: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: rgba(255, 255, 255, 0.02);
+    transition: border-color 0.12s, background-color 0.12s;
+}
+
+.object-row:hover {
+    background: var(--surface-raised);
+}
+
+.object-row.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.object-select {
+    flex: 1 1 auto;
+    padding: 8px 4px 8px 8px;
+}
+
+.object-select:focus-visible,
+.object-duplicate:focus-visible,
+.object-delete:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.object-swatch {
+    flex: none;
+    align-self: stretch;
+    width: 4px;
+    min-height: 28px;
+    border-radius: 2px;
+    background: var(--kind-color);
+}
+
+.object-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.object-name {
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.object-status {
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.object-badge {
+    flex: none;
+    padding: 2px 7px;
+    border: 1px solid var(--kind-color);
+    border-radius: 999px;
+    color: var(--kind-color);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.object-delete {
+    flex: none;
+    width: 26px;
+    border: 0;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: none;
+    color: var(--text-muted);
+    font: 16px/1 var(--font);
+    cursor: pointer;
+}
+
+.object-delete:hover {
+    background: rgba(242, 102, 92, 0.2);
+    color: var(--danger);
+}
+
+.object-duplicate {
+    flex: none;
+    width: 26px;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font: 14px/1 var(--font);
+    cursor: pointer;
+}
+
+.object-duplicate:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+}
+
+/* export actions */
+.object-panel-footer {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-top: 1px solid var(--border);
+}
+
+.export-button {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border: 1px solid var(--accent-strong);
+    border-radius: var(--radius);
+    background: var(--accent-strong);
+    color: #fff;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.export-button:hover:not(:disabled),
+.export-button:focus-visible {
+    border-color: var(--accent);
+    background: var(--accent);
+    outline: none;
+}
+
+.export-button:disabled {
+    border-color: var(--border);
+    background: var(--surface-raised);
+    color: var(--text-muted);
+    cursor: default;
+}
+
+.export-label {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.export-note {
+    font-size: 11px;
+    opacity: 0.85;
+    overflow-wrap: anywhere;
+}
+
+/* toolpath preview controls, across the top of the free part of the canvas */
+#previewBar {
+    position: fixed;
+    top: var(--panel-margin);
+    left: calc(var(--panel-space) + 4px);
+    /* stop short of the view cube */
+    right: calc(var(--objects-space) + 140px);
+    max-width: 640px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: rgba(29, 33, 39, 0.94);
+    box-shadow: var(--shadow);
+    color: var(--text);
+    font: 12px var(--font);
+    z-index: 900;
+}
+
+#previewBar[hidden] {
+    display: none;
+}
+
+.preview-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+}
+
+.preview-title {
+    font-weight: 600;
+}
+
+.preview-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text-muted);
+}
+
+.preview-control select {
+    padding: 2px 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font: inherit;
+}
+
+.preview-control input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+#previewStep {
+    flex: 1 1 160px;
+    min-width: 120px;
+    accent-color: var(--accent);
+}
+
+.preview-step-label {
+    flex: 1 1 200px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.preview-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    font-size: 11px;
+}
+
+.preview-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+}
+
+.preview-legend-item.static {
+    cursor: default;
+}
+
+.preview-swatch {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--swatch);
+    border-radius: 2px;
+    background: var(--swatch);
+    box-sizing: border-box;
+}
+
+/* a hidden feature: hollow swatch and dimmed name, so it does not rest on colour alone */
+.preview-legend-item[aria-pressed="false"] {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
+
+.preview-legend-item[aria-pressed="false"] .preview-swatch {
+    background: transparent;
+}
+
+.preview-scale-title {
+    color: var(--text-muted);
+}
+
+.preview-scale-none {
+    color: var(--text-muted);
+}
+
+.preview-gradient {
+    width: 160px;
+    height: 8px;
+    border-radius: 4px;
+}
+
+/* what the last plate slice holds, between Slice Prints and Export Print G-Code */
+#plateSummary {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+#plateSummary[hidden] {
+    display: none;
+}
+
+#plateSummary.stale {
+    border-style: dashed;
+    color: var(--text-muted);
+}
+
