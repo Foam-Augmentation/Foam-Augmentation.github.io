@@ -11,9 +11,10 @@
 import type { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel } from '../types/modelTypes';
-import type { VendorBundle } from '../toolpath/prusaProfiles';
-import { loadVendorBundle, profileChoices } from '../toolpath/prusaSlicer';
+import { printerMachine, profileChoices, type VendorBundle } from '../toolpath/prusaProfiles';
+import { loadVendorBundle } from '../toolpath/prusaSlicer';
 import { setTip } from './guiHelpers';
+import { notify } from './notify';
 import { REGULAR_SPECS, SETTING_SPECS } from './paramSpecs';
 
 /**
@@ -92,12 +93,50 @@ export function addPrinterProfileControl(folder: GUI, visualizer: Visualizer): v
     .name(spec.label);
   setTip(controller.domElement, spec.tip);
   const onChange = () => {
+    applyPrinterMachine(visualizer, visualizer.config.prusaPrinterProfile);
     visualizer.syncConfigToPrinter();
     refreshProfileControls(visualizer);
   };
   controller.onChange(onChange);
   printerDropdown = { controller, builtFor: '', tip: spec.tip, onChange };
   refreshProfileControls(visualizer);
+}
+
+/**
+ * Makes Printer Settings match a printer profile the user picked: the bed size and print height,
+ * each extruder's nozzle, and whether the printer is a tool changer (an XL; that also picks the
+ * XL's start G-code and machine limits). Says what changed, and warns where the app cannot follow
+ * the printer. Only a pick does this: a preset brings its own Printer Settings.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param name - The printer profile.
+ */
+function applyPrinterMachine(visualizer: Visualizer, name: string): void {
+  const machine = state.bundle && name ? printerMachine(state.bundle, name) : undefined;
+  if (!machine) return;
+  const config = visualizer.config;
+  config.machineDepth = machine.bed.x;
+  config.machineDepthY = machine.bed.y;
+  config.machineHeight = machine.bed.height;
+  // An extruder past the printer's last tool gets the last tool's nozzle.
+  config.extruders.forEach((extruder, i) => {
+    extruder.nozzleDiameter = machine.nozzles[Math.min(i, machine.nozzles.length - 1)];
+  });
+  if (machine.family) config.multipleToolheads = machine.family === 'XL';
+  visualizer.syncConfigToPrinter();
+  visualizer.rebuildPrintBase();
+  visualizer.gui?.controllersRecursive().forEach(controller => controller.updateDisplay());
+  visualizer.scheduleToolpathRefresh();
+
+  const tools = machine.nozzles.length;
+  const sizes = [...new Set(machine.nozzles)].join(' and ');
+  const nozzles = tools === 1 ? `a ${sizes} mm nozzle` : `${tools} tools with ${sizes} mm nozzles`;
+  notify(`Printer Settings now match “${name}”: a ${machine.bed.x} × ${machine.bed.y} mm bed, ${machine.bed.height} mm high, and ${nozzles}.`, 'info');
+  if (!machine.family) {
+    notify(`The app's own G-code (start, foam, purge and end) is written for the Prusa XL or MK3S, not for “${name}”. Multiple Toolheads was left as it was; check the G-code before printing.`, 'warning');
+  } else if (machine.family === 'XL' && config.extruders.length > tools) {
+    notify(`“${name}” has ${tools === 1 ? 'one tool' : `${tools} tools`}, but Printer Settings has ${config.extruders.length} extruders. Remove the extra extruders, or pick the XL with more tools.`, 'warning');
+  }
 }
 
 /**
@@ -119,14 +158,24 @@ export function addObjectProfileControls(folder: GUI, model: EverydayModel, visu
 }
 
 /**
+ * Tells the dropdowns whether PrusaSlicer is available (they are greyed out without it), and
+ * brings them up to date.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param available - Whether PrusaSlicer is available now.
+ */
+export function setProfileControlsAvailable(visualizer: Visualizer, available: boolean): void {
+  state.available = available;
+  refreshProfileControls(visualizer);
+}
+
+/**
  * Brings the dropdowns up to date: greyed out or not, and their choices for the printer profile.
  * Reads the bundle the first time PrusaSlicer is available.
  *
  * @param visualizer - The Visualizer instance.
- * @param available - Whether PrusaSlicer is available now. Left out, it stays as last told.
  */
-export function refreshProfileControls(visualizer: Visualizer, available?: boolean): void {
-  if (available !== undefined) state.available = available;
+export function refreshProfileControls(visualizer: Visualizer): void {
   if (state.available && !state.bundle && !state.loading) {
     state.loading = true;
     void loadVendorBundle().then(bundle => {

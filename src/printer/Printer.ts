@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ToolpathConfig } from "../visualizer/types/modelTypes";
 import type { PathPoint } from "../visualizer/toolpath/pathTypes";
-import { PURGE_LINE_LIFT } from "../visualizer/toolpath/toolpathConstants";
+import { DEFAULT_PRUSA_PRINTER_PROFILE, MOTION_COMMANDS, PURGE_LINE_LIFT } from "../visualizer/toolpath/toolpathConstants";
 
 export interface Extruder {
   /** Nozzle diameter (in mm) */
@@ -70,14 +70,50 @@ export interface EmitterState {
    */
   initialMaterialLoaded: Map<number, boolean>;
   /**
-   * True once moves from an outside slicer (PrusaSlicer) changed the acceleration, jerk or
-   * pressure advance. The app's own moves put its motion settings back first (see appMotionGcode).
+   * Whose acceleration, jerk and pressure advance the printer runs with: the app's own (from the
+   * start G-code on, and again before each of its own moves; see appMotionGcode) or an outside
+   * slicer's (once PrusaSlicer's moves set them).
    */
-  importedMotion?: boolean;
+  motionOwner?: 'app' | 'outside';
+  /** For each tool, the motion settings the outside slicer last set for it. */
+  outsideMotion?: Map<number, OutsideMotion>;
 }
 
-/** G-code commands from an outside slicer that change how the printer moves and extrudes. */
-const MOTION_COMMAND = /^(M204|M205|M572|M900)\b/;
+/**
+ * An outside slicer's motion settings for one tool: for each command and the parameters it sets
+ * (such as "M204 P" or "M900 K"), the lines that set them last, in the order they were set. Lines
+ * are kept as a group because a slicer can write one command twice in a row on purpose: Prusa's
+ * MK3S filament G-code writes `M900 K0.05` and `M900 K30`, one for each linear advance version.
+ */
+type OutsideMotion = Map<string, string[]>;
+
+/**
+ * Remembers the motion settings among lines an outside slicer wrote for a tool.
+ *
+ * @param memory - The tool's remembered settings; updated in place.
+ * @param lines - The slicer's lines, in order.
+ * @returns True if any of them changed the motion settings.
+ */
+function rememberMotion(memory: OutsideMotion, lines: string[]): boolean {
+  const groups: OutsideMotion = new Map();
+  for (const line of lines) {
+    const [command, ...parameters] = line.split(';')[0].trim().toUpperCase().split(/\s+/);
+    if (!MOTION_COMMANDS.has(command)) continue;
+    const key = [command, ...parameters.map(parameter => parameter[0]).sort()].join(' ');
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  }
+  for (const [key, group] of groups) {
+    // Deleted first, so the settings are written back in the order they were last set.
+    memory.delete(key);
+    memory.set(key, group);
+  }
+  return groups.size > 0;
+}
+
+/** The acceleration (mm/s², printing and travel) the app's own moves run with. */
+const APP_ACCELERATION = "M204 P1000 T1000";
+/** The jerk (mm/s) the app's own moves run with. */
+const APP_JERK = "M205 X8 Y8";
 
 /** Temperature (°C) everything is held at during a test sweep, i.e. cold. */
 const TEST_SWEEP_TEMPERATURE = 20;
@@ -114,7 +150,8 @@ export default class Printer {
   public testSweep: boolean;
   /**
    * The name of Prusa's printer profile PrusaSlicer slices regular prints with, from the bundle
-   * that comes with PrusaSlicer. Empty for none (PrusaSlicer's defaults).
+   * that comes with PrusaSlicer. Empty for none (PrusaSlicer's defaults). Starts as the XL with
+   * 0.4 mm nozzles.
    */
   public prusaPrinterProfile: string;
 
@@ -216,7 +253,7 @@ export default class Printer {
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
     this.bedLeveling = true;
     this.testSweep = false;
-    this.prusaPrinterProfile = '';
+    this.prusaPrinterProfile = DEFAULT_PRUSA_PRINTER_PROFILE;
     this.multipleToolheads = true;
     this.activeExtruder = 0;
     this.toolchangeRetract = 3.0;
@@ -602,7 +639,7 @@ ${this.pressureAdvanceGcode().join("\n")}
 
 G0 Z0.200 F2400.000
 
-M204 P1000 T1000
+${APP_ACCELERATION}
 
 `;
   }
@@ -632,8 +669,8 @@ M204 P1000 T1000
     return [
       "; back to the app's own motion settings",
       ...this.pressureAdvanceGcode(),
-      "M204 P1000 T1000",
-      "M205 X8 Y8",
+      APP_ACCELERATION,
+      APP_JERK,
     ];
   }
 
@@ -892,7 +929,7 @@ M204 P1000 T1000
     let lastTarget: THREE.Vector3 = firstPoint;
 
     body_gcode.push(`G0 F2880 X${firstPoint.x.toFixed(4)} Y${firstPoint.y.toFixed(4)} Z${firstPoint.z.toFixed(4)}; move to start point`);
-    body_gcode.push("M205 X8 Y8; tune down acceleration");
+    body_gcode.push(`${APP_JERK}; tune down acceleration`);
 
     for (let i = 0; i < toolpath.length; i++) {
       const point = toolpath[i];
@@ -939,19 +976,33 @@ M204 P1000 T1000
         )
       }
 
-      if (point.preGcode?.length && !this.testSweep) {
-        body_gcode.push(...point.preGcode);
-        if (point.preGcode.some(line => MOTION_COMMAND.test(line))) {
-          state.importedMotion = true;
+      // An outside slicer's move (it carries its own extrusion) that comes after the app's own,
+      // such as a purge tower layer in the middle of a part, runs with what the slicer set for
+      // this tool again. The move's own lines below can still change it.
+      if (point.extrusion !== undefined && state.motionOwner !== 'outside' && !this.testSweep) {
+        const remembered = state.outsideMotion?.get(extruder);
+        if (remembered?.size) {
+          body_gcode.push("; back to PrusaSlicer's motion settings for this tool", ...[...remembered.values()].flat());
+          state.motionOwner = 'outside';
         }
       }
 
-      // A move the app made itself (not an outside slicer's, which carries its own extrusion)
-      // runs with the app's motion settings, whatever the outside slicer set before it.
+      if (point.preGcode?.length && !this.testSweep) {
+        body_gcode.push(...point.preGcode);
+        state.outsideMotion ??= new Map();
+        const memory = state.outsideMotion.get(extruder) ?? new Map();
+        state.outsideMotion.set(extruder, memory);
+        if (rememberMotion(memory, point.preGcode)) {
+          state.motionOwner = 'outside';
+        }
+      }
+
+      // A move the app made itself runs with the app's motion settings, whatever the outside
+      // slicer set before it.
       const ownExtrusion = !point.travel && point.extrusion === undefined;
-      if (ownExtrusion && state.importedMotion) {
+      if (ownExtrusion && state.motionOwner === 'outside') {
         body_gcode.push(...this.appMotionGcode());
-        state.importedMotion = false;
+        state.motionOwner = 'app';
       }
 
       if (point.extrusion !== undefined && (point.regularSegment || point.travel) && !this.testSweep) {

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls';
 import Visualizer from '../Visualizer';
+import type { EverydayModel } from '../types/modelTypes';
 import { syncAuxTransforms, syncTransformFields } from '../gui/modelActions';
 import { layOnFace } from '../gui/placement';
 import { pointerToNdc } from './pointerToNdc';
@@ -93,10 +94,21 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
 
     // 'objectChange' (unlike 'change', which also fires on hover) means the gizmo really moved the
     // model, so a print on it no longer matches the plate slice.
+    let moved: EverydayModel | undefined;
     transformControls.addEventListener('objectChange', () => {
         const mesh = transformControls.object;
         const model = mesh ? visualizer.everydayModelList.find(candidate => candidate.mesh === mesh) : undefined;
-        if (model) visualizer.invalidatePlateSlice(model);
+        if (!model) return;
+        visualizer.invalidatePlateSlice(model);
+        moved = model;
+    });
+
+    // Once the drag is over, an augmentation's foam area is sampled again where the object now is,
+    // as after an edit in its Transform folder. Not during the drag: that is too slow to follow.
+    transformControls.addEventListener('dragging-changed', event => {
+        if (event.value || !moved) return;
+        visualizer.scheduleToolpathRefresh(moved);
+        moved = undefined;
     });
 }
 

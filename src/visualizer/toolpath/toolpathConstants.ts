@@ -52,3 +52,13 @@ export const BOUNDS_TOLERANCE = 1e-6;
 
 /** Preview colour of travel moves: muted, so the printed lines stand out against the dark scene. */
 export const TRAVEL_PREVIEW_COLOR = 0x7f8fa6;
+
+/**
+ * G-code commands an outside slicer (PrusaSlicer) changes how the printer moves and extrudes with:
+ * acceleration (M204), jerk (M205) and pressure advance (M572 on the XL, M900 on the MK3S). The
+ * reader keeps them, and the emitter switches between the slicer's values and the app's own.
+ */
+export const MOTION_COMMANDS: ReadonlySet<string> = new Set(['M204', 'M205', 'M572', 'M900']);
+
+/** The PrusaSlicer printer profile the app's printer starts as: an XL with 0.4 mm nozzles. */
+export const DEFAULT_PRUSA_PRINTER_PROFILE = 'Original Prusa XL Input Shaper 0.4 nozzle';

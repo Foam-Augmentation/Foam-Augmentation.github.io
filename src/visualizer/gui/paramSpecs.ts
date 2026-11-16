@@ -9,7 +9,7 @@
  *
  * Keep this file free of DOM and three.js imports so it can be unit-tested under Node.
  */
-import { INFILL_PATTERNS, SUPPORT_MODES, SUPPORT_STYLES } from '../toolpath/regularPrintOptions';
+import { INFILL_PATTERNS, PROFILE_NAME_MAX_LENGTH, SUPPORT_MODES, SUPPORT_STYLES } from '../toolpath/regularPrintOptions';
 
 /** Ends the tooltip of every regular-print setting that only PrusaSlicer uses. */
 const PRUSA_ONLY_TIP = 'Only used when the desktop app slices with PrusaSlicer.';
@@ -82,8 +82,8 @@ function bool(label: string, tip: string): BooleanSpec {
 }
 
 /** Shorthand for a text spec. */
-function text(label: string, tip: string, maxLength = 200): TextSpec {
-  return { type: 'text', label, tip, maxLength };
+function text(label: string, tip: string): TextSpec {
+  return { type: 'text', label, tip, maxLength: PROFILE_NAME_MAX_LENGTH };
 }
 
 /**
@@ -133,7 +133,7 @@ export const SETTING_SPECS = {
   checkCollisions: bool('Check Collisions', 'When augmenting, check whether the print head would hit the object and suggest an H* that avoids it. Makes slicing slower.'),
   bedLeveling: bool('Bed Leveling', 'Probe the bed for automatic leveling before printing.'),
   testSweep: bool('Test Sweep (Dry Run)', 'Follow the toolpath without heating or extruding, to check that the print head clears the object.'),
-  prusaPrinterProfile: text('PrusaSlicer Printer', `Prusa's printer profile the desktop app slices Regular Prints with: retraction, wipe and the other printer settings PrusaSlicer uses. The bed size, nozzle and temperatures still come from Printer Settings. It also decides which print and filament profiles each object can choose. ${PRUSA_ONLY_TIP}`),
+  prusaPrinterProfile: text('PrusaSlicer Printer', `The Prusa printer you print on, from PrusaSlicer's own profiles. Picking one sets Printer Settings to match (bed size, print height, nozzles, and Multiple Toolheads for an XL), and the desktop app slices Regular Prints with its retraction, wipe and other printer settings (a multi-tool XL as the single-tool XL with the same nozzle: the app makes the tool changes). It also decides which print and filament profiles each object can choose. ${PRUSA_ONLY_TIP}`),
 
   // ----- test pattern (preset files only; no control in the panel) -----
   startHStarTest: num('Test Start H*', 0, 200, 0.01, 'First H* of the test pattern.'),

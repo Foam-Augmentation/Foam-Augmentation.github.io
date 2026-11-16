@@ -3,10 +3,14 @@ import {
     compatibleProfiles,
     evaluateCondition,
     listPrinters,
+    missingProfiles,
     parseVendorBundle,
+    printerMachine,
     printerVariables,
+    profileChoices,
     profileIni,
     resolveProfile,
+    slicingPrinter,
 } from './prusaProfiles';
 
 const BUNDLE = String.raw`
@@ -27,9 +31,25 @@ inherits = *common*
 retract_length = 0.8
 printer_model = XLIS
 printer_notes = "Keywords:\nPRINTER_VENDOR_PRUSA3D\nPRINTER_MODEL_XLIS\n"
+bed_shape = 0x0,360x0,360x360,0x360
+max_print_height = 360
 
 [printer:Original Prusa XL Input Shaper 0.4 nozzle]
 inherits = *XLIS*
+printer_variant = 0.4
+nozzle_diameter = 0.4
+
+[printer:Original Prusa XL - 5T Input Shaper 0.4 nozzle]
+inherits = *XLIS*
+printer_model = XL5IS
+printer_variant = 0.4
+nozzle_diameter = 0.4,0.4,0.4,0.4,0.4
+
+[printer:Original Prusa MK4 0.4 nozzle]
+inherits = *common*
+printer_model = MK4
+bed_shape = 0x-4,250x-4,250x210,0x210
+max_print_height = 220
 nozzle_diameter = 0.4
 
 [printer:Original Prusa XL Input Shaper 0.6 nozzle]
@@ -74,7 +94,7 @@ const xl04 = 'Original Prusa XL Input Shaper 0.4 nozzle';
 
 describe('parseVendorBundle and resolveProfile', () => {
     it('reads the printer, print and filament sections and skips the rest', () => {
-        expect([...bundle.sections.printer.keys()]).toHaveLength(6);
+        expect([...bundle.sections.printer.keys()]).toHaveLength(8);
         expect(bundle.sections.print.size).toBe(4);
         expect(bundle.sections.filament.size).toBe(2);
     });
@@ -110,8 +130,29 @@ describe('evaluateCondition', () => {
 });
 
 describe('what to offer', () => {
-    it('lists the one-tool FFF printers', () => {
-        expect(listPrinters(bundle)).toEqual(['Original Prusa XL Input Shaper 0.4 nozzle', 'Original Prusa XL Input Shaper 0.6 nozzle']);
+    const xl5 = 'Original Prusa XL - 5T Input Shaper 0.4 nozzle';
+
+    it('lists the one-tool FFF printers, and the multi-tool XLs', () => {
+        expect(listPrinters(bundle)).toEqual([
+            'Original Prusa MK4 0.4 nozzle',
+            xl5,
+            'Original Prusa XL Input Shaper 0.4 nozzle',
+            'Original Prusa XL Input Shaper 0.6 nozzle',
+        ]);
+    });
+
+    it('slices a multi-tool XL as the single-tool XL with the same nozzle, and nothing else with several extruders', () => {
+        expect(slicingPrinter(bundle, xl5)).toBe(xl04);
+        expect(slicingPrinter(bundle, xl04)).toBe(xl04);
+        // Several extruders but no single-tool sibling, like an MMU.
+        expect(slicingPrinter(bundle, 'Original Prusa XL - 2T Input Shaper 0.4 nozzle')).toBeUndefined();
+        expect(slicingPrinter(bundle, 'no such printer')).toBeUndefined();
+    });
+
+    it('offers a multi-tool XL what suits the single-tool XL', () => {
+        expect(profileChoices(bundle, xl5).prints).toEqual(profileChoices(bundle, xl04).prints);
+        expect(profileChoices(bundle, xl5).filaments).toEqual(['Generic PLA @XLIS']);
+        expect(profileChoices(bundle, '')).toMatchObject({ prints: [], filaments: [] });
     });
 
     it('offers the print and filament profiles that suit the printer', () => {
@@ -134,5 +175,29 @@ describe('profileIni', () => {
 
     it('is empty when nothing is chosen', () => {
         expect(profileIni(bundle, {})).toBe('');
+    });
+
+    it('writes a multi-tool XL as the single-tool XL', () => {
+        const lines = profileIni(bundle, { printer: 'Original Prusa XL - 5T Input Shaper 0.4 nozzle' }).trim().split('\n');
+        expect(lines).toContain('nozzle_diameter = 0.4');
+        expect(lines).toContain('printer_model = XLIS');
+    });
+
+    it('names the chosen profiles the bundle does not have', () => {
+        expect(missingProfiles(bundle, { printer: xl04, print: 'Old print', filament: '' })).toEqual([{ type: 'print', name: 'Old print' }]);
+    });
+});
+
+describe('printerMachine', () => {
+    it('reads the bed, the height and the nozzles, and which G-code the app writes for it', () => {
+        expect(printerMachine(bundle, xl04)).toEqual({ bed: { x: 360, y: 360, height: 360 }, nozzles: [0.4], family: 'XL' });
+        expect(printerMachine(bundle, 'Original Prusa XL - 5T Input Shaper 0.4 nozzle')!.nozzles).toEqual([0.4, 0.4, 0.4, 0.4, 0.4]);
+        // The bed's size, wherever its origin is.
+        expect(printerMachine(bundle, 'Original Prusa MK4 0.4 nozzle')).toEqual({ bed: { x: 250, y: 214, height: 220 }, nozzles: [0.4], family: null });
+    });
+
+    it('gives nothing for a printer it cannot read', () => {
+        expect(printerMachine(bundle, 'Original Prusa SL1')).toBeUndefined();
+        expect(printerMachine(bundle, 'no such printer')).toBeUndefined();
     });
 });

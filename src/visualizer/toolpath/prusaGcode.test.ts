@@ -302,6 +302,47 @@ describe('acceleration and pressure advance from PrusaSlicer', () => {
         expect(lines.filter(l => l.startsWith('M572 S0 '))).toHaveLength(1);
     });
 
+    it('puts PrusaSlicer\'s settings for the tool back when its moves carry on after the app\'s own', () => {
+        const printer = new Printer();
+        const lines = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M572 S0.036', 'M204 P1500', 'M204 T3000'] }),
+            // The app's own move in the middle of the part, such as a purge tower layer.
+            at(20, { regularSegment: true }),
+            at(30, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M204 P2000'] }),
+            at(40, { regularSegment: true, extrusion: 0.5, speed: 1800 }),
+        ]).split('\n');
+        const appReset = lines.findIndex(l => l.startsWith('M572 S0 '));
+        const restore = lines.indexOf("; back to PrusaSlicer's motion settings for this tool");
+        const resumed = lines.findIndex(l => l.startsWith('G1 X30.'));
+        expect(appReset).toBeGreaterThan(-1);
+        expect(restore).toBeGreaterThan(appReset);
+        // Every setting comes back, and the move's own new acceleration still has the last word.
+        expect(lines.slice(restore + 1, resumed)).toEqual(['M572 S0.036', 'M204 P1500', 'M204 T3000', 'M204 P2000']);
+        // Once back, nothing more is needed while the slicer's moves go on.
+        expect(lines.filter(l => l.startsWith('; back to PrusaSlicer'))).toHaveLength(1);
+    });
+
+    it('keeps the motion settings of each tool apart, and both MK3S linear advance lines', () => {
+        const printer = new Printer();
+        printer.multipleToolheads = false;
+        printer.extruders.push(structuredClone(printer.extruders[0]));
+        const lines = printer.generate_foam_gcode([
+            at(0, { travel: true, extruder: 0 }),
+            at(10, { regularSegment: true, extrusion: 0.5, speed: 1800, preGcode: ['M900 K0.05 ; LA 1.5', 'M900 K30 ; LA 1.0'] }),
+            at(20, { vStar: 0.2, hStar: 6, edot: 50 }),
+            at(30, { travel: true, extruder: 1 }),
+            at(40, { regularSegment: true, extrusion: 0.5, speed: 1800 }),
+            at(50, { travel: true, extruder: 0 }),
+            at(60, { regularSegment: true, extrusion: 0.5, speed: 1800 }),
+        ]).split('\n');
+        const restores = lines.flatMap((l, i) => l.startsWith('; back to PrusaSlicer') ? [i] : []);
+        // Tool 1 had nothing set, so its part gets nothing of tool 0's.
+        expect(restores).toHaveLength(1);
+        expect(restores[0]).toBeGreaterThan(lines.findIndex(l => l.startsWith('G1 X40.')));
+        expect(lines.slice(restores[0] + 1, restores[0] + 3)).toEqual(['M900 K0.05 ; LA 1.5', 'M900 K30 ; LA 1.0']);
+    });
+
     it('turns linear advance off before foam on a single-nozzle printer too', () => {
         const printer = new Printer();
         printer.multipleToolheads = false;

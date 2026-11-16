@@ -17,7 +17,6 @@ import { initPreviewBar, refreshPreviewBar } from './gui/previewBar';
 import { initShortcuts } from './gui/shortcuts';
 import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
 import type { PlateSlice } from './toolpath/plateSlice';
-import { DEFAULT_PRUSA_PRINTER_PROFILE } from './toolpath/prusaSlicer';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
 
@@ -238,8 +237,7 @@ export default class Visualizer {
             printHeadMaxY: 70,
             bedLeveling: false,
             testSweep: false,
-            // The app's printer is an XL with 0.4 mm nozzles until set otherwise.
-            prusaPrinterProfile: DEFAULT_PRUSA_PRINTER_PROFILE,
+            prusaPrinterProfile: printer.prusaPrinterProfile,
             multipleToolheads: true,
             purgeTower: true,
 
@@ -250,10 +248,6 @@ export default class Visualizer {
             testDeltaL: 3,
             testSize: 15,
         };
-        // The printer only hears about the other settings when they are edited; the profile it
-        // slices with has to be right from the start.
-        this.printer.prusaPrinterProfile = this.config.prusaPrinterProfile;
-
         // Initialize lasso selection state.
         this.lassoState = {
             selectionPoints: [],

@@ -123,9 +123,8 @@ export function addParam<T extends object>(
     const options: Record<string, string> = {};
     spec.options.forEach(value => { options[spec.optionLabels[value] ?? value] = value; });
     controller = add(target, key, options);
-  } else if (spec.type === 'text') {
-    controller = add(target, key);
   } else {
+    // A checkbox, or a text field.
     controller = add(target, key);
   }
 

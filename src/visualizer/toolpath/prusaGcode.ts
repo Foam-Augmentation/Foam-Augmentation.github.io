@@ -2,8 +2,10 @@ import * as THREE from 'three';
 import type Printer from '../../printer/Printer';
 import type { PathPoint } from './pathTypes';
 import type { RegularPrintConfig } from './regularSlicer';
+import { MOTION_COMMANDS } from './toolpathConstants';
 import {
     INFILL_PATTERNS,
+    PROFILE_NAME_MAX_LENGTH,
     SOLID_FALLBACK_PATTERN,
     SOLID_INFILL_PATTERNS,
     SUPPORT_MODES,
@@ -115,7 +117,7 @@ export function validatePrusaOptions(printer: Printer, config: RegularPrintConfi
         fail(`the first layer height (${config.firstLayerHeight} mm) cannot be more than the nozzle diameter (${nozzleDiameter} mm).`);
     }
     for (const [label, name] of [['print profile', config.printProfile], ['filament profile', config.filamentProfile]] as const) {
-        if (typeof name !== 'string' || name.length > 200 || /[\r\n]/.test(name)) {
+        if (typeof name !== 'string' || name.length > PROFILE_NAME_MAX_LENGTH || /[\r\n]/.test(name)) {
             fail(`the ${label} must be a profile name (it is ${JSON.stringify(name)}).`);
         }
     }
@@ -356,9 +358,10 @@ export function parsePrusaGcode(gcode: string, options: ParsePrusaGcodeOptions):
         } else if (command === 'G10' || command === 'G11' || command === 'M106' || command === 'M107') {
             // Firmware retraction and the part cooling fan.
             pending.push(code);
-        } else if (command === 'M204' || command === 'M205' || command === 'M572' || command === 'M900') {
+        } else if (MOTION_COMMANDS.has(command)) {
             // Acceleration, jerk and pressure advance, per feature and from the filament profile.
-            // The emitter sets its own back before the app's next move (see Printer.appMotionGcode).
+            // The emitter sets its own back before the app's next move, and these again after it
+            // (see Printer.generate_foam_gcode).
             pending.push(code);
         } else if (command === 'M82') {
             fail('it uses absolute extrusion; use_relative_e_distances must be on');

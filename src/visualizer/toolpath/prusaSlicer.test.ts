@@ -24,7 +24,10 @@ function fakeBridge(available: boolean): PrusaSlicerBridge & { slice: ReturnType
 describe('sliceRegularParts', () => {
     it('uses PrusaSlicer when it is available, sending STL in printer coordinates', async () => {
         const bridge = fakeBridge(true);
-        const result = await sliceRegularParts(new Printer(), [cube(40), cube(80)], bridge);
+        // This bridge reads no profiles, which slicing would note for a chosen printer profile.
+        const printer = new Printer();
+        printer.prusaPrinterProfile = '';
+        const result = await sliceRegularParts(printer, [cube(40), cube(80)], bridge);
         expect(result.slicer).toBe('prusaslicer');
         expect(bridge.slice).toHaveBeenCalledTimes(1);
         const request = bridge.slice.mock.calls[0][0];
@@ -149,7 +152,9 @@ describe('Prusa profiles in the slicing request', () => {
 
     it('sends no profile file when none is chosen', async () => {
         const bridge = bridgeWithBundle();
-        await sliceRegularParts(new Printer(), [cube(40)], bridge);
+        const printer = new Printer();
+        printer.prusaPrinterProfile = '';
+        await sliceRegularParts(printer, [cube(40)], bridge);
         expect(bridge.slice.mock.calls[0][0].profileIni).toBeUndefined();
     });
 });

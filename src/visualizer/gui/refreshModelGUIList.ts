@@ -5,14 +5,14 @@ import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
 import { visualize_All_Layers } from '../toolpath/generateFoamToolpath';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
-import { importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
+import { MAX_COPIES, duplicateModel, importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 import { AnyModel, disposeModel, syncAuxTransforms } from './modelActions';
 import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips, setTip } from './guiHelpers';
 import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, PRUSA_ONLY_REGULAR_KEYS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
 import { notify } from './notify';
 import { isPrusaSlicerAvailable } from '../toolpath/prusaSlicer';
 import { dropMeshToBed, placementChanged } from './placement';
-import { addObjectProfileControls, refreshProfileControls } from './profileControls';
+import { addObjectProfileControls, setProfileControlsAvailable } from './profileControls';
 
 // Extend BufferGeometry to include boundsTree property
 declare module 'three' {
@@ -178,6 +178,13 @@ function addTransformFolder(
     if ('kind' in modelObj) {
         addButton(transformFolder, 'Lay on Face', 'Then click a face of the model: it is turned so that face rests on the bed (shortcut F). Esc cancels.', () => {
             visualizer.armLayOnFace(modelObj);
+        });
+
+        const copies = { count: 1 };
+        const countController = transformFolder.add(copies, 'count', 1, MAX_COPIES, 1).name('Copies');
+        setTip(countController.domElement, 'How many copies Add Copies makes.');
+        addButton(transformFolder, 'Add Copies', 'Add copies of this object with the same type, orientation and settings, in the free space nearest it (one copy: the ⧉ button or Ctrl+D). A copy of an Augmentation starts without a foam area.', () => {
+            duplicateModel(visualizer, modelObj, copies.count);
         });
     }
 
@@ -489,7 +496,7 @@ export function watchPrusaSlicerAvailability(visualizer: Visualizer): void {
     if (typeof window === 'undefined') return;
     const check = async (): Promise<void> => {
         const available = await isPrusaSlicerAvailable();
-        refreshProfileControls(visualizer, available);
+        setProfileControlsAvailable(visualizer, available);
         if (available === prusaSlicerAvailable) return;
         prusaSlicerAvailable = available;
         visualizer.everydayModelList.forEach(model => regularControlUpdaters.get(model)?.());

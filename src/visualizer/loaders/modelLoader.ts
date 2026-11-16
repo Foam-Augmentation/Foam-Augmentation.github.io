@@ -220,6 +220,8 @@ export interface NewModelPlacement {
     orientation?: { quaternion: THREE.Quaternion, scale: THREE.Vector3 };
     /** Where to look for free space first. Defaults to the middle of the bed. */
     near?: { x: number, y: number };
+    /** Called when there is no free space for it, instead of warning. */
+    onNoSpace?: () => void;
 }
 
 /**
@@ -292,7 +294,8 @@ export function addModelFromGeometry(
         }
         // Clear of every object already on the plate, where there is room.
         if (type === 'everyday' && !placeNewMesh(visualizer, mesh, kind, placement.near)) {
-            notify(`There is no free space on the bed for “${name}”, so it overlaps another object. Move it or press Arrange.`, 'warning');
+            if (placement.onNoSpace) placement.onNoSpace();
+            else notify(`There is no free space on the bed for “${name}”, so it overlaps another object. Move it or press Arrange.`, 'warning');
         }
 
         // Save the model in the appropriate list and update the uuid mapping.
@@ -430,31 +433,45 @@ export function copyName(names: string[], name: string): string {
     return `${base} (${n})`;
 }
 
+/** The most copies of an object that can be added at once. */
+export const MAX_COPIES = 50;
+
 /**
- * Adds a copy of an object next to it: the same mesh, turned and scaled the same, with the same
- * type and settings, in the free space nearest to it. An augmentation's selected areas are not
- * copied: the copy starts without one.
+ * Adds copies of an object, each with its own geometry and the same type, orientation and
+ * settings, in the free space nearest the original. A copy of an augmentation starts without a
+ * foam area: that is chosen on each real object.
  *
  * @param visualizer - The Visualizer instance.
  * @param source - The object to copy.
- * @returns The copy. It is selected.
+ * @param count - How many copies to add (1 to MAX_COPIES).
+ * @returns The copies. The last one is selected.
  */
-export function duplicateModel(visualizer: Visualizer, source: EverydayModel): EverydayModel {
-    const names = visualizer.everydayModelList.map(model => model.name);
-    // The copy has its own geometry: deleting one of the two disposes only its own.
-    const copy = addModelFromGeometry(visualizer, source.mesh.geometry.clone(), copyName(names, source.name), 'everyday', source.kind, {
-        orientation: { quaternion: source.mesh.quaternion, scale: source.mesh.scale },
-        near: { x: source.mesh.position.x, y: source.mesh.position.y },
-    }) as EverydayModel;
-    // Into the objects the copy's controls are bound to, not replacing them.
-    Object.assign(copy.regularConfig, structuredClone(source.regularConfig));
-    Object.assign(copy.toolpathConfig, structuredClone(source.toolpathConfig));
-    Object.assign(copy.initialConfig, structuredClone(source.initialConfig));
-    copy.initialOffset = source.initialOffset;
-    // A gradient is never changed in place (loading an SVG replaces it), so the two can share it.
-    copy.gradient = source.gradient;
+export function duplicateModel(visualizer: Visualizer, source: EverydayModel, count = 1): EverydayModel[] {
+    const copies: EverydayModel[] = [];
+    let unplaced = 0;
+    for (let i = 0; i < Math.min(Math.max(1, Math.floor(count)), MAX_COPIES); i++) {
+        const names = visualizer.everydayModelList.map(model => model.name);
+        // The copy has its own geometry: deleting one of the two disposes only its own.
+        const copy = addModelFromGeometry(visualizer, source.mesh.geometry.clone(), copyName(names, source.name), 'everyday', source.kind, {
+            orientation: { quaternion: source.mesh.quaternion, scale: source.mesh.scale },
+            near: { x: source.mesh.position.x, y: source.mesh.position.y },
+            onNoSpace: () => { unplaced++; },
+        }) as EverydayModel;
+        // Into the objects the copy's controls are bound to, not replacing them.
+        Object.assign(copy.regularConfig, structuredClone(source.regularConfig));
+        Object.assign(copy.toolpathConfig, structuredClone(source.toolpathConfig));
+        Object.assign(copy.initialConfig, structuredClone(source.initialConfig));
+        copy.initialOffset = source.initialOffset;
+        // A gradient is never changed in place (loading an SVG replaces it), so the two can share it.
+        copy.gradient = source.gradient;
+        copies.push(copy);
+    }
     refreshModelControls(visualizer);
-    return copy;
+    if (unplaced > 0) {
+        const which = copies.length === 1 ? 'the copy' : unplaced === copies.length ? `the ${copies.length} copies` : `${unplaced} of the ${copies.length} copies`;
+        notify(`There is no free space on the bed for ${which} of “${source.name}”, so ${unplaced === 1 ? 'it overlaps' : 'they overlap'} other objects. Move ${unplaced === 1 ? 'it' : 'them'} or press Arrange.`, 'warning');
+    }
+    return copies;
 }
 
 

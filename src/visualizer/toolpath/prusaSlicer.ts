@@ -5,10 +5,7 @@ import type { PathPoint } from './pathTypes';
 import { generateRegularToolpath, validateRegularConfig, type RegularPart } from './regularSlicer';
 import { buildPrusaConfig, formatPrusaIni, parsePrusaGcode, validatePrusaOptions } from './prusaGcode';
 import { TRAVEL_CLEARANCE } from './toolpathConstants';
-import { compatibleProfiles, listPrinters, parseVendorBundle, profileIni, type VendorBundle } from './prusaProfiles';
-
-/** The printer profile the app starts with: its printer is an XL with 0.4 mm nozzles. */
-export const DEFAULT_PRUSA_PRINTER_PROFILE = 'Original Prusa XL Input Shaper 0.4 nozzle';
+import { missingProfiles, parseVendorBundle, profileIni, type ChosenProfiles, type VendorBundle } from './prusaProfiles';
 
 /** What the desktop app tells the page about PrusaSlicer. */
 export interface PrusaSlicerStatus {
@@ -107,37 +104,6 @@ export function loadVendorBundle(bridge: PrusaSlicerBridge | undefined = getPrus
     return promise;
 }
 
-/** The profiles a bundle offers, worked out once per printer. */
-const choiceCache = new WeakMap<VendorBundle, Map<string, { prints: string[], filaments: string[] }>>();
-
-/**
- * What a bundle offers: its printers, and the print and filament profiles that suit one of them.
- *
- * @param {VendorBundle} bundle The bundle.
- * @param {string} printer The printer profile ('' for none: then nothing else is offered).
- * @returns {{ printers: string[], prints: string[], filaments: string[] }} The names, sorted.
- */
-export function profileChoices(bundle: VendorBundle, printer: string): { printers: string[], prints: string[], filaments: string[] } {
-    let cache = choiceCache.get(bundle);
-    if (!cache) {
-        cache = new Map();
-        choiceCache.set(bundle, cache);
-    }
-    let lists = cache.get(printer);
-    if (!lists) {
-        lists = printer
-            ? { prints: compatibleProfiles(bundle, 'print', printer), filaments: compatibleProfiles(bundle, 'filament', printer) }
-            : { prints: [], filaments: [] };
-        cache.set(printer, lists);
-    }
-    let printers = cache.get('\u0000printers')?.prints;
-    if (!printers) {
-        printers = listPrinters(bundle);
-        cache.set('\u0000printers', { prints: printers, filaments: [] });
-    }
-    return { printers, ...lists };
-}
-
 /**
  * Writes a part as binary STL in printer coordinates: its baked geometry moved by its offset.
  *
@@ -200,14 +166,10 @@ export async function slicePartsWithPrusa(printer: Printer, parts: RegularPart[]
 
     for (const group of groupBySettings(parts)) {
         const config = group[0].config;
-        const chosen = { printer: printer.prusaPrinterProfile, print: config.printProfile, filament: config.filamentProfile };
+        const chosen: ChosenProfiles = { printer: printer.prusaPrinterProfile, print: config.printProfile, filament: config.filamentProfile };
         if (bundle) {
-            for (const type of ['printer', 'print', 'filament'] as const) {
-                const name = chosen[type];
-                if (name && !bundle.sections[type].has(name)) {
-                    notes.push(`The ${type} profile “${name}” is not in the PrusaSlicer install's profiles, so it was left out.`);
-                    chosen[type] = '';
-                }
+            for (const { type, name } of missingProfiles(bundle, chosen)) {
+                notes.push(`The ${type} profile “${name}” is not in the PrusaSlicer install's profiles, so it was left out.`);
             }
         } else if (chosen.printer || chosen.print || chosen.filament) {
             notes.push("PrusaSlicer's own profiles could not be read from its install, so the chosen printer, print and filament profiles were left out.");

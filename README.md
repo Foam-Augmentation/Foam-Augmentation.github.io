@@ -16,8 +16,8 @@ Every object shows in the `Objects` list with its type. Click an object there (o
 Placing objects on the bed:
 - A new object (imported, dropped, or a copy) is put in the free space nearest the middle of the bed (a copy: nearest the original), clear of the other objects.
 - `Arrange` at the top of the `Objects` list (shortcut `A`) packs the Foam and Regular Prints around the middle of the bed, 6 mm apart and clear of the purge line and purge tower. Augmentation objects stay where they are: they are real objects on the bed. Anything taller than the nozzle is also kept out of the print head's reach around a Foam Print or an Augmentation (Printer Settings › Print Head Min/Max X/Y), so the head cannot hit it while it prints foam.
-- `⧉` on an object's row (shortcut `Ctrl+D`) adds a copy with the same type, orientation and settings. A copy of an Augmentation starts without a foam area.
-- In the `Transform` folder, `Lay on Face` (shortcut `F`) waits for a click on the object, then turns it so the clicked face rests on the bed (`Esc` cancels). `Snap Model to Plate` rests the object's lowest point on the bed, however it is rotated.
+- `⧉` on an object's row (shortcut `Ctrl+D`) adds a copy with the same type, orientation and settings. To add several at once, set `Copies` in the object's `Transform` folder and press `Add Copies`. Each copy goes in the free space nearest the original. A copy of an Augmentation starts without a foam area.
+- In the `Transform` folder, `Lay on Face` (shortcut `F`) waits for a click on the object, then turns it so the clicked face rests on the bed (`Esc` cancels). `Snap Model to Plate` rests the object's lowest point on the bed, however it is rotated. After a move with the gizmo, an Augmentation's foam toolpath is worked out again where the object now is.
 - When a file is sliced or exported, the app warns by name about any object that stands in the print head's reach while foam prints next to it.
 <div align="center" style="margin: 20px;">
     <img src="src/images/select-model.png" width="300">
@@ -121,7 +121,10 @@ Every control in the panel has a tooltip with the same description as below; hov
     - `Purge Line`: If checked, the slicer will generate a purge line.
     - `Check Collisions`: If checked, the slicer will check for collisions when augmenting and give a suggested H* value to avoid collisions. Note that this will make slicing take longer.
     - `Bed Leveling`: If checked, the printer will probe the bed for automatic leveling.
-    - `PrusaSlicer Printer` *(desktop app with PrusaSlicer)*: Prusa's printer profile PrusaSlicer slices Regular Prints with (retraction, wipe and other printer settings), read from the PrusaSlicer install. It starts as the Prusa XL Input Shaper with a 0.4 mm nozzle. It also decides which print and filament profiles the objects can choose.
+    - `PrusaSlicer Printer` *(desktop app with PrusaSlicer)*: the Prusa printer you print on, from PrusaSlicer's own profiles in the PrusaSlicer install. It starts as the Prusa XL Input Shaper with a 0.4 mm nozzle.
+        - Picking one sets Printer Settings to match: bed size, print height, each extruder's nozzle, and `Multiple Toolheads` (on for an XL, off for an MK3S). Print Head, temperatures and the VTP settings stay as they are. The app warns when its own G-code (start, foam, purge, end) is not written for the printer (anything but an XL or an MK3S), or when Printer Settings has more extruders than the XL has tools.
+        - PrusaSlicer slices Regular Prints with the profile's retraction, wipe and other printer settings. A multi-tool XL (2T, 5T) is sliced as the single-tool XL with the same nozzle, since the app makes the tool changes itself.
+        - It also decides which print and filament profiles the objects can choose.
     - `Test Sweep (Dry Run)`: If checked, the printer will follow the toolpath without heating or extruding, allowing you to test if the print head will collide with your object safely.
 # Print Parameters
 These are in each everyday model's folder.
@@ -205,7 +208,7 @@ npm run desktop
 
 The app reads Prusa's own printer, print and filament profiles from the PrusaSlicer install (`resources/profiles/PrusaResearch.ini`); it does not ship them. They are applied in this order, each winning over the one before: the `PrusaSlicer Printer` and the object's `Print Profile` and `Filament Profile`, then your own config from step 2, then the app's own settings.
 
-PrusaSlicer's accelerations, jerk and pressure advance (from the print and filament profiles) are kept for the regular parts. Before any move the app makes itself (foam, shells, purge), it sets its own back: pressure advance off (`M572 S0` on the XL, `M900 K0` on the MK3S), 1000 mm/s² acceleration and 8 mm/s jerk. A foam thread is laid at a fixed ratio V* to the head speed, and pressure advance would push extra filament out whenever the head speeds up. The start G-code now also turns pressure advance off: `M572 S0` on the XL, instead of the MK3-style `M900` lines it wrote before, and `M900 K0` on the MK3S, instead of `M900 K0.05` and `K30`, which turned it on.
+PrusaSlicer's accelerations, jerk and pressure advance (from the print and filament profiles) are kept for the regular parts. Before any move the app makes itself (foam, shells, purge), it sets its own back: pressure advance off (`M572 S0` on the XL, `M900 K0` on the MK3S), 1000 mm/s² acceleration and 8 mm/s jerk. When PrusaSlicer's moves carry on after the app's own (after a purge tower layer, say), the values PrusaSlicer last set for that tool are written again. A foam thread is laid at a fixed ratio V* to the head speed, and pressure advance would push extra filament out whenever the head speeds up. The start G-code now also turns pressure advance off: `M572 S0` on the XL, instead of the MK3-style `M900` lines it wrote before, and `M900 K0` on the MK3S, instead of `M900 K0.05` and `K30`, which turned it on.
 
 Without PrusaSlicer, or in the web version, Regular Print objects are sliced with the built-in slicer as before. Foam and augmentation slicing is unchanged.
 

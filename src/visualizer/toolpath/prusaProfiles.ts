@@ -12,8 +12,14 @@
 // No DOM here, so it can be unit-tested under Node.
 // ---------------------------------------------------------------------------------------------
 
+/** The kinds of profile the app uses, in the order their settings are applied. */
+export const PROFILE_TYPES = ['printer', 'print', 'filament'] as const;
+
 /** The kinds of profile the app uses. */
-export type ProfileType = 'printer' | 'print' | 'filament';
+export type ProfileType = typeof PROFILE_TYPES[number];
+
+/** The profiles chosen for a slice, by kind. A missing or empty one is left out. */
+export type ChosenProfiles = Partial<Record<ProfileType, string>>;
 
 /** A profile's settings, as `key = value` text exactly as the bundle writes them. */
 export type ProfileValues = Record<string, string>;
@@ -65,11 +71,14 @@ export function isAbstract(name: string): boolean {
     return name.startsWith('*') && name.endsWith('*');
 }
 
-/** The names in an `inherits` value: `a; b` or `"a"; "b"`. */
+/** The names in a list such as `inherits` or `compatible_printers`: `a; b` or `"a"; "b"`. */
+function splitNames(value: string | undefined): string[] {
+    return (value ?? '').split(';').map(name => name.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+}
+
+/** The sections a section inherits from, in order. */
 function parentsOf(values: ProfileValues): string[] {
-    const inherits = values.inherits?.trim();
-    if (!inherits) return [];
-    return inherits.split(';').map(name => name.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+    return splitNames(values.inherits);
 }
 
 /**
@@ -282,9 +291,46 @@ export function evaluateCondition(expression: string, variables: ConditionVariab
 
 // ----- what to offer --------------------------------------------------------------------------
 
+/** Whether a printer profile has more than one extruder. */
+function hasSeveralExtruders(printer: ProfileValues): boolean {
+    return (printer.nozzle_diameter ?? '').includes(',');
+}
+
+/** The single-tool XL a multi-tool XL is sliced as, by model and nozzle variant ("XLIS|0.4"). */
+const singleToolPrinters = new WeakMap<VendorBundle, Map<string, string>>();
+
 /**
- * The printer profiles of a bundle that the app can slice with: FFF printers with one extruder
- * (PrusaSlicer slices each of the app's tools on its own).
+ * The printer profile PrusaSlicer slices with for a printer profile. The app makes its own tool
+ * changes and slices each part on its own, for one tool, so a multi-tool XL (`XL2IS`, `XL5IS`, ...)
+ * is sliced as the single-tool XL with the same nozzle; any other printer as itself.
+ *
+ * @param {VendorBundle} bundle The bundle.
+ * @param {string} name The printer profile.
+ * @returns {string | undefined} The profile to slice with. Undefined if the printer is not in the
+ *          bundle, or has several extruders and no single-tool sibling (such as an MMU).
+ */
+export function slicingPrinter(bundle: VendorBundle, name: string): string | undefined {
+    const printer = resolveProfile(bundle, 'printer', name);
+    if (!printer) return undefined;
+    if (!hasSeveralExtruders(printer)) return name;
+    let index = singleToolPrinters.get(bundle);
+    if (!index) {
+        index = new Map();
+        for (const candidate of bundle.sections.printer.keys()) {
+            if (isAbstract(candidate)) continue;
+            const values = resolveProfile(bundle, 'printer', candidate)!;
+            const key = `${values.printer_model}|${values.printer_variant}`;
+            if (!hasSeveralExtruders(values) && !index.has(key)) index.set(key, candidate);
+        }
+        singleToolPrinters.set(bundle, index);
+    }
+    const model = (printer.printer_model ?? '').replace(/^XL\d/, 'XL');
+    return model === printer.printer_model ? undefined : index.get(`${model}|${printer.printer_variant}`);
+}
+
+/**
+ * The printer profiles of a bundle that the app can slice with: FFF printers with one extruder,
+ * and the multi-tool XLs (sliced as the single-tool XL; see slicingPrinter).
  *
  * @param {VendorBundle} bundle The bundle.
  * @returns {string[]} Their names, sorted.
@@ -295,10 +341,50 @@ export function listPrinters(bundle: VendorBundle): string[] {
         if (isAbstract(name)) continue;
         const printer = resolveProfile(bundle, 'printer', name)!;
         if ((printer.printer_technology ?? 'FFF') !== 'FFF') continue;
-        if ((printer.nozzle_diameter ?? '').includes(',')) continue;
+        if (!slicingPrinter(bundle, name)) continue;
         names.push(name);
     }
     return names.sort((a, b) => a.localeCompare(b));
+}
+
+/** What a printer profile says about the machine, as the app's own Printer Settings hold it. */
+export interface PrinterMachine {
+    /** The bed's size along X and Y, and the print height (mm). */
+    bed: { x: number, y: number, height: number };
+    /** Each tool's nozzle diameter (mm). */
+    nozzles: number[];
+    /**
+     * The printer the app's own G-code (start, foam, purge, end) is written for that this one
+     * is: the XL, or the MK3S (and MK3). Null for any other printer.
+     */
+    family: 'XL' | 'MK3S' | null;
+}
+
+/**
+ * Reads the machine a printer profile describes.
+ *
+ * @param {VendorBundle} bundle The bundle.
+ * @param {string} name The printer profile.
+ * @returns {PrinterMachine | undefined} The machine. Undefined if the profile is not in the bundle,
+ *          or its bed, height or nozzles cannot be read.
+ */
+export function printerMachine(bundle: VendorBundle, name: string): PrinterMachine | undefined {
+    const printer = resolveProfile(bundle, 'printer', name);
+    if (!printer) return undefined;
+    const corners = (printer.bed_shape ?? '').split(',')
+        .map(corner => corner.trim().split('x').map(Number))
+        .filter(corner => corner.length === 2 && corner.every(Number.isFinite));
+    const height = Number(printer.max_print_height);
+    const nozzles = (printer.nozzle_diameter ?? '').split(',').map(Number);
+    if (corners.length < 3 || !(height > 0) || !nozzles.every(nozzle => nozzle > 0)) return undefined;
+    const xs = corners.map(corner => corner[0]);
+    const ys = corners.map(corner => corner[1]);
+    const model = printer.printer_model ?? '';
+    return {
+        bed: { x: Math.max(...xs) - Math.min(...xs), y: Math.max(...ys) - Math.min(...ys), height },
+        nozzles,
+        family: /^XL/.test(model) ? 'XL' : /^MK3S?(MMU|$)/.test(model) ? 'MK3S' : null,
+    };
 }
 
 /**
@@ -317,10 +403,10 @@ export function compatibleProfiles(bundle: VendorBundle, type: 'print' | 'filame
     for (const name of bundle.sections[type].keys()) {
         if (isAbstract(name)) continue;
         const profile = resolveProfile(bundle, type, name)!;
-        const listed = (profile.compatible_printers ?? '').trim();
+        const listed = splitNames(profile.compatible_printers);
         let fits: boolean;
-        if (listed && listed !== '""') {
-            fits = listed.split(';').map(n => n.trim().replace(/^"(.*)"$/, '$1')).includes(printerName);
+        if (listed.length) {
+            fits = listed.includes(printerName);
         } else {
             try {
                 fits = evaluateCondition(profile.compatible_printers_condition ?? '', variables);
@@ -333,20 +419,70 @@ export function compatibleProfiles(bundle: VendorBundle, type: 'print' | 'filame
     return names.sort((a, b) => a.localeCompare(b));
 }
 
+/** The lists of what to offer, worked out once per bundle (printers) and printer (the rest). */
+const printerLists = new WeakMap<VendorBundle, string[]>();
+const profileLists = new WeakMap<VendorBundle, Map<string, { prints: string[], filaments: string[] }>>();
+
+/**
+ * What a bundle offers: its printers, and the print and filament profiles that suit one of them
+ * (that suit the printer it is sliced as; see slicingPrinter).
+ *
+ * @param {VendorBundle} bundle The bundle.
+ * @param {string} printer The printer profile ('' for none: then nothing else is offered).
+ * @returns {{ printers: string[], prints: string[], filaments: string[] }} The names, sorted.
+ */
+export function profileChoices(bundle: VendorBundle, printer: string): { printers: string[], prints: string[], filaments: string[] } {
+    let printers = printerLists.get(bundle);
+    if (!printers) {
+        printers = listPrinters(bundle);
+        printerLists.set(bundle, printers);
+    }
+    let lists = profileLists.get(bundle);
+    if (!lists) {
+        lists = new Map();
+        profileLists.set(bundle, lists);
+    }
+    let choices = lists.get(printer);
+    if (!choices) {
+        const sliced = printer ? slicingPrinter(bundle, printer) ?? printer : '';
+        choices = sliced
+            ? { prints: compatibleProfiles(bundle, 'print', sliced), filaments: compatibleProfiles(bundle, 'filament', sliced) }
+            : { prints: [], filaments: [] };
+        lists.set(printer, choices);
+    }
+    return { printers, ...choices };
+}
+
+/**
+ * The chosen profiles that the bundle does not have (such as a profile from a preset made with
+ * another PrusaSlicer version). profileIni leaves them out.
+ *
+ * @param {VendorBundle} bundle The bundle.
+ * @param {ChosenProfiles} chosen The profile names; empty ones are not missing.
+ * @returns {{ type: ProfileType, name: string }[]} The missing ones.
+ */
+export function missingProfiles(bundle: VendorBundle, chosen: ChosenProfiles): { type: ProfileType, name: string }[] {
+    return PROFILE_TYPES
+        .filter(type => chosen[type] && !bundle.sections[type].has(chosen[type]!))
+        .map(type => ({ type, name: chosen[type]! }));
+}
+
 /**
  * The settings of the chosen profiles, as one PrusaSlicer .ini: printer first, then print, then
  * filament, each overriding the one before where they overlap. Values are written exactly as the
- * bundle has them.
+ * bundle has them. A multi-tool XL is written as the single-tool XL it is sliced as (see
+ * slicingPrinter); profiles the bundle does not have are left out.
  *
  * @param {VendorBundle} bundle The bundle.
- * @param {{ printer?: string, print?: string, filament?: string }} chosen The profile names; empty ones are skipped.
+ * @param {ChosenProfiles} chosen The profile names; empty ones are skipped.
  * @returns {string} The .ini text. Empty if no profile was chosen (or none is in the bundle).
  */
-export function profileIni(bundle: VendorBundle, chosen: { printer?: string, print?: string, filament?: string }): string {
+export function profileIni(bundle: VendorBundle, chosen: ChosenProfiles): string {
     const merged: ProfileValues = {};
-    for (const type of ['printer', 'print', 'filament'] as const) {
-        const name = chosen[type];
+    for (const type of PROFILE_TYPES) {
+        let name = chosen[type];
         if (!name) continue;
+        if (type === 'printer') name = slicingPrinter(bundle, name) ?? name;
         Object.assign(merged, profileSettings(bundle, type, name) ?? {});
     }
     const lines = Object.entries(merged)

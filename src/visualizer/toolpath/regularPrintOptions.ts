@@ -47,3 +47,6 @@ export const SOLID_INFILL_PATTERNS: readonly InfillPattern[] = ['rectilinear', '
 
 /** The pattern a solid (100 %) part is filled with when the chosen one cannot be. */
 export const SOLID_FALLBACK_PATTERN: InfillPattern = 'rectilinear';
+
+/** The longest Prusa profile name a setting or preset accepts. */
+export const PROFILE_NAME_MAX_LENGTH = 200;
