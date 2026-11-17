@@ -96,6 +96,26 @@ interface UndeclaredAuxObjects {
 }
 
 /**
+ * Everything drawn for an object because it is an augmentation: its selected areas (highlight,
+ * sample points, bounding box and outline), its sensing boxes and its toolpath preview. They are
+ * shown only while the object is an augmentation.
+ *
+ * @param model - The object.
+ * @returns The overlays that exist right now.
+ */
+export function augmentOverlays(model: EverydayModel): THREE.Object3D[] {
+  const aux = model as EverydayModel & UndeclaredAuxObjects;
+  const overlays: (THREE.Object3D | undefined)[] = [
+    model.highlightFoamMesh, model.highlightSenseMesh,
+    model.pointsMesh_foam, model.pointsMesh_sense,
+    aux.selectedRegularFoamMeshBoundingBoxHelper, aux.selectedRegularFoamMeshOutline,
+    model.toolpathVisualizationObject,
+    ...(model.sensingIntersectModelList ?? []),
+  ];
+  return overlays.filter((object): object is THREE.Object3D => object !== undefined);
+}
+
+/**
  * Removes an object from its parent and frees the GPU resources of it and its descendants.
  *
  * @param object - The object to dispose. Null and undefined are ignored.

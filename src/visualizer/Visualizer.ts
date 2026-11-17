@@ -15,7 +15,7 @@ import { initEmptyState, setEmptyStateVisible } from './gui/emptyState';
 import { initObjectList, renderObjectList } from './gui/objectList';
 import { initPreviewBar, refreshPreviewBar } from './gui/previewBar';
 import { initShortcuts } from './gui/shortcuts';
-import { applyModelAppearance, disposeObject3D } from './gui/modelActions';
+import { applyModelAppearance, augmentOverlays, disposeObject3D } from './gui/modelActions';
 import type { PlateSlice } from './toolpath/plateSlice';
 import { updateModeHints as renderModeHints } from './gui/bottomTooltip';
 import { notify, withBusy } from './gui/notify';
@@ -331,13 +331,7 @@ export default class Visualizer {
             this.selectionArmed = false;
             this.updateModeHints();
         }
-        const augmentOnlyObjects = [
-            model.highlightFoamMesh, model.highlightSenseMesh,
-            model.pointsMesh_foam, model.pointsMesh_sense,
-            model.toolpathVisualizationObject,
-            ...(model.sensingIntersectModelList ?? []),
-        ];
-        augmentOnlyObjects.forEach(object => { if (object) object.visible = augmenting; });
+        augmentOverlays(model).forEach(object => { object.visible = augmenting; });
 
         // The settings shown for the object depend on its kind (see style.css).
         const classes = model.guiItem?.domElement.classList;
@@ -483,11 +477,34 @@ export default class Visualizer {
             if (models.length === 0) return;
 
             withBusy('Updating toolpath…', () => {
-                models.forEach(m => regenerateSelectionToolpath(this, m));
+                // Each model on its own: one that cannot be regenerated (a grid too fine, an open
+                // outline) must not leave the ones after it with an out-of-date preview.
+                const failures: string[] = [];
+                for (const m of models) {
+                    try {
+                        regenerateSelectionToolpath(this, m);
+                    } catch (error) {
+                        console.error(error);
+                        failures.push(`"${m.name}": ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                }
+                if (failures.length) {
+                    throw new Error(`Could not update the toolpath of ${failures.join('; ')}`);
+                }
             })
                 .catch(() => { /* withBusy has already shown the error */ })
                 .then(() => this.updateActionStates());
         }, TOOLPATH_REFRESH_DELAY_MS);
+    }
+
+    /**
+     * Tells the visualizer that these models' toolpaths have just been regenerated from their
+     * current settings and placement, so a refresh that is still waiting leaves them alone.
+     *
+     * @param models - The models whose toolpaths are up to date.
+     */
+    public markToolpathsFresh(models: EverydayModel[]): void {
+        models.forEach(model => this.staleToolpathModels.delete(model));
     }
 
     // ----- selection state -----
@@ -536,6 +553,10 @@ export default class Visualizer {
 
         this._selectedModel = model;
         this.selectionArmed = false;
+        // "Lay on Face" waits for a click on one object; it does not carry over to another.
+        if (this.layOnFaceModel && this.layOnFaceModel !== model) {
+            this.layOnFaceModel = null;
+        }
         if (model) {
             model.guiItem?.domElement.classList.add('selectedModel');
             applyModelAppearance(model, true);
@@ -578,6 +599,7 @@ export default class Visualizer {
     public armSelection(model: EverydayModel, kind: 'foam' | 'sense'): void {
         if (model.kind !== 'augment') return;
         this.transformControls.detach();
+        this.layOnFaceModel = null;
         this.selectModel(model);
         this.current_selection_type = kind;
         this.selectionArmed = true;
@@ -613,7 +635,8 @@ export default class Visualizer {
         this.selectionArmed = false;
         this.transformControls.detach();
         this.layOnFaceModel = model;
-        this.renderer.domElement.style.cursor = 'crosshair';
+        // Area selection was just disarmed: put the mouse buttons and the hints back as well.
+        this.updateModeHints();
         notify(`Click the face of “${model.name}” that should rest on the bed. Esc cancels.`, 'info');
     }
 
@@ -621,7 +644,7 @@ export default class Visualizer {
     public disarmLayOnFace(): void {
         if (!this.layOnFaceModel) return;
         this.layOnFaceModel = null;
-        this.renderer.domElement.style.cursor = '';
+        this.updateModeHints();
     }
 
     /**
@@ -673,7 +696,10 @@ export default class Visualizer {
                     : null,
             },
             () => {
-                if (armedModel) this.frameModel(armedModel, 'Top');
+                // Asked when the button is pressed, not when the hint was first drawn: the button
+                // outlives the selection it was made for.
+                const model = this.selectionArmed ? this._selectedModel : null;
+                if (model && 'toolpathConfig' in model) this.frameModel(model, 'Top');
             }
         );
     }

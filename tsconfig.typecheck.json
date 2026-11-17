@@ -1,0 +1,14 @@
+{
+    // What `npm run typecheck` checks: the app and its tests. The build (tsconfig.json) leaves the
+    // tests out; here they are in, so a test that no longer matches the types it uses fails the
+    // check instead of only failing (or silently passing) when it runs.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "noUnusedLocals": true
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": []
+}

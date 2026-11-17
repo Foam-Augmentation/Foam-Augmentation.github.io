@@ -38,8 +38,6 @@ export const PURGE_TOWER_POINT_SPACING = 0.5;
 
 /** Flat layers added on top of a curve-augmented stack. */
 export const CURVE_AUGMENT_EXTRA_FLAT_LAYERS = 3;
-/** Points within this distance (mm) of the highest model point count as the top layer. */
-export const TOP_LAYER_TOLERANCE = 0.01;
 
 /** Alpha-shape radius (mm) used to turn sampled points into printable regions. */
 export const POINT_CLOUD_ALPHA = 5;

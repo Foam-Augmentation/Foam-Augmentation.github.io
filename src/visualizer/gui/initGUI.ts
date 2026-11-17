@@ -6,7 +6,7 @@ import { exportPresetToFile, importPresetFromFile } from './presetManager';
 import { addExtrudersFolder, refreshExtruderFolders } from './extruderSettings';
 import { refreshModelControls, watchPrusaSlicerAvailability } from './refreshModelGUIList';
 import { addPrinterProfileControl, refreshProfileControls } from './profileControls';
-import { addButton, addFolderWithTip, addParam, folderTitleElement, initTooltips, setTip } from './guiHelpers';
+import { addButton, addFolderWithTip, addParam, folderTitleElement, initTooltips } from './guiHelpers';
 import { SETTING_SPECS, SettingKey } from './paramSpecs';
 
 /**
@@ -119,12 +119,18 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
       if (extrudersFolder) {
         refreshExtruderFolders(visualizer, extrudersFolder);
       }
+      // The profile dropdowns first: their choices have to include the preset's profile names
+      // before anything shows them (see profileControls.ts on why a name must never reach a
+      // dropdown that does not list it).
+      refreshProfileControls(visualizer);
       gui.controllersRecursive().forEach(controller => {
         controller.updateDisplay();
       });
       refreshModelControls(visualizer);
       refreshProfileControls(visualizer);
-      visualizer.invalidatePlateSlice();
+      // A preset changes what every toolpath is made from: the plate slice is out of date, and
+      // each augmentation's area is sampled and previewed again.
+      visualizer.scheduleToolpathRefresh();
 
       const titleElement = folderTitleElement(presetFolder);
       if (titleElement) {
@@ -156,7 +162,8 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
     'Selection Settings',
     'How drawing on the canvas selects part of a model, once “Select Foam Area” or “Select Sensing Area” is pressed.'
   );
-  addSettings(selectionFolder, ['toolMode', 'selectionMode', 'selectModel', 'liveUpdate', 'selectWireframe']);
+  // 'selectWireframe' has a spec, so presets that carry it still load, but nothing reads it.
+  addSettings(selectionFolder, ['toolMode', 'selectionMode', 'selectModel', 'liveUpdate']);
   selectionFolder.close();
 
   const printerFolder = addFolderWithTip(

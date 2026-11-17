@@ -161,6 +161,13 @@ describe('buildPrusaConfig', () => {
         });
     });
 
+    it('blanks the post-processing script, so no profile can make PrusaSlicer run a program', () => {
+        const config = buildPrusaConfig(new Printer(), DEFAULT_REGULAR_CONFIG);
+        expect(config.post_process).toBe('');
+        // These settings are loaded last, so the empty value wins over any profile before them.
+        expect(formatPrusaIni(config).split('\n')).toContain('post_process = ');
+    });
+
     it('rejects an extruder that does not exist', () => {
         expect(() => buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, extruder: 9 })).toThrow(/Extruder 9/);
     });
@@ -208,9 +215,24 @@ describe('buildPrusaConfig', () => {
         expect(buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, infillDensity: 99, infillPattern: 'gyroid' }).fill_pattern).toBe('gyroid');
     });
 
+    /** Every PrusaSlicer setting that is the speed of some kind of extrusion. */
+    const PRINT_SPEED_KEYS = [
+        'perimeter_speed', 'small_perimeter_speed', 'external_perimeter_speed', 'infill_speed', 'solid_infill_speed',
+        'top_solid_infill_speed', 'support_material_speed', 'support_material_interface_speed', 'bridge_speed',
+        'gap_fill_speed', 'first_layer_speed',
+    ];
+
+    it('prints every kind of line at Print Speed, bridges and supports included', () => {
+        // 600 mm/min is 10 mm/s; PrusaSlicer's own defaults for bridges and supports are 60 mm/s.
+        const config = buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, printSpeed: 600, firstLayerSpeed: 300 });
+        for (const key of PRINT_SPEED_KEYS) {
+            expect(config[key]).toBe(key === 'first_layer_speed' ? '5.00' : '10.00');
+        }
+    });
+
     it('leaves every speed to the profile when the part uses the profile speeds', () => {
         const config = buildPrusaConfig(new Printer(), { ...DEFAULT_REGULAR_CONFIG, useProfileSpeeds: true });
-        for (const key of ['perimeter_speed', 'infill_speed', 'solid_infill_speed', 'first_layer_speed']) {
+        for (const key of PRINT_SPEED_KEYS) {
             expect(config).not.toHaveProperty(key);
         }
         // The travel speed is the machine's, not a print speed: it stays.

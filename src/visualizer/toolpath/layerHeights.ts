@@ -19,6 +19,13 @@ export interface ModelContext {
      * i.e. before any ZOffset or surface draping is applied.
      */
     verticalGradient?: { minZ: number; maxZ: number };
+    /**
+     * The slice heights the line spacing ramps over, from deltaL at `minZ` to deltaLEnd at `maxZ`.
+     * Leave it out when the slices are at the heights of the mesh itself (a foam print), where
+     * `minZ` and `maxZ` above are the range. An augmentation's slices are a stack that starts at 0,
+     * whatever the height of the object under it, so it names its own range.
+     */
+    spacingRamp?: { minZ: number; maxZ: number };
 }
 
 /**
@@ -164,6 +171,27 @@ function getPlaneHeightAtXY(
 }
 
 /**
+ * The height of a line between two surface points at the place nearest to a point as seen from
+ * above. Only x and y of the point are used: its own z is the height of the slice it is in, far
+ * from the surface, and must not pull the answer towards either end of the line.
+ *
+ * @param a One end of the line.
+ * @param b The other end.
+ * @param point The point to find the height under.
+ * @returns {number} The z of the line there, between the z of its two ends.
+ */
+function heightOnLineAtXY(a: THREE.Vector3, b: THREE.Vector3, point: THREE.Vector3): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (!(lengthSquared > 0)) {
+        return a.z;
+    }
+    const t = Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared));
+    return a.z + t * (b.z - a.z);
+}
+
+/**
  * Given a sorted matrix of points making up a surface, finds the
  * height of a point if projected downwards onto that matrix.
  *
@@ -177,7 +205,6 @@ export function getPointHeight(
     point: THREE.Vector3
 ): number {
     const nearestPoints = findNearestPoints(matrix, point, 3);
-    const closest = new THREE.Vector3();
 
     if (nearestPoints.length >= 3) {
         const height = getPlaneHeightAtXY(nearestPoints[0], nearestPoints[1], nearestPoints[2], point.x, point.y);
@@ -185,11 +212,9 @@ export function getPointHeight(
             return height;
         }
         // The three points are (nearly) on one line, so fall back to the nearest point of that line.
-        new THREE.Line3(nearestPoints[0], nearestPoints[2]).closestPointToPoint(point, true, closest);
-        return closest.z;
+        return heightOnLineAtXY(nearestPoints[0], nearestPoints[2], point);
     } else if (nearestPoints.length >= 2) {
-        new THREE.Line3(nearestPoints[0], nearestPoints[1]).closestPointToPoint(point, true, closest);
-        return closest.z;
+        return heightOnLineAtXY(nearestPoints[0], nearestPoints[1], point);
     } else if (nearestPoints.length >= 1) {
         return nearestPoints[0].z;
     }
@@ -246,9 +271,11 @@ export function applyLayerHeight(
         : surface.modelMaxZ + stack.flatLayerZOffset;
 
     // Split the gap between the two surfaces evenly over the stack, so each layer is a little
-    // flatter than the one below it and the last one lands on the flat plane.
+    // flatter than the one below it and the last one lands on the flat plane. Where the flat plane
+    // is below the surface there is no gap to split: a layer never steps down, which would drive
+    // the nozzle into the object the foam is printed on.
     const incrementPerLayer = totalLayers > 1
-        ? (flatTopHeight - curvedBottomHeight) / (totalLayers - 1)
+        ? Math.max(0, (flatTopHeight - curvedBottomHeight) / (totalLayers - 1))
         : 0;
     const layerNumber = Math.round(localPosition.z / stack.deltaZ);
 

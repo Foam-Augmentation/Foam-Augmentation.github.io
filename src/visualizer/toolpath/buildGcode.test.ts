@@ -348,3 +348,119 @@ describe('first-layer bounds in the start G-code', () => {
         expect(gcode).toContain('M555 X60 Y50 W40 H40');
     });
 });
+
+describe('moves that must not cut across the bed', () => {
+    it('lifts straight up before it crosses the bed to present it for a pause', () => {
+        const printer = new Printer();
+        const gcode = buildPrintGcode(printer, [[
+            travel(280, 130, 0.1, { extruder: 0 }),
+            { point: new THREE.Vector3(290, 130, 0.1), regularSegment: true, role: 'boundary' },
+            travel(0, printer.machine_depth_y, 90, { pause: true, role: 'approach' }),
+            travel(100, 50, 90, { role: 'approach' }),
+            foam(110, 50, 82, 0),
+        ]]);
+        // Progress lines (M73) are added between moves; they are not part of the motion.
+        const lines = gcode.split('\n').filter(line => !line.startsWith('M73'));
+        const present = lines.findIndex(line => line.includes('present bed for pause'));
+        expect(present).toBeGreaterThan(0);
+        // The move before it only changes Z, and both are at or above the pause point's height.
+        expect(lines[present - 1]).toMatch(/^G0 Z90\.0000 F\d+ ; lift clear/);
+        expect(lines[present]).toMatch(new RegExp(`^G0 X0 Y${printer.machine_depth_y} Z90\\.0000 `));
+        expect(lines[present + 1]).toMatch(/^M0/);
+    });
+
+    it('never presents the bed lower than 50 mm, nor above the machine', () => {
+        const printer = new Printer();
+        const low = buildPrintGcode(printer, [[
+            travel(100, 100, 0.1, { extruder: 0 }),
+            travel(0, printer.machine_depth_y, 20, { pause: true, role: 'approach' }),
+            foam(110, 50, 12, 0),
+        ]]);
+        expect(low).toMatch(/G0 Z50\.0000 F\d+ ; lift clear/);
+
+        printer.machine_height = 40;
+        const short = buildPrintGcode(printer, [[
+            travel(100, 100, 0.1, { extruder: 0 }),
+            travel(0, printer.machine_depth_y, 20, { pause: true, role: 'approach' }),
+            foam(110, 50, 12, 0),
+        ]]);
+        expect(short).toMatch(/G0 Z40\.0000 F\d+ ; lift clear/);
+    });
+});
+
+describe('start G-code and feed rates', () => {
+    it('selects relative extrusion before the first extruder move, on both printers', () => {
+        for (const multipleToolheads of [true, false]) {
+            const printer = new Printer();
+            printer.multipleToolheads = multipleToolheads;
+            const lines = buildPrintGcode(printer, [modelToolpath(0, 100, 10)]).split('\n');
+            const relative = lines.findIndex(line => /^M83\b/.test(line));
+            const firstExtruderMove = lines.findIndex(line => /^G1\b.*\bE-?[\d.]/.test(line));
+            expect(relative).toBeGreaterThanOrEqual(0);
+            expect(firstExtruderMove).toBeGreaterThan(relative);
+        }
+    });
+
+    it('writes the head speed of a foam move with decimals, never as F0', () => {
+        const printer = new Printer();
+        const slow = [travel(100, 50, 12, { extruder: 0 }), foam(110, 50, 12, 0, { edot: 0.1 })];
+        const gcode = buildPrintGcode(printer, [slow]);
+        const move = gcode.split('\n').find(line => line.startsWith('G1 X110'))!;
+        const feed = Number(/ F([\d.]+)/.exec(move)![1]);
+        const expected = printer.foamMotion(0.15, 0.1, printer.extruders[0]).headSpeed;
+        expect(feed).toBeGreaterThan(0);
+        expect(feed).toBeCloseTo(expected, 3);
+        expect(gcode).not.toMatch(/ F0\d/);
+    });
+
+    it('refuses a foam move too slow to print instead of writing a feed rate of zero', () => {
+        const stalled = [travel(100, 50, 12, { extruder: 0 }), foam(110, 50, 12, 0, { edot: 1e-6 })];
+        expect(() => buildPrintGcode(new Printer(), [stalled])).toThrow(/too slow to print/);
+    });
+});
+
+describe('part cooling fan around the moves of an outside slicer', () => {
+    /** A PrusaSlicer move: it carries its own extrusion. */
+    const outside = (x: number, extra: Partial<PathPoint> = {}): PathPoint =>
+        ({ point: new THREE.Vector3(x, 50, 0.2), regularSegment: true, extrusion: 0.5, speed: 1800, ...extra });
+
+    it('turns the fan off before the app extrudes, and back on for the next move of the slicer', () => {
+        const gcode = buildPrintGcode(new Printer(), [[
+            travel(100, 50, 0.2, { extruder: 0 }),
+            outside(110, { preGcode: ['M106 S255'] }),
+            outside(120),
+            travel(120, 50, 30),
+            foam(130, 50, 12, 0),
+            foam(140, 50, 12, 0),
+            travel(140, 50, 30),
+            outside(150),
+        ]]);
+        const lines = gcode.split('\n');
+        const fanOn = lines.indexOf('M106 S255');
+        const fanOff = lines.findIndex((line, i) => i > fanOn && line.startsWith('M107'));
+        const firstFoam = lines.findIndex(line => line.startsWith('G1 X130'));
+        const fanBack = lines.lastIndexOf('M106 S255');
+        const lastOutside = lines.findIndex(line => line.startsWith('G1 X150'));
+
+        expect(fanOn).toBeGreaterThan(0);
+        expect(fanOff).toBeGreaterThan(fanOn);
+        expect(fanOff).toBeLessThan(firstFoam);
+        // Off once, not before every foam move.
+        expect(lines.slice(fanOff + 1, lastOutside).filter(line => line.startsWith('M107'))).toHaveLength(0);
+        expect(fanBack).toBeGreaterThan(firstFoam);
+        expect(fanBack).toBeLessThan(lastOutside);
+    });
+
+    it('leaves the fan alone when the slicer had it off', () => {
+        const gcode = buildPrintGcode(new Printer(), [[
+            travel(100, 50, 0.2, { extruder: 0 }),
+            outside(110, { preGcode: ['M106 S255'] }),
+            outside(120, { preGcode: ['M107'] }),
+            travel(120, 50, 30),
+            foam(130, 50, 12, 0),
+        ]]);
+        const body = gcode.slice(gcode.indexOf('G1 X110'));
+        expect(count(body.slice(0, body.indexOf('G1 X130')), 'M107')).toBe(1);
+        expect(body).not.toContain('part cooling fan off for the app');
+    });
+});

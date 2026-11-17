@@ -83,6 +83,9 @@ export function addSensingIntersectionGeo(
   let isDragging = false;
   let movedWhileDragging = false;
   const onPointerDown = (event: PointerEvent) => {
+    // A sensing box that is hidden (its object is no longer an augmentation) cannot be grabbed:
+    // a raycast hits invisible objects too.
+    if (!sensingObj.visible || modelObj.kind !== 'augment') return;
     const rect = canvas.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,

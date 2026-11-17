@@ -129,6 +129,9 @@ export function parseValue(spec: ParamSpec, raw: string): { value: PresetValue }
     if (text.length > spec.maxLength) return { error: `expected at most ${spec.maxLength} characters` };
     // eslint-disable-next-line no-control-regex
     if (/[\u0000-\u001f]/.test(text)) return { error: 'expected text without control characters' };
+    // A profile name is shown in a dropdown, which writes its text as HTML (see profileControls.ts).
+    // No Prusa profile name has an angle bracket; a preset that has one is not naming a profile.
+    if (/[<>]/.test(text)) return { error: 'expected text without < or >' };
     return { value: text };
   }
 

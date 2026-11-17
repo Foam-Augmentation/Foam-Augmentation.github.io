@@ -11,6 +11,8 @@ import {
     visualizeToolpath,
 } from './generateFoamToolpath';
 import { sliceRegularParts, type RegularSlicerUsed } from './prusaSlicer';
+import { sampleSelectedMesh } from './sampleSelectedMesh';
+import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
 import { disposeObject3D } from '../gui/modelActions';
 import { plateFingerprint, summarizePlate } from './plateSlice';
 import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
@@ -51,6 +53,14 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
         // The highest point of everything printed so far, which later models have to stay clear of.
         let highestZ = -Infinity;
         for (const model of models) {
+            // The sample points carry the object's rotation, scale and grid size as they were
+            // when the area was last sampled. An edit made a moment ago is only sampled by a
+            // refresh that waits for typing to stop, so the area is sampled again here rather
+            // than trusting that the refresh has run.
+            if (model.selectedRegularFoamMesh) {
+                updateSelectedMeshBoundingBox(visualizer, model);
+                sampleSelectedMesh(visualizer, model);
+            }
             const toolpath = generateAugmentFoamToolpath(visualizer, model, {
                 purgeTowerStartHeight: purgeTowerHeight,
                 minimumSafeZ: highestZ + TRAVEL_CLEARANCE,
@@ -67,6 +77,10 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
             }
             toolpaths.push(toolpath);
         }
+        // Every preview was just drawn again from the current settings: a refresh still waiting
+        // has nothing left to do, and the preview bar must let go of the previews it replaced.
+        visualizer.markToolpathsFresh(models);
+        visualizer.updateActionStates();
 
         if (!toolpaths.length) {
             notify('No G-code was saved: none of the selections has a printable area.', 'warning');

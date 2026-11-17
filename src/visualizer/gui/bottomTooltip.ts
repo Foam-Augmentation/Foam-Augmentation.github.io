@@ -46,6 +46,9 @@ export function selectionHintText(selection: NonNullable<ModeHintState['selectio
     `Right-drag rotates the view; areas are best drawn looking straight down.`;
 }
 
+/** What the hint's "Back to Top View" button does; the latest one given to updateModeHints. */
+let topViewHandler: () => void = () => {};
+
 /**
  * Shows or hides the selection hint and the Esc bar to match the given state.
  *
@@ -54,6 +57,7 @@ export function selectionHintText(selection: NonNullable<ModeHintState['selectio
  */
 export function updateModeHints(state: ModeHintState, onTopView: () => void): void {
   if (typeof document === 'undefined') return;
+  topViewHandler = onTopView;
 
   const escDiv = document.getElementById('escDiv');
   if (escDiv) {
@@ -81,7 +85,8 @@ export function updateModeHints(state: ModeHintState, onTopView: () => void): vo
       topViewButton.type = 'button';
       topViewButton.className = 'selection-hint-button';
       topViewButton.textContent = 'Back to Top View';
-      topViewButton.addEventListener('click', onTopView);
+      // The button is built once and kept; it must not hold on to the handler of that first call.
+      topViewButton.addEventListener('click', () => topViewHandler());
       hint.appendChild(topViewButton);
     }
     textSpan.textContent = selectionHintText(state.selection);

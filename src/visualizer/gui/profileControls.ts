@@ -12,7 +12,7 @@ import type { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min
 import type Visualizer from '../Visualizer';
 import type { EverydayModel } from '../types/modelTypes';
 import { printerMachine, profileChoices, type VendorBundle } from '../toolpath/prusaProfiles';
-import { loadVendorBundle } from '../toolpath/prusaSlicer';
+import { forgetVendorBundle, loadVendorBundle } from '../toolpath/prusaSlicer';
 import { setTip } from './guiHelpers';
 import { notify } from './notify';
 import { REGULAR_SPECS, SETTING_SPECS } from './paramSpecs';
@@ -166,6 +166,18 @@ export function addObjectProfileControls(folder: GUI, model: EverydayModel, visu
  */
 export function setProfileControlsAvailable(visualizer: Visualizer, available: boolean): void {
   state.available = available;
+  refreshProfileControls(visualizer);
+}
+
+/**
+ * Reads PrusaSlicer's profiles again and brings the dropdowns up to date. For when another
+ * PrusaSlicer was located: the choices are the ones of the install that is used now.
+ *
+ * @param visualizer - The Visualizer instance.
+ */
+export function reloadProfileControls(visualizer: Visualizer): void {
+  forgetVendorBundle();
+  state.bundle = null;
   refreshProfileControls(visualizer);
 }
 

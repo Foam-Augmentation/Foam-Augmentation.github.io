@@ -342,6 +342,24 @@ describe('text settings', () => {
     expect(preset.regular.filamentProfile).toBe('');
   });
 
+  it('keeps a profile name with an ampersand, as Prusa has them', () => {
+    const preset = parsePreset('presetVersion 3\nprusaPrinterProfile Original Prusa i3 MK3S & MK3S+\n');
+    expect(preset.errors).toEqual([]);
+    expect(preset.settings.prusaPrinterProfile).toBe('Original Prusa i3 MK3S & MK3S+');
+  });
+
+  it('refuses a profile name that reads as markup', () => {
+    // The dropdowns write their text as HTML; a preset is a file from somewhere else.
+    for (const line of [
+      'prusaPrinterProfile <img src=x onerror=alert(1)>',
+      'regular.printProfile <b>bold</b>',
+      'regular.filamentProfile a > b',
+    ]) {
+      const preset = parsePreset(`presetVersion 3\n${line}\n`);
+      expect(preset.errors[0]).toMatch(/without < or >/);
+    }
+  });
+
   it('still says a number with nothing after its key has no value', () => {
     expect(parsePreset('bedTemp').errors[0]).toMatch(/has no value/);
   });

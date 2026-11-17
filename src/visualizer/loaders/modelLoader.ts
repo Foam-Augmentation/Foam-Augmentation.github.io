@@ -222,6 +222,11 @@ export interface NewModelPlacement {
     near?: { x: number, y: number };
     /** Called when there is no free space for it, instead of warning. */
     onNoSpace?: () => void;
+    /**
+     * False to skip looking for free space and treat the bed as full, when the caller already
+     * knows there is none (an earlier copy of the same object found none).
+     */
+    search?: boolean;
 }
 
 /**
@@ -293,7 +298,7 @@ export function addModelFromGeometry(
             dropMeshToBed(mesh);
         }
         // Clear of every object already on the plate, where there is room.
-        if (type === 'everyday' && !placeNewMesh(visualizer, mesh, kind, placement.near)) {
+        if (type === 'everyday' && !(placement.search !== false && placeNewMesh(visualizer, mesh, kind, placement.near))) {
             if (placement.onNoSpace) placement.onNoSpace();
             else notify(`There is no free space on the bed for “${name}”, so it overlaps another object. Move it or press Arrange.`, 'warning');
         }
@@ -449,13 +454,18 @@ export const MAX_COPIES = 50;
 export function duplicateModel(visualizer: Visualizer, source: EverydayModel, count = 1): EverydayModel[] {
     const copies: EverydayModel[] = [];
     let unplaced = 0;
+    // Once a copy finds no free space, the ones after it will not either: they are the same
+    // shape, and the plate has only filled up. Searching the whole bed again for each of them
+    // froze the page for as long as the copies took.
+    let bedFull = false;
     for (let i = 0; i < Math.min(Math.max(1, Math.floor(count)), MAX_COPIES); i++) {
         const names = visualizer.everydayModelList.map(model => model.name);
         // The copy has its own geometry: deleting one of the two disposes only its own.
         const copy = addModelFromGeometry(visualizer, source.mesh.geometry.clone(), copyName(names, source.name), 'everyday', source.kind, {
             orientation: { quaternion: source.mesh.quaternion, scale: source.mesh.scale },
             near: { x: source.mesh.position.x, y: source.mesh.position.y },
-            onNoSpace: () => { unplaced++; },
+            search: !bedFull,
+            onNoSpace: () => { unplaced++; bedFull = true; },
         }) as EverydayModel;
         // Into the objects the copy's controls are bound to, not replacing them.
         Object.assign(copy.regularConfig, structuredClone(source.regularConfig));
@@ -464,6 +474,19 @@ export function duplicateModel(visualizer: Visualizer, source: EverydayModel, co
         copy.initialOffset = source.initialOffset;
         // A gradient is never changed in place (loading an SVG replaces it), so the two can share it.
         copy.gradient = source.gradient;
+        // The same goes for the sampled augment surface. Without it (and the bump model below) the
+        // copy would keep Curved Augmentation and Generate Bumps switched on with nothing to
+        // follow, and print something else than the object it was copied from.
+        copy.augmentSamplePoints = source.augmentSamplePoints;
+        if (source.bumpMesh) {
+            // Its own geometry and material: deleting either object disposes only its own.
+            const material = source.bumpMesh.material;
+            copy.bumpMesh = new THREE.Mesh(
+                source.bumpMesh.geometry.clone(),
+                Array.isArray(material) ? material.map(m => m.clone()) : material.clone(),
+            );
+            copy.bumpMesh.scale.copy(source.bumpMesh.scale);
+        }
         copies.push(copy);
     }
     refreshModelControls(visualizer);
@@ -668,8 +691,13 @@ export function importAugmentSTL(
             return;
         }
 
-        modelObj.geometry.computeBoundingBox();
-        const modelBbox = modelObj.geometry.boundingBox!;
+        // The size of the model as it stands on the bed, rotated and scaled: that is the frame the
+        // surface is looked up in when the layers are stacked (see layerHeights.ts).
+        const placed = modelObj.geometry.clone().applyMatrix4(
+            new THREE.Matrix4().compose(new THREE.Vector3(), modelObj.mesh.quaternion, modelObj.mesh.scale));
+        placed.computeBoundingBox();
+        const modelBbox = placed.boundingBox!;
+        placed.dispose();
 
         const scale = Math.max((modelBbox.max.x - modelBbox.min.x) / sizeX,
                                (modelBbox.max.y - modelBbox.min.y) / sizeY);

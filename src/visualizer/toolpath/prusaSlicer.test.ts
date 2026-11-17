@@ -158,3 +158,25 @@ describe('Prusa profiles in the slicing request', () => {
         expect(bridge.slice.mock.calls[0][0].profileIni).toBeUndefined();
     });
 });
+
+describe('tool change between two groups', () => {
+    it('names the tool of the next group on the crossing above the parts, not on its first printing point', async () => {
+        const bridge = fakeBridge(true);
+        const result = await sliceRegularParts(
+            new Printer(),
+            [cube(40), cube(80, { ...DEFAULT_REGULAR_CONFIG, extruder: 1 })],
+            bridge,
+        );
+        // The emitter changes tool at the first point that names another extruder. A tool change
+        // leaves the head at the dock, so that point has to be the one high above the parts.
+        const change = result.toolpath.findIndex(p => p.extruder === 1);
+        const highest = Math.max(...result.toolpath.slice(0, change).filter(p => p.role !== 'approach').map(p => p.point.z));
+        expect(result.toolpath[change].role).toBe('approach');
+        expect(result.toolpath[change].travel).toBe(true);
+        expect(result.toolpath[change].point.z).toBeGreaterThan(highest);
+        // ... and it is straight above where the group starts printing.
+        const first = result.toolpath[change + 1].point;
+        expect(result.toolpath[change].point.x).toBe(first.x);
+        expect(result.toolpath[change].point.y).toBe(first.y);
+    });
+});

@@ -77,6 +77,37 @@ export interface EmitterState {
   motionOwner?: 'app' | 'outside';
   /** For each tool, the motion settings the outside slicer last set for it. */
   outsideMotion?: Map<number, OutsideMotion>;
+  /** The part cooling fan line (M106 or M107) the outside slicer wrote last, if it wrote one. */
+  outsideFan?: string;
+  /** True while the part cooling fan runs because an outside slicer's line turned it on. */
+  fanOn?: boolean;
+}
+
+/**
+ * The last part cooling fan line (M106 or M107) among lines an outside slicer wrote.
+ *
+ * @param lines - The slicer's lines, in order.
+ * @returns The line, or undefined if none of them sets the fan.
+ */
+function lastFanLine(lines: string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const command = lines[i].split(';')[0].trim().toUpperCase().split(/\s+/)[0];
+    if (command === 'M106' || command === 'M107') return lines[i];
+  }
+  return undefined;
+}
+
+/**
+ * Whether a fan line leaves the part cooling fan running. `M106` without a speed is full speed.
+ *
+ * @param line - An M106 or M107 line.
+ * @returns True for an M106 whose speed is not zero.
+ */
+function fanRuns(line: string): boolean {
+  const [command, ...parameters] = line.split(';')[0].trim().toUpperCase().split(/\s+/);
+  if (command !== 'M106') return false;
+  const speed = parameters.find(parameter => parameter[0] === 'S');
+  return speed === undefined || Number(speed.slice(1)) > 0;
 }
 
 /**
@@ -117,6 +148,8 @@ const APP_JERK = "M205 X8 Y8";
 
 /** Temperature (°C) everything is held at during a test sweep, i.e. cold. */
 const TEST_SWEEP_TEMPERATURE = 20;
+/** The lowest height (mm) the head rises to before it crosses the bed to present it for a pause. */
+const PAUSE_PRESENT_Z = 50;
 /** Fraction of the regular flow used for an ironing pass. */
 const IRONING_FLOW = 0.2;
 /** Head speed (mm/min) of an ironing pass. */
@@ -461,28 +494,6 @@ export default class Printer {
   }
 
   /**
-   * First-layer XY bounds of already generated G-code, from its extruding G0/G1 moves.
-   *
-   * @param {string} gcode The G-code body.
-   * @returns {FirstLayerBounds | undefined} The bounds, or undefined if nothing is extruded.
-   */
-  public boundsFromGcode(gcode: string): FirstLayerBounds | undefined {
-    const pts: { x: number; y: number; z: number }[] = [];
-    let x = 0, y = 0, z = 0;
-    for (const raw of gcode.split("\n")) {
-      const line = raw.split(";")[0];
-      if (!/^G[01]\s/.test(line)) continue;
-      const mx = /X(-?[\d.]+)/.exec(line), my = /Y(-?[\d.]+)/.exec(line);
-      const mz = /Z(-?[\d.]+)/.exec(line), me = /E(-?[\d.]+)/.exec(line);
-      if (mx) x = +mx[1];
-      if (my) y = +my[1];
-      if (mz) z = +mz[1];
-      if (me && +me[1] > 0 && (mx || my)) pts.push({ x, y, z });
-    }
-    return this.firstLayerBounds(pts);
-  }
-
-  /**
    * Builds the starting G-code to initialize printer settings.
    *
    * @param {number} firstExtruder - The index of the extruder the print starts with.
@@ -631,10 +642,10 @@ ${this.build_tool_mapping()}
 
 G21 ; set units to millimeters
 G90 ; use absolute coordinates
+M83  ; extruder relative mode, before the first extruder move: the setup below retracts
 ${m555}
 ${setup}
 
-M83  ; extruder relative mode
 ${this.pressureAdvanceGcode().join("\n")}
 
 G0 Z0.200 F2400.000
@@ -798,7 +809,12 @@ ${APP_ACCELERATION}
     // Jerry changed this to be multiplied by S instead of multiplied by (extrusion_speed_when_foam / printHead_speed_when_foam))
     const extrudedAmount = this.norm(p1, p0) * S;
 
-    return `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${extrudedAmount.toFixed(6)} F0${Math.round(F)}`;
+    // Three decimals, not a whole number: at a low feed rate a rounded head speed shifts V* by
+    // several percent, and below 0.5 mm/min it became F0, which the firmware ignores.
+    if (!(F >= 0.001)) {
+      throw new Error(`A foam move's head speed works out to ${F} mm/min, which is too slow to print. Raise the extrusion rate (Edot) or V*.`);
+    }
+    return `G1 X${p1.x.toFixed(6)} Y${p1.y.toFixed(6)} Z${p1.z.toFixed(6)} E${extrudedAmount.toFixed(6)} F${F.toFixed(3)}`;
   }
 
   /**
@@ -971,9 +987,16 @@ ${APP_ACCELERATION}
       }
 
       if (point.pause) {
+        // Straight up first, and only then across the bed: one diagonal move from printing height
+        // would cut through whatever already stands between the head and the back corner.
+        const presentZ = Math.min(this.machine_height, Math.max(PAUSE_PRESENT_Z, lastTarget.z, currentPoint.z));
+        const travelSpeed = this.requireExtruder(extruder).printHead_speed_when_free_move;
         body_gcode.push(
-          `\nG0 X${0} Y${this.machine_depth_y} Z50 ; present bed for pause\nM0; pause and wait for user to resume\n`
-        )
+          `\nG0 Z${presentZ.toFixed(4)} F${travelSpeed} ; lift clear before crossing the bed`,
+          `G0 X0 Y${this.machine_depth_y} Z${presentZ.toFixed(4)} F${travelSpeed} ; present bed for pause`,
+          "M0; pause and wait for user to resume\n"
+        );
+        lastTarget = new THREE.Vector3(0, this.machine_depth_y, presentZ);
       }
 
       // An outside slicer's move (it carries its own extrusion) that comes after the app's own,
@@ -987,6 +1010,13 @@ ${APP_ACCELERATION}
         }
       }
 
+      // The same for the part cooling fan: the app turned it off for its own moves (below), so the
+      // outside slicer's moves get it back the way that slicer last set it.
+      if (point.extrusion !== undefined && state.outsideFan && fanRuns(state.outsideFan) && !state.fanOn && !this.testSweep) {
+        body_gcode.push("; part cooling fan back on for PrusaSlicer's moves", state.outsideFan);
+        state.fanOn = true;
+      }
+
       if (point.preGcode?.length && !this.testSweep) {
         body_gcode.push(...point.preGcode);
         state.outsideMotion ??= new Map();
@@ -994,6 +1024,11 @@ ${APP_ACCELERATION}
         state.outsideMotion.set(extruder, memory);
         if (rememberMotion(memory, point.preGcode)) {
           state.motionOwner = 'outside';
+        }
+        const fan = lastFanLine(point.preGcode);
+        if (fan !== undefined) {
+          state.outsideFan = fan;
+          state.fanOn = fanRuns(fan);
         }
       }
 
@@ -1003,6 +1038,12 @@ ${APP_ACCELERATION}
       if (ownExtrusion && state.motionOwner === 'outside') {
         body_gcode.push(...this.appMotionGcode());
         state.motionOwner = 'app';
+      }
+      // ... and without part cooling, as the start G-code leaves it: foam is laid with the fan
+      // off, and an outside slicer's last M107 comes after its last move, so it never gets here.
+      if (ownExtrusion && state.fanOn) {
+        body_gcode.push("M107 ; part cooling fan off for the app's own moves");
+        state.fanOn = false;
       }
 
       if (point.extrusion !== undefined && (point.regularSegment || point.travel) && !this.testSweep) {

@@ -3,16 +3,15 @@ import { MeshBVH } from 'three-mesh-bvh';
 import { GUI, Controller } from 'three/examples/jsm/libs/lil-gui.module.min.js';
 import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
-import { visualize_All_Layers } from '../toolpath/generateFoamToolpath';
 import { addSensingIntersectionGeo } from '../toolpath/addSensingIntersectionGeo';
 import { MAX_COPIES, duplicateModel, importAugmentSTL, importBumpMesh, importSvgGradient } from '../loaders/modelLoader';
 import { AnyModel, disposeModel, syncAuxTransforms } from './modelActions';
 import { addButton, addFolderWithTip, addParam, createDeleteButton, folderTitleElement, hideTooltips, setTip } from './guiHelpers';
 import { INITIAL_OFFSET_SPEC, INITIAL_SPECS, KIND_SPEC, MODEL_SPECS, PRUSA_ONLY_REGULAR_KEYS, REGULAR_SPECS, InitialKey, ModelKey, RegularKey } from './paramSpecs';
 import { notify } from './notify';
-import { isPrusaSlicerAvailable } from '../toolpath/prusaSlicer';
+import { getPrusaSlicerBridge, isPrusaSlicerAvailable } from '../toolpath/prusaSlicer';
 import { dropMeshToBed, placementChanged } from './placement';
-import { addObjectProfileControls, setProfileControlsAvailable } from './profileControls';
+import { addObjectProfileControls, reloadProfileControls, setProfileControlsAvailable } from './profileControls';
 
 // Extend BufferGeometry to include boundsTree property
 declare module 'three' {
@@ -32,6 +31,13 @@ const SENSING_BOX_SIZE = 20;
  * watchPrusaSlicerAvailability). While false, the PrusaSlicer-only regular settings are greyed out.
  */
 let prusaSlicerAvailable = false;
+
+/**
+ * Controls in an object's folder that change nothing about the object: which quantity the
+ * transform fields edit, and how many copies "Add Copies" will make. Editing one must not mark
+ * the plate slice out of date or regenerate a toolpath.
+ */
+const viewOnlyControllers = new WeakSet<object>();
 
 /** Per model: re-applies which of its regular-print controls are enabled. */
 const regularControlUpdaters = new WeakMap<EverydayModel, () => void>();
@@ -140,6 +146,7 @@ function addTransformFolder(
         .add(modelObj, 'transformType', { 'Move (mm)': 'move', 'Rotate (°)': 'rotate', 'Scale (Factor)': 'scale' })
         .name('Mode');
     setTip(modeController.domElement, 'What the X, Y and Z fields and the on-canvas gizmo change: position, rotation or scale.');
+    viewOnlyControllers.add(modeController);
     modeController.onChange((value: 'move' | 'rotate' | 'scale') => {
         showCurrentValues();
         // Only switch the gizmo if it is on this model; another model keeps its own mode.
@@ -182,6 +189,7 @@ function addTransformFolder(
 
         const copies = { count: 1 };
         const countController = transformFolder.add(copies, 'count', 1, MAX_COPIES, 1).name('Copies');
+        viewOnlyControllers.add(countController);
         setTip(countController.domElement, 'How many copies Add Copies makes.');
         addButton(transformFolder, 'Add Copies', 'Add copies of this object with the same type, orientation and settings, in the free space nearest it (one copy: the ⧉ button or Ctrl+D). A copy of an Augmentation starts without a foam area.', () => {
             duplicateModel(visualizer, modelObj, copies.count);
@@ -303,8 +311,6 @@ export function addParamsFolder_EverydayModel(
     modelObj: EverydayModel,
     visualizer: Visualizer
 ): void {
-    const redrawLayers = (): void => visualize_All_Layers(visualizer, modelObj);
-
     // ----- foam parameters -----
     const paramsFolder = addFolderWithTip(
         modelGUIitem,
@@ -315,8 +321,7 @@ export function addParamsFolder_EverydayModel(
 
     const foamKeys: ModelKey[] = ['deltaZ', 'deltaL', 'deltaLEnd', 'gridSize', 'vStar', 'vStarEnd', 'hStar', 'hStarEnd', 'edot'];
     foamKeys.forEach(key => {
-        const controller = addParam(paramsFolder, modelObj.toolpathConfig, key, MODEL_SPECS[key]);
-        if (key === 'deltaZ') controller.onChange(redrawLayers);
+        addParam(paramsFolder, modelObj.toolpathConfig, key, MODEL_SPECS[key]);
     });
 
     // Controls that override a foam parameter, paired with a check for "differs from foam".
@@ -330,12 +335,10 @@ export function addParamsFolder_EverydayModel(
     );
     paramsFolderInitial.domElement.classList.add('params-folder-initial');
 
-    addParam(paramsFolderInitial, modelObj.initialConfig, 'initialFoamLayerCount', INITIAL_SPECS.initialFoamLayerCount)
-        .onChange(redrawLayers);
+    addParam(paramsFolderInitial, modelObj.initialConfig, 'initialFoamLayerCount', INITIAL_SPECS.initialFoamLayerCount);
     addParam(paramsFolderInitial, modelObj, 'initialOffset', INITIAL_OFFSET_SPEC);
     INITIAL_OVERRIDES.forEach(key => {
         const controller = addParam(paramsFolderInitial, modelObj.initialConfig, key, INITIAL_SPECS[key]);
-        if (key === 'deltaZ') controller.onChange(redrawLayers);
         overrides.push({ controller, differs: () => modelObj.initialConfig[key] !== modelObj.toolpathConfig[key] });
     });
 
@@ -349,7 +352,6 @@ export function addParamsFolder_EverydayModel(
 
     SENSE_TO_FOAM.forEach(([senseKey, foamKey]) => {
         const controller = addParam(paramsFolderSense, modelObj.toolpathConfig, senseKey, MODEL_SPECS[senseKey]);
-        if (senseKey === 'senseDeltaZ') controller.onChange(redrawLayers);
         overrides.push({
             controller,
             differs: () => modelObj.toolpathConfig[senseKey] !== modelObj.toolpathConfig[foamKey],
@@ -503,6 +505,13 @@ export function watchPrusaSlicerAvailability(visualizer: Visualizer): void {
     };
     void check();
     window.addEventListener('focus', () => { void check(); });
+    // The Slicer menu changed the program or the user's profile: what was sliced before was made
+    // with the old ones, and the profile choices are those of the install that is used now.
+    getPrusaSlicerBridge()?.onChanged?.(() => {
+        visualizer.invalidatePlateSlice();
+        reloadProfileControls(visualizer);
+        void check();
+    });
 }
 
 /**
@@ -608,7 +617,11 @@ function buildModelFolder(
         // The preview is drawn from the parameters and placement, so redraw it once an edit is
         // finished (slider released, value entered); otherwise it would show an older toolpath
         // than the one that gets saved.
-        modelGUIitem.onFinishChange(() => visualizer.scheduleToolpathRefresh(everydayModel));
+        modelGUIitem.onFinishChange(event => {
+            // Not for a control that leaves the object as it is (see viewOnlyControllers).
+            if (viewOnlyControllers.has(event.controller)) return;
+            visualizer.scheduleToolpathRefresh(everydayModel);
+        });
     }
 }
 

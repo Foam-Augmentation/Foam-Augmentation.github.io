@@ -10,6 +10,7 @@
 import type Visualizer from '../Visualizer';
 import type { EverydayModel } from '../types/modelTypes';
 import { duplicateModel } from '../loaders/modelLoader';
+import { isBusy } from './notify';
 import { arrangePlate } from './placement';
 
 /** Whether a key press goes to something the user is typing in. */
@@ -26,7 +27,9 @@ function isTyping(target: EventTarget | null): boolean {
 export function initShortcuts(visualizer: Visualizer): void {
   if (typeof document === 'undefined') return;
   document.addEventListener('keydown', event => {
-    if (event.altKey || event.repeat || isTyping(event.target)) return;
+    // Not while something is being sliced or generated: the result would be of a plate that has
+    // changed under it. (A slice with PrusaSlicer waits, so the keys do get through.)
+    if (event.altKey || event.repeat || isTyping(event.target) || isBusy()) return;
     const selected = visualizer.selectedModel;
     const object = selected && 'kind' in selected ? selected as EverydayModel : null;
     const key = event.key.toLowerCase();

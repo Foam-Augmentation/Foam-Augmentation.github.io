@@ -14,15 +14,12 @@ const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { isPageUrl, validateRequest } = require('./requestChecks');
 
 /** How long PrusaSlicer may run before it is stopped (ms). */
 const SLICE_TIMEOUT_MS = 5 * 60 * 1000;
 /** The most output (bytes) kept from PrusaSlicer's console, for error messages. */
 const MAX_CONSOLE_OUTPUT = 16 * 1024 * 1024;
-/** The largest STL (bytes) the page may send for one part. */
-const MAX_STL_BYTES = 512 * 1024 * 1024;
-/** The most parts one request may contain. */
-const MAX_PARTS = 256;
 /** The largest vendor profile bundle (bytes) read from the PrusaSlicer install. */
 const MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 
@@ -126,49 +123,33 @@ function getStatus() {
 
 // --- slicing ----------------------------------------------------------------------------------
 
-/** Checks a request from the page. The page is our own, but it is still the less trusted side. */
-/** Checks settings text from the page: `key = value` lines and nothing else. */
-function validateIni(ini, maxLength, what) {
-    if (typeof ini !== 'string' || ini.length > maxLength) {
-        throw new Error(`The slicing request has no valid ${what}.`);
-    }
-    for (const line of ini.split('\n')) {
-        if (line !== '' && !/^[a-z0-9_]+ = [^\r\n]*$/.test(line)) {
-            throw new Error(`The slicing request has a ${what} line that is not "key = value": ${line.slice(0, 80)}`);
-        }
-    }
-}
+/** The PrusaSlicer processes that are running, so they can be stopped when the app quits. */
+const running = new Set();
 
-function validateRequest(request) {
-    if (!request || typeof request !== 'object') {
-        throw new Error('The slicing request is empty.');
-    }
-    const { parts, ini, profileIni } = request;
-    validateIni(ini, 1024 * 1024, 'settings');
-    if (profileIni !== undefined) {
-        validateIni(profileIni, 4 * 1024 * 1024, 'profile settings');
-    }
-    if (!Array.isArray(parts) || parts.length === 0 || parts.length > MAX_PARTS) {
-        throw new Error('The slicing request has no parts.');
-    }
-    for (const part of parts) {
-        if (!(part && part.stl instanceof Uint8Array) || part.stl.byteLength < 84 || part.stl.byteLength > MAX_STL_BYTES) {
-            throw new Error('A part in the slicing request is not a valid STL file.');
-        }
-    }
+/**
+ * Says why a PrusaSlicer run failed, in words: Node reports a program that could not be started,
+ * one that printed too much and one that was stopped through the same `code` field as an exit code.
+ */
+function describeFailure(error) {
+    if (error.killed) return 'it took too long and was stopped';
+    if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return 'it printed more output than the app keeps';
+    if (typeof error.code === 'string') return `it could not be started (${error.code})`;
+    if (typeof error.code === 'number') return `it exited with code ${error.code}`;
+    return `it was stopped${error.signal ? ` by ${error.signal}` : ''}`;
 }
 
 function runPrusaSlicer(executable, args) {
     return new Promise((resolve, reject) => {
-        execFile(executable, args, { timeout: SLICE_TIMEOUT_MS, maxBuffer: MAX_CONSOLE_OUTPUT, windowsHide: true }, (error, stdout, stderr) => {
+        const child = execFile(executable, args, { timeout: SLICE_TIMEOUT_MS, maxBuffer: MAX_CONSOLE_OUTPUT, windowsHide: true }, (error, stdout, stderr) => {
+            running.delete(child);
             if (error) {
                 const output = `${stderr}\n${stdout}`.trim().split(/\r?\n/).slice(-15).join('\n');
-                const why = error.killed ? 'it took too long and was stopped' : `it exited with code ${error.code}`;
-                reject(new Error(`PrusaSlicer could not slice the parts: ${why}.${output ? '\n' + output : ''}`));
+                reject(new Error(`PrusaSlicer could not slice the parts: ${describeFailure(error)}.${output ? '\n' + output : ''}`));
             } else {
                 resolve();
             }
         });
+        running.add(child);
     });
 }
 
@@ -211,7 +192,13 @@ async function slice(request) {
         await runPrusaSlicer(executable, args);
         return { gcode: fs.readFileSync(output, 'utf8') };
     } finally {
-        fs.rmSync(folder, { recursive: true, force: true });
+        // A file PrusaSlicer still holds open (after it was stopped, on Windows) must not replace
+        // the real error with one about the temporary folder.
+        try {
+            fs.rmSync(folder, { recursive: true, force: true });
+        } catch (error) {
+            console.error(`Could not remove ${folder}:`, error);
+        }
     }
 }
 
@@ -223,6 +210,17 @@ async function chooseFile(window, title, filters, key) {
         return;
     }
     writeSettings({ ...readSettings(), [key]: result.filePaths[0] });
+}
+
+/**
+ * Builds the menu again and tells the page that what PrusaSlicer is run with has changed: its
+ * program or the user's profile. A plate sliced before the change no longer matches it.
+ */
+function slicerChanged(window) {
+    buildMenu(window);
+    if (!window.isDestroyed()) {
+        window.webContents.send('prusa:changed');
+    }
 }
 
 function buildMenu(window) {
@@ -240,14 +238,14 @@ function buildMenu(window) {
                         ? [{ name: 'PrusaSlicer', extensions: ['exe'] }]
                         : [{ name: 'All files', extensions: ['*'] }];
                     await chooseFile(window, 'Choose the PrusaSlicer program (prusa-slicer-console.exe on Windows)', filters, 'prusaSlicerPath');
-                    buildMenu(window);
+                    slicerChanged(window);
                 },
             },
             {
                 label: 'Choose PrusaSlicer Profile…',
                 click: async () => {
                     await chooseFile(window, 'Choose a PrusaSlicer config (.ini) to slice with', [{ name: 'PrusaSlicer config', extensions: ['ini'] }], 'profilePath');
-                    buildMenu(window);
+                    slicerChanged(window);
                 },
             },
             {
@@ -256,7 +254,7 @@ function buildMenu(window) {
                 click: () => {
                     const { profilePath, ...rest } = readSettings();
                     writeSettings(rest);
-                    buildMenu(window);
+                    slicerChanged(window);
                 },
             },
         ],
@@ -292,8 +290,10 @@ function createWindow() {
         }
         return { action: 'deny' };
     });
+    // Nothing but the app's own page is ever shown in the window, which is what has the bridge to
+    // PrusaSlicer: not another local file, and not a web page.
     window.webContents.on('will-navigate', (event, url) => {
-        if (!url.startsWith('file:')) {
+        if (!isPageUrl(url, PAGE)) {
             event.preventDefault();
             if (/^https?:/.test(url)) {
                 shell.openExternal(url);
@@ -305,9 +305,19 @@ function createWindow() {
     window.loadFile(PAGE);
 }
 
-ipcMain.handle('prusa:status', () => getStatus());
-ipcMain.handle('prusa:slice', (_event, request) => slice(request));
-ipcMain.handle('prusa:vendorProfiles', () => readVendorBundle());
+/** Answers a call from the page, and only from the app's own page. */
+function handle(channel, handler) {
+    ipcMain.handle(channel, (event, ...args) => {
+        if (!event.senderFrame || !isPageUrl(event.senderFrame.url, PAGE)) {
+            throw new Error('This page may not use PrusaSlicer.');
+        }
+        return handler(...args);
+    });
+}
+
+handle('prusa:status', () => getStatus());
+handle('prusa:slice', request => slice(request));
+handle('prusa:vendorProfiles', () => readVendorBundle());
 
 app.whenReady().then(() => {
     if (!isFile(PAGE)) {
@@ -323,4 +333,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
+});
+
+// A slice still running when the app closes has nobody left to hand its result to.
+app.on('before-quit', () => {
+    for (const child of running) child.kill();
 });

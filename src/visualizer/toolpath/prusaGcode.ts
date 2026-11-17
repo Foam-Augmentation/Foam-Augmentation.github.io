@@ -45,6 +45,9 @@ const MM_PER_MIN_TO_MM_PER_S = 1 / 60;
  *   back to its part. Comments only: nothing the printer acts on.
  */
 const INTEGRATION_SETTINGS: PrusaConfig = {
+    // No post-processing script, whatever a profile loaded before these settings asks for:
+    // PrusaSlicer would run it as a program, and its output is read back by our parser as it is.
+    post_process: '',
     use_relative_e_distances: '1',
     gcode_flavor: 'marlin2',
     start_gcode: '',
@@ -147,10 +150,21 @@ export function buildPrusaConfig(printer: Printer, config: RegularPrintConfig): 
     const width = printer.machine_depth;
     const depth = printer.machine_depth_y;
     const printSpeed = toPrusaSpeed(config.printSpeed);
+    // Print Speed is the speed of every extrusion, as in the built-in slicer: a profile's own speed
+    // for one kind of line (bridges, supports, outer walls, ...) would otherwise print that kind
+    // faster than the speed the part was given. With Use Profile Speeds, all of them are left to
+    // the profile. (Travel moves always run at the extruder's travel speed; see below.)
     const speeds: PrusaConfig = config.useProfileSpeeds ? {} : {
         perimeter_speed: printSpeed,
+        small_perimeter_speed: printSpeed,
+        external_perimeter_speed: printSpeed,
         infill_speed: printSpeed,
         solid_infill_speed: printSpeed,
+        top_solid_infill_speed: printSpeed,
+        support_material_speed: printSpeed,
+        support_material_interface_speed: printSpeed,
+        bridge_speed: printSpeed,
+        gap_fill_speed: printSpeed,
         first_layer_speed: toPrusaSpeed(config.firstLayerSpeed),
     };
     const solid = config.infillDensity >= 100;

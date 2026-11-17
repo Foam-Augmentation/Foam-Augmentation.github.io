@@ -102,3 +102,30 @@ describe('getPointHeight', () => {
         expect(getPointHeight(flat, new THREE.Vector3(2, 2, 0))).toBeCloseTo(0, 9);
     });
 });
+
+describe('layers never step down (curved augmentation onto a lower surface)', () => {
+    it('keeps every layer at or above the one below when the target is below the surface', () => {
+        // The augment surface is 6 mm below the top of the model everywhere, i.e. below the object.
+        const lower: THREE.Vector3[][] = slopedSurface().map(column => column.map(p => new THREE.Vector3(p.x, p.y, -6)));
+        const stack = stackOf(4, { augmentSamplePoints: lower });
+        const heights = [0, 1, 2, 3].map(layer => {
+            const point = pointOnLayer(layer);
+            applyLayerHeight(point, THREAD_DIAMETER, stack, surface);
+            return point.point.z;
+        });
+        for (let i = 1; i < heights.length; i++) {
+            expect(heights[i]).toBeGreaterThanOrEqual(heights[i - 1]);
+        }
+        // The bottom layer still rides H* d above the surface under it (z = 2 + 0.1 * 7 at x = 7).
+        expect(heights[0]).toBeCloseTo(2.7 + 6 * THREAD_DIAMETER, 6);
+    });
+});
+
+describe('getPointHeight at the edge of the sampled surface', () => {
+    it('does not depend on the height of the point that asks', () => {
+        // One column only, so the lookup has two samples to go on: z = y along x = 0.
+        const column = [[0, 1, 2, 3].map(y => new THREE.Vector3(0, y, y))];
+        const answers = [0, 0.5, 1.7, 3.4].map(z => getPointHeight(column, new THREE.Vector3(0, 1.5, z)));
+        answers.forEach(height => expect(height).toBeCloseTo(1.5, 6));
+    });
+});

@@ -183,12 +183,4 @@ export interface EverydayModel extends BasicModel {
 
     initialConfig: ToolpathConfig;
     initialOffset: number;
-
-    /** segments of regular + sensing area */
-    all_area_segments?: PointCloudPoint[][];
-    /** segments of regular area */
-    regular_area_segments?: PointCloudPoint[][];
-    /** segments of sensing area */
-    sense_area_segments?: PointCloudPoint[][];
-
 }

@@ -121,6 +121,14 @@ function project(polygon: Polygon, axis: Point2): [number, number] {
  */
 export function separated(a: Polygon, b: Polygon, gap = 0): boolean {
     if (!a.length || !b.length) return true;
+    // Most pairs on a plate are nowhere near each other: their bounding boxes are already the
+    // gap apart along x or y, which settles it without looking at a single edge.
+    const boxA = boundsOf(a);
+    const boxB = boundsOf(b);
+    if (boxB.minX - boxA.maxX >= gap || boxA.minX - boxB.maxX >= gap
+        || boxB.minY - boxA.maxY >= gap || boxA.minY - boxB.maxY >= gap) {
+        return true;
+    }
     for (const polygon of [a, b]) {
         for (let i = 0; i < polygon.length; i++) {
             const p = polygon[i];
@@ -134,6 +142,35 @@ export function separated(a: Polygon, b: Polygon, gap = 0): boolean {
         }
     }
     return false;
+}
+
+/** The bounding box of a polygon. */
+function boundsOf(polygon: Polygon): { minX: number, minY: number, maxX: number, maxY: number } {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of polygon) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+}
+
+/** The head reach of each outline, where it stands at (0, 0), for the head it was worked out for. */
+const reachCache = new WeakMap<Polygon, { head: ArrangeSpace['head'], reach: Polygon }>();
+
+/**
+ * {@link headReach} of an outline that stands at a position. The reach only moves along with the
+ * outline, so it is worked out once per outline and moved, rather than built again for every
+ * position that is tried.
+ */
+function headReachAt(outline: Polygon, at: Point2, head: ArrangeSpace['head']): Polygon {
+    let cached = reachCache.get(outline);
+    if (!cached || cached.head !== head) {
+        cached = { head, reach: headReach(outline, head) };
+        reachCache.set(outline, cached);
+    }
+    return translate(cached.reach, at);
 }
 
 /**
@@ -166,8 +203,8 @@ export function clearOf(a: ArrangeItem, aAt: Point2, b: ArrangeItem, bAt: Point2
     const aOutline = translate(a.outline, aAt);
     const bOutline = translate(b.outline, bAt);
     if (!separated(aOutline, bOutline, space.spacing)) return false;
-    if (a.foam && b.top > space.nozzleLength && !separated(headReach(aOutline, space.head), bOutline, 0)) return false;
-    if (b.foam && a.top > space.nozzleLength && !separated(headReach(bOutline, space.head), aOutline, 0)) return false;
+    if (a.foam && b.top > space.nozzleLength && !separated(headReachAt(a.outline, aAt, space.head), bOutline, 0)) return false;
+    if (b.foam && a.top > space.nozzleLength && !separated(headReachAt(b.outline, bAt, space.head), aOutline, 0)) return false;
     return true;
 }
 
@@ -206,6 +243,15 @@ export function findFreeSpot(item: ArrangeItem, others: ArrangeItem[], space: Ar
     return candidates(near, space).find(at => fits(item, at, placed, space)) ?? null;
 }
 
+/**
+ * Everything about an object that decides where it fits: its outline, whether foam is printed at
+ * it, and whether it is taller than the nozzle. Two objects with the same key fit in the same places.
+ */
+function shapeKey(item: ArrangeItem, space: ArrangeSpace): string {
+    const outline = item.outline.map(p => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(';');
+    return `${item.foam}|${item.top > space.nozzleLength}|${outline}`;
+}
+
 /** The result of arranging a plate. */
 export interface ArrangeResult {
     /** The new position of every movable object that fits. */
@@ -229,13 +275,20 @@ export function arrange(items: ArrangeItem[], space: ArrangeSpace): ArrangeResul
     const grid = candidates(center, space);
     const positions = new Map<number, Point2>();
     const unplaced: number[] = [];
+    // Shapes that were found to fit nowhere. The plate only fills up as objects are placed, so
+    // another object of the same shape fits nowhere either, and need not be tried everywhere again.
+    const hopeless = new Set<string>();
     for (const item of movable) {
-        const at = grid.find(p => fits(item, p, placed, space));
+        const shape = shapeKey(item, space);
+        const at = hopeless.has(shape) ? undefined : grid.find(p => fits(item, p, placed, space));
+        if (!at) hopeless.add(shape);
         if (at) {
             positions.set(item.id, at);
             placed.push({ item, at });
         } else {
             unplaced.push(item.id);
+            // It stays where it was, so the objects placed after it have to keep clear of it.
+            placed.push({ item, at: item.position });
         }
     }
     return { positions, unplaced };

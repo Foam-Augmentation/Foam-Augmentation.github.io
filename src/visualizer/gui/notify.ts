@@ -55,7 +55,21 @@ export function notify(message: string, kind: NotifyKind = 'info'): void {
   getToastContainer().appendChild(toast);
 }
 
+/** Whether the busy overlay is up. */
+let busy = false;
+
+/**
+ * Whether work is running behind the busy overlay right now. The overlay keeps the pointer off
+ * the page; whatever else can change the plate (a keyboard shortcut) has to ask.
+ *
+ * @returns True while the overlay is shown.
+ */
+export function isBusy(): boolean {
+  return busy;
+}
+
 function setBusy(label: string | null): void {
+  busy = label !== null;
   let overlay = document.getElementById('busyOverlay');
   if (!overlay) {
     overlay = document.createElement('div');

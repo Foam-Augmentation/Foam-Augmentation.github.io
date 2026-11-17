@@ -236,6 +236,14 @@ export function updateSelection(
     });
 
     const indexAttr = modelObj.mesh.geometry.index;
+    // "Select Whole Model": the drawn shape only has to touch the model. The traversal above stops
+    // at the first triangle it finds in that case, so every triangle of the model is taken here.
+    if (visualizer.config.selectModel && indices.length && indexAttr) {
+        indices.length = 0;
+        for (let i = 0; i < indexAttr.count; i++) {
+            indices.push(i);
+        }
+    }
     const newIndexAttr = (visualizer.current_selection_type === 'foam')
         ? modelObj.highlightFoamMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1)
         : modelObj.highlightSenseMesh?.geometry.index ?? new THREE.BufferAttribute(new Float32Array(), 1);

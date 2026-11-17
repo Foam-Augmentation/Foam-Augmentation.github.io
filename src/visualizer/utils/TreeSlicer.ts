@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import ClipperLib from 'clipper-lib';
 import Delaunator from 'delaunator';
 import type { EverydayModel } from '../types/modelTypes';
-import type { PathPoint } from '../toolpath/generateFoamToolpath';
+import type { PathPoint } from '../toolpath/pathTypes';
 import type Printer from '../../printer/Printer';
 import type { VTPSettings } from '../../printer/Printer';
 
@@ -1261,6 +1261,21 @@ function splitChunkTreeByOverlap(
 }
 
 /**
+ * Returns a list with another list's items inserted at an index. Used instead of
+ * `list.splice(index, 0, ...items)`, which passes every item as a call argument and overflows the
+ * stack on a long path.
+ *
+ * @param {T[]} list The list. It is not modified.
+ * @param {number} index Where the items go.
+ * @param {T[]} items The items to insert.
+ * @returns {T[]} The new list.
+ */
+function insertAt<T>(list: T[], index: number, items: T[]): T[] {
+  return list.slice(0, index).concat(items, list.slice(index));
+}
+
+
+/**
  * Makes a 2D contour into a path readable by clipper, while scaling it up.
  * 
  * @param {{ x: number, y: number }[]} loop The contour. Only x and y are used, so 3D points work too.
@@ -1504,7 +1519,7 @@ export function connectIsocontours(
   }
 
   // make inwards path
-  const path = spiralContours(isocontours, evenIndices, startIndex, step, edot);
+  let path = spiralContours(isocontours, evenIndices, startIndex, step, edot);
 
   // make paths for children nodes before spiralling outwards only if the most inward contour is spiralled inwards
   if (isocontours.length % 2 === 1 && currentNode.children.length > 0) {
@@ -1531,7 +1546,7 @@ export function connectIsocontours(
     childPaths.sort((a, b) => b.index - a.index);
 
     for (let i = 0; i < childPaths.length; i++) {
-      path.splice(childPaths[i].index, 0, ...childPaths[i].path);
+      path = insertAt(path, childPaths[i].index, childPaths[i].path);
     }
   }
 
@@ -1576,7 +1591,7 @@ export function connectIsocontours(
 
     isocontours[1].splice(startIndex, 0, closestPoint);
 
-    const inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step, edot);
+    let inwardSpiralPath = spiralContours(isocontours, oddIndices, startIndex, step, edot);
 
     if (isocontours.length % 2 === 0 && currentNode.children.length > 0) {
       const childPaths: {path: PathPoint[], index: number}[] = [];
@@ -1602,11 +1617,15 @@ export function connectIsocontours(
       childPaths.sort((a, b) => b.index - a.index);
 
       for (let i = 0; i < childPaths.length; i++) {
-        inwardSpiralPath.splice(childPaths[i].index, 0, ...childPaths[i].path);
+        inwardSpiralPath = insertAt(inwardSpiralPath, childPaths[i].index, childPaths[i].path);
       }
     }
 
-    path.push(...inwardSpiralPath.reverse());
+    // One by one rather than `push(...path)`: a spread passes every element as an argument, and a
+    // long spiral has more points than a call can take.
+    for (let i = inwardSpiralPath.length - 1; i >= 0; i--) {
+      path.push(inwardSpiralPath[i]);
+    }
     path.push({point: endPoint,travel: false, edot});
   }
   return path
@@ -1812,8 +1831,14 @@ export function generateBoundaryContours(
   // get ordered set of points representing the boundary of the bottom layer
   const baseContours: THREE.Vector3[][] = connectSegments(getBaseContour(mesh));
 
+  // Only the outside of each piece of the base is outlined. A hole's contour pushed out by the
+  // offset would land under the material around the hole, where the object has to sit flat.
+  const outers = getHolesAndOuters(baseContours.filter(contour => contour.length >= 3)).map(piece => piece.outer);
+
   // push the contours out by offset
-  const expandedContours: THREE.Vector3[][] = baseContours.map(contour => offsetContour(contour, offset));
+  const expandedContours: THREE.Vector3[][] = outers
+    .map(contour => offsetContour(contour, offset))
+    .filter(contour => contour.length >= 3);
 
   // align contour with model
   expandedContours.forEach(contour => contour.forEach(p => {
@@ -1999,6 +2024,76 @@ export function offsetRegion(
   }
 
   return polygons;
+}
+
+
+/**
+ * Takes the area of some regions away from other regions, so that nothing is printed twice where
+ * the two overlap. A region the others do not touch is returned as it is.
+ *
+ * @param {SliceRegion[]} regions The regions to cut. They are not modified.
+ * @param {SliceRegion[]} cutters The regions whose area is taken away.
+ * @returns {SliceRegion[]} What is left of each region; one region can come back as several
+ *          pieces, or not at all.
+ */
+export function subtractRegions(regions: SliceRegion[], cutters: SliceRegion[]): SliceRegion[] {
+  const toPaths = (region: SliceRegion) =>
+    [region.contour, ...region.holes].filter(contour => contour.length >= 3).map(toClipperPath);
+  const cutterPaths = cutters.flatMap(toPaths);
+  if (!cutterPaths.length) return regions;
+
+  const result: SliceRegion[] = [];
+  for (const region of regions) {
+    const touched = cutters.some(cutter =>
+      cutter.bounds.min.x <= region.bounds.max.x && cutter.bounds.max.x >= region.bounds.min.x &&
+      cutter.bounds.min.y <= region.bounds.max.y && cutter.bounds.max.y >= region.bounds.min.y);
+    if (!touched) {
+      result.push(region);
+      continue;
+    }
+
+    // Even-odd fill: a hole is a path inside its outer, whichever way either of them winds.
+    const clipper = new ClipperLib.Clipper();
+    clipper.AddPaths(toPaths(region), ClipperLib.PolyType.ptSubject, true);
+    clipper.AddPaths(cutterPaths, ClipperLib.PolyType.ptClip, true);
+    const solution: ClipperLib.Paths = [];
+    clipper.Execute(
+      ClipperLib.ClipType.ctDifference,
+      solution,
+      ClipperLib.PolyFillType.pftEvenOdd,
+      ClipperLib.PolyFillType.pftEvenOdd,
+    );
+
+    const toContour = (path: ClipperLib.Path) =>
+      fromClipperPath(path).map(pt => new THREE.Vector3(pt.x, pt.y, region.height));
+    const pieces: PolygonWithHoles[] = [];
+    const holePaths: ClipperLib.Path[] = [];
+    for (const path of solution) {
+      if (path.length < 3) continue;
+      if (clipperArea(path) > 0) {
+        pieces.push({ outer: toContour(path), holes: [] });
+      } else {
+        holePaths.push(path);
+      }
+    }
+    for (const path of holePaths) {
+      const hole = toContour(path).reverse();
+      const owner = pieces.find(piece => pointInPolygon(hole[0], piece.outer));
+      if (owner) owner.holes.push(hole);
+    }
+
+    pieces.forEach((piece, i) => {
+      result.push({
+        ...region,
+        id: `${region.id}-cut${i}`,
+        contour: piece.outer,
+        holes: piece.holes,
+        bounds: getBounds(piece.outer, 0),
+        BVH: buildSliceRegionBVH(getBoundarySegments(piece.outer, piece.holes)),
+      });
+    });
+  }
+  return result;
 }
 
 

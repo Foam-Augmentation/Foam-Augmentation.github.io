@@ -7,8 +7,9 @@
     "start": "webpack serve --mode development --open",
     "watch": "webpack --watch --mode development",
     "build": "webpack --mode production",
-    "desktop": "webpack --mode development && electron .",
-    "typecheck": "tsc --noEmit",
+    "desktop": "webpack --mode production && electron .",
+    "desktop:dev": "webpack --mode development && electron .",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "vitest run",
     "predeploy": "npm run typecheck && npm run test && npm run build",
     "deploy": "gh-pages -d dist"

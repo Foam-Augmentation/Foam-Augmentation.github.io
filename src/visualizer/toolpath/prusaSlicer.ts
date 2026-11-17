@@ -34,6 +34,11 @@ export interface PrusaSlicerBridge {
     slice(request: PrusaSliceRequest): Promise<{ gcode: string }>;
     /** Prusa's profile bundle from the PrusaSlicer install, if it can be found. */
     vendorProfiles?(): Promise<{ text: string | null, path?: string }>;
+    /**
+     * Calls back whenever the Slicer menu changed what PrusaSlicer is run with: another program,
+     * or another profile of the user's own.
+     */
+    onChanged?(callback: () => void): void;
 }
 
 declare global {
@@ -83,8 +88,19 @@ export async function isPrusaSlicerAvailable(bridge: PrusaSlicerBridge | undefin
     }
 }
 
-/** The bundle each bridge gave, read once. */
+/** The bundle each bridge gave, read once per PrusaSlicer install (see forgetVendorBundle). */
 const bundles = new WeakMap<PrusaSlicerBridge, Promise<VendorBundle | null>>();
+
+/**
+ * Forgets the profile bundle that was read, so the next {@link loadVendorBundle} reads it again.
+ * For when another PrusaSlicer was located: its bundle is another file, and an install whose
+ * bundle could not be found before may have been replaced by one that has it.
+ *
+ * @param {PrusaSlicerBridge | undefined} bridge The desktop app's bridge, if there is one.
+ */
+export function forgetVendorBundle(bridge: PrusaSlicerBridge | undefined = getPrusaSlicerBridge()): void {
+    if (bridge) bundles.delete(bridge);
+}
 
 /**
  * Prusa's profile bundle from the PrusaSlicer install the desktop app uses, read once.
@@ -191,7 +207,10 @@ export async function slicePartsWithPrusa(printer: Printer, parts: RegularPart[]
             const first = groupPath[0].point;
             const safeZ = Math.max(highestZ + TRAVEL_CLEARANCE, first.z);
             toolpath.push({ point: new THREE.Vector3(last.x, last.y, safeZ), travel: true, role: 'approach' });
-            toolpath.push({ point: new THREE.Vector3(first.x, first.y, safeZ), travel: true, role: 'approach' });
+            // The group's tool is named on the crossing, not on its first printing point: a tool
+            // change leaves the head at the dock, and the move after it has to be this one, above
+            // everything printed, rather than a straight line from the dock down to the first layer.
+            toolpath.push({ point: new THREE.Vector3(first.x, first.y, safeZ), travel: true, role: 'approach', extruder: config.extruder });
         }
         for (const point of groupPath) {
             if (point.point.z > highestZ) highestZ = point.point.z;

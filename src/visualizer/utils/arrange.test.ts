@@ -138,3 +138,41 @@ describe('headConflicts', () => {
         expect(headConflicts([foam, behind, lowBehind, farAway], space)).toEqual([[1, 2]]);
     });
 });
+
+describe('objects that do not fit', () => {
+    it('keeps later objects clear of one that stayed where it was', () => {
+        // Wider than the bed inside its margins, so it fits nowhere and stays in the middle.
+        const wide = item(1, 10, { x: 100, y: 100 }, { outline: [{ x: -130, y: -50 }, { x: 130, y: -50 }, { x: 130, y: 50 }, { x: -130, y: 50 }] });
+        const small = item(2, 20, { x: 20, y: 20 });
+        const { positions, unplaced } = arrange([wide, small], space);
+
+        expect(unplaced).toEqual([1]);
+        const at = positions.get(2)!;
+        expect(at).toBeDefined();
+        expect(clearOf(small, at, wide, wide.position, space)).toBe(true);
+    });
+
+    it('does not search the whole bed again for each of many objects that cannot fit', () => {
+        // A foam print with a tall neighbour everywhere within the reach of the head: none fits
+        // next to another. Fifty of them used to take most of a minute.
+        const pucks = Array.from({ length: 50 }, (_, i) =>
+            item(i + 1, 10, { x: 100, y: 100 }, { outline: circlePolygon({ x: 0, y: 0 }, 30, 64), foam: true, top: 20 }));
+        const started = Date.now();
+        const { positions, unplaced } = arrange(pucks, space);
+        expect(positions.size + unplaced.length).toBe(50);
+        expect(unplaced.length).toBeGreaterThan(40);
+        expect(Date.now() - started).toBeLessThan(5000);
+    });
+});
+
+describe('separated, far apart and close by', () => {
+    it('agrees with itself whether or not the bounding boxes settle it', () => {
+        const a = square(10);
+        // Far apart along x: settled by the boxes.
+        expect(separated(a, translate(square(10), { x: 40, y: 0 }), 6)).toBe(true);
+        // Boxes overlap along both axes once the gap is counted: the edges decide.
+        expect(separated(a, translate(square(10), { x: 15.9, y: 0 }), 6)).toBe(false);
+        expect(separated(a, translate(square(10), { x: 16, y: 0 }), 6)).toBe(true);
+        expect(separated(a, translate(square(10), { x: 5, y: 5 }), 0)).toBe(false);
+    });
+});

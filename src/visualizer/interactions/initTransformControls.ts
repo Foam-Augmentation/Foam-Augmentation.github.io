@@ -33,6 +33,10 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
         // A drag that draws an area selection (any drag while armed, or an Alt-drag) must not
         // also grab the model under the cursor.
         if (event.altKey || visualizer.selectionArmed) return;
+        // A press on one of the gizmo's handles moves the object the gizmo is on. The gizmo's own
+        // listener has already started that drag; picking whatever model lies behind the handle
+        // would take the gizmo off its object in the middle of it.
+        if (transformControls.dragging || transformControls.axis) return;
 
         // Convert the pointer position to normalized device coordinates (NDC) of the canvas.
         const ndc = pointerToNdc(event, canvas);
@@ -76,9 +80,15 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
 
     // Esc releases the gizmo, stops area selection and deselects the model.
     document.addEventListener('keydown', (event: KeyboardEvent) => {
-        if (event.key === 'Escape') {
-            visualizer.clearSelection();
+        if (event.key !== 'Escape') return;
+        // In a field, Esc leaves the field. Deselecting the object there would hide the very
+        // settings that are being edited.
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) {
+            target.blur();
+            return;
         }
+        visualizer.clearSelection();
     });
 
     // While the gizmo moves a model, keep its numeric fields and auxiliary meshes in step.

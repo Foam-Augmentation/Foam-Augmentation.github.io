@@ -24,6 +24,7 @@ Nothing here was tested on a physical printer. Visual findings come from DOM mea
 | Structure (T) | 0 | 0 | 3 | 3 | 6 |
 | Product design (D), added in the second pass | 0 | 6 | 17 | 5 | 28 |
 | Objects list and regular prints (R) | 0 | 2 | 3 | 2 | 7 |
+| Review of 2026-11-16 (E, L, K, P, Q), added in the third pass | 5 | 14 | 20 | 14 | 53 |
 
 ---
 
@@ -233,7 +234,7 @@ Second pass, 2026-11-09 (branch `vtp-fixes`, commit `9ee01ee`), after the fixes 
 - [ ] **D9 · P2 · read — a selection cannot be cleared or edited.** There is no "Clear Foam Area" and no add or subtract with Shift/Ctrl; a new drag replaces the old area. "Select Whole Model" is a checkbox three levels away in Settings › Selection Settings, as is the lasso/box choice.
   Fix: put Lasso / Box / Whole Model / Clear next to the select buttons; Shift adds, Ctrl subtracts.
 - [x] **D10 · P1 · read — the preview goes stale when a parameter changes.** The toolpath is drawn when the area is selected. Save regenerates from the current parameters, so after any edit the file differs from what is on screen. Only layer thickness triggers a redraw (`refreshModelGUIList.ts:286`).
-  **Fixed:** Finishing an edit in a model's folder (slider released, value entered), or in Printer or Slicer Settings, regenerates the preview of every affected model that has a selected area, 300 ms after the last edit, behind the busy overlay. Buttons (Snap, Center, file pickers) and gizmo moves do not trigger it yet (N6).
+  **Fixed:** Finishing an edit in a model's folder (slider released, value entered), or in Printer or Slicer Settings, regenerates the preview of every affected model that has a selected area, 300 ms after the last edit, behind the busy overlay. Buttons (Snap, Center, file pickers) and gizmo moves do not trigger it yet (N6). A preset import did not trigger it either until 2026-11-16 (see E6).
   Fix: regenerate on change (debounced), or mark the preview "out of date" with a Regenerate button.
 - [~] **D11 · P2 · verified — a successful selection reports nothing.** No message, no numbers. The preview was thin grey and green lines with no legend for travel, purge and extruder colours.
   **Status: partly fixed (2026-11-10).** A preview bar works on the selected augmentation's preview (and on the sliced plate): colour by feature, tool, speed, V\*, H\* or Edot with a legend, a slider through the layers in print order, and travel on or off. The augmentation export's message gives the time and filament. A selection itself still reports no numbers until it is exported.
@@ -349,7 +350,8 @@ Added 2026-11-09 (after commit `260667e`). The single nested panel and the globa
 - [ ] **N6 · P2 · read — selection box, outline and toolpath preview do not follow the model** when it is moved after selecting; they are rebuilt only on the next selection.
 - [ ] **N7 · P3 · read — `foamModelList` models can be imported but no slicing code reads them.** Slice Plate slices the everyday models.
 - [ ] **N8 · P3 — `bedMargin`, `purgeTowerRadius` and `useBoundsTree` have no GUI or preset entries.** They are fields with defaults (5 mm, 10 mm, on).
-- [ ] **N9 · P3 — `npm audit` reports vulnerabilities in dev dependencies** after the reinstall. Not triaged.
+- [~] **N9 · P3 — `npm audit` reports vulnerabilities in dev dependencies** after the reinstall. Not triaged.
+  **Status: partly fixed (2026-11-16).** See K6.
 
 ## Behaviour changes to check before printing
 
@@ -395,3 +397,126 @@ Added 2026-11-09 (after commit `260667e`). The single nested panel and the globa
 - Regular Print is new G-code that has never been printed (see R1). In a mixed file the foam part starts with a move from above instead of a travel across the bed from the origin; a foam-only file is unchanged.
 - `PathPoint` has an optional `speed` for regular segments; points without it print as before.
 - Imported models are shaded from their triangles, not from the normals in the STL file.
+
+---
+
+## Review of 2026-11-16
+
+Third pass (branch `vtp-fixes`, commit `5b210b1`): a full read of the code by area (G-code emission, slicing geometry, app and GUI, desktop app and PrusaSlicer), plus a maintainability pass. 53 findings; 38 are fixed, 3 partly, 12 open.
+
+**How it was checked:** `npm run typecheck` (now includes the test files), `npm test` (400 tests in 23 files, 36 of them new), a production build, and a run of that build in the browser next to a build of `5b210b1`, both driven by the same scripted pointer events on the example model:
+
+- Augmentation, default settings, one lasso: the two G-code files are the same line for line (33,349 lines compared) apart from the two intended changes, `M83` before the first extruder move and decimal feed rates on foam moves.
+- Foam Print of the example model: the same 29,211 foam moves, 5,117.67 mm of foam filament, 11 layers and 74,753 shell moves; 215 fewer travel lines.
+- In the fixed build: Select Whole Model covers the whole top of the model (11,414 foam moves against 580), Esc in a number field keeps the object selected, and a sliced plate still exports after switching the Selection Tool.
+
+**Not checked:** nothing was run on a printer. The desktop app was not started, so the Slicer-menu notice, the page check on calls to PrusaSlicer and the production-build `npm run desktop` are covered by unit tests and reading only. PrusaSlicer itself was not run. No real mouse was used.
+
+### G-code and emission (E)
+
+- [x] **E1 · P0 · verified — the boundary pause cut across the bed in one move.** `G0 X0 Y<max> Z50` from printing height, with no lift first: with two augmentations the second pause crossed the first object.
+  **Fixed:** the head lifts straight up to at least 50 mm (and at least the pause point's height), then crosses. The pause point is above everything printed before (`minimumSafeZ`).
+- [x] **E2 · P0 · verified (emitted G-code) — tool change between two PrusaSlicer groups was followed by a straight move from the dock down to the first layer.**
+  **Fixed:** the group's tool is named on the crossing point above the parts, so the move after the change is that crossing.
+- [ ] **E3 · P0 if real · unconfirmed — an augmentation's start sequence does not know an object is on the bed.** With the defaults the probing area (`M555`) is the whole bed; with the purge line and tower off, nozzle cleaning (`G29 P9`) is placed at the foam area, i.e. at the object. Safe only if the object is placed at the boundary pause.
+  **Not fixed:** needs a decision on where probing and cleaning should go when an object is on the bed from the start.
+- [x] **E4 · P1 · verified — the part cooling fan stayed on for foam printed after a PrusaSlicer part.**
+  **Fixed:** `M107` before the app's own extrusions that follow PrusaSlicer's, and the fan as PrusaSlicer last set it before PrusaSlicer's next move. Assumes the firmware carries the fan across a tool change.
+- [x] **E5 · P1 · verified — curved augmentation layers stepped down into the object** where the target surface is below the object's surface.
+  **Fixed:** a layer never steps down. **Where the target is below the surface the layers now sit at one height; whether that is the wanted result there needs someone who uses curved augmentation.**
+- [x] **E6 · P0 · verified — the augmentation export used sample points from before the last edit** (rotation, scale or grid size typed just before pressing Export; any foam parameter after a preset import).
+  **Fixed:** the export samples every area again, and a preset import refreshes the previews.
+- [x] **E7 · P2 · verified — the start G-code retracted before `M83`.**
+  **Fixed:** `M83` comes right after `G90`.
+- [x] **E8 · P2 · verified — foam feed rates were rounded to whole mm/min and could be written as `F00`.**
+  **Fixed:** three decimals; a head speed below 0.001 mm/min is refused with a message.
+- [x] **E9 · P2 · verified — surface height at the edge of the sampled area depended on the slice height.**
+  **Fixed:** the lookup uses x and y only.
+- [x] **E10 · P2 · read — Print Speed did not limit bridges, supports, gap fill or outer walls under PrusaSlicer.**
+  **Fixed:** every print speed setting is sent at Print Speed (setting names checked against PrusaSlicer's source in `reference/`; PrusaSlicer was not run). Travel speed is still the extruder's, as before.
+- [ ] **E11 · P2 · unconfirmed — a final wipe leaves the filament retracted** when PrusaSlicer retracts before or during it; what follows starts short of filament.
+- [ ] **E12 · P3 · read — estimate details.** `G28 X Y` is timed as a full home; the start G-code's trial picks count as tool changes; a single-head print that starts on extruder 1 books its filament to tool 0.
+
+### Slicing (L)
+
+- [x] **L1 · P1 · verified — rectilinear foam infill threw a false "Mesh is not watertight"** when a scan line ran through a corner of the outline or along an edge (23 of 300 random selections at the default 1.7 mm spacing; an L bracket at 1.2 mm).
+  **Fixed:** crossings follow a half-open rule, so the count is even on any closed outline. A scan line exactly on the edge of a region is cut 1e-6 mm inside it; pieces shorter than 0.01 mm are not printed.
+- [x] **L2 · P1 · verified — a sensing area under about 10 mm across was also covered by foam.**
+  **Fixed:** the sensing regions are cut out of the foam regions.
+- [x] **L3 · P1 · verified — the extra flat layers of a curve augment copied "points near the highest z"**, 3 points instead of the layer.
+  **Fixed:** they copy the top layer of the stack by its number, each copy one layer thickness above the last.
+- [ ] **L4 · P1 · unconfirmed — the purge tower is built to the full print height with one tool** (reviewer's measurement: 94 m of tower path for 0.7 m of foam on a 100 mm object). An existing test expects a tower for a single-tool print.
+  **Not fixed:** needs a decision on whether a one-tool print should have a tower at all.
+- [x] **L5 · P1 · verified — boundary outline: contours were joined by a printed line, left open, and holes were outlined under the wall.**
+  **Fixed:** each outline is closed, the move from one to the next is a travel, and only the outside of each piece of the base is outlined.
+- [x] **L6 · P1 · verified — the line spacing ramp of an augmentation was measured against the object's height**, so the top layer never reached Top Line Spacing.
+  **Fixed:** it runs over the foam stack.
+- [x] **L7 · P1 · verified (option-gated) — Fermat spiral infill overflowed the stack on long contours** (the part of G14 that was left).
+- [x] **L8 · P2 · verified — a sensing layer thickness that differs from the layer thickness gave sensing layers the wrong layer numbers**, and with them the wrong initial-layer settings.
+  **Fixed:** layers are numbered by the model's layer thickness. The sensing and initial "layer thickness" values still do not change any layer height.
+- [~] **L9 · P2 · measured — foam-print slicing is quadratic in contour vertices** (`checkShellRegularOverlap`, the shell offsets on unsimplified contours), and every move is cut into 0.5 mm pieces (525k points for a 100 × 100 × 20 mm print).
+  **Not fixed.** The first foam region of a chunk now picks its start corner in the right frame, which removes some travel; the hot spots are untouched.
+- [x] **L10 · P2 · verified — a sampling grid above about 7 mm gave no toolpath.**
+  **Fixed:** the outline radius grows with the grid (1.5 grid steps where that is more than 5 mm).
+- [ ] **L11 · P2 · verified (option-gated) — the Fermat inset tree drops holes smaller than about 1 mm radius after the first inset.**
+- [ ] **L12 · P3 · read — region ids are not unique across two copies of a model**, while the set of printed regions is shared. The print order came out right in the case tried.
+
+### Desktop app and security (K)
+
+- [x] **K1 · P0 (security) · verified up to the last step — a preset file could run code in the desktop app.** A profile name with markup reached a dropdown that writes its text as HTML; from the page, a slicing request could set `post_process`, which PrusaSlicer runs as a program (read in PrusaSlicer's source, not run).
+  **Fixed:** preset text may not contain `<` or `>`; the dropdowns are rebuilt before they are shown after an import; the main process refuses a request that sets `post_process`, and the app's settings blank it; production builds carry a Content Security Policy with no inline or evaluated script; calls to PrusaSlicer are answered only for the app's own page.
+- [x] **K2 · P2 · read — a slice was not marked out of date when the PrusaSlicer program or profile changed.**
+  **Fixed:** the Slicer menu tells the page, which marks the slice out of date and reads the profiles of the install in use again (that also covers a profile bundle that was cached as missing).
+- [x] **K3 · P3 · read — main-process robustness.** Failure messages named Node error codes as exit codes; a temporary folder that could not be removed replaced the real error; PrusaSlicer kept running after the app quit; any local file could be navigated to.
+- [ ] **K4 · P3 · unconfirmed — PrusaSlicer may drop a regular part's Z placement** (`--no-ensure-on-bed` is not passed), where the built-in slicer keeps it.
+- [ ] **K5 · P3 · measured — picking a printer profile blocks the page for over a second** (every profile section's inheritance is resolved again, with no memo).
+- [~] **K6 · P2 — `npm audit`.** 33 advisories before, 11 after `npm audit fix`. The rest need major upgrades (vitest 5, webpack-dev-server 6, copy-webpack-plugin 14). All are in development tooling.
+
+### App and GUI (P)
+
+- [x] **P1 · P1 · verified — Add Copies, placing a new object and Arrange froze the page when objects do not fit** (reviewer: about 25 s for 50 copies of the example model).
+  **Fixed:** the head reach is worked out once per outline, bounding boxes settle most pairs, a shape that fits nowhere is not tried again, an object's outline is kept per orientation, and copies stop searching once one finds no room. Arranging 50 such objects takes about 0.5 s in the test.
+- [x] **P2 · P2 · verified — Arrange could put an object on top of one that did not fit.**
+- [x] **P3 · P1 · read — a press on a gizmo handle drawn over another object selected that object** instead of moving.
+- [x] **P4 · P1 · verified — "Select Whole Model" selected one triangle.**
+- [x] **P5 · P1 · read — copies kept Curved Augmentation and Generate Bumps switched on without the files they need.**
+  **Fixed:** a copy shares the augment surface and gets its own copy of the bump model.
+- [~] **P6 · P1 · read — the augment surface was sized to the model's raw geometry.**
+  **Partly fixed:** it is sized to the model as it is placed when the file is loaded. It is still not fitted again when the model is scaled or rotated afterwards.
+- [x] **P7 · P2 · read — Lay on Face and area selection left each other's state behind** (mouse buttons, hints, a click that turned the wrong object).
+- [x] **P8 · P2 · read — "Back to Top View" framed the first model that was ever armed.**
+- [x] **P9 · P2 · read — after an augmentation export the preview bar acted on a removed preview**, and editing Layer Thickness deleted the preview until the refresh.
+- [x] **P10 · P2 · read — the plate slice went out of date for changes that do not affect it** (Copies, Transform Mode), and Export was refused after changing a selection setting.
+- [x] **P11 · P2 · read — changing an object's type left the selected area's box and outline in view**, and a hidden sensing box could still be dragged.
+- [x] **P12 · P2 · read — one model that could not be regenerated stopped the preview refresh for all the others.**
+- [x] **P13 · P2 · read — keyboard shortcuts stayed live while a slice was running.**
+- [x] **P14 · P3 · verified — Esc in a number field deselected the object.**
+- [x] **P15 · P3 · read — "Show Selection Wireframe" did nothing.** The control is gone; presets that carry the key still load.
+- [ ] **P16 · P2 · unconfirmed — dragging a sensing box does heavy work on every pointer move** on a large model.
+
+### Tooling and structure (Q)
+
+- [x] **Q1 · P3 · verified — test files were not typechecked, and two no longer matched their types.** `npm run typecheck` now uses `tsconfig.typecheck.json` (tests included, unused locals refused).
+- [x] **Q2 · P3 — no CI.** `.github/workflows/ci.yml` runs typecheck, tests and a production build on pushes to `main` and on pull requests.
+- [x] **Q3 · P3 — the desktop app always ran a development build.** `npm run desktop` builds for production; `npm run desktop:dev` keeps the old behaviour.
+- [x] **Q4 · P3 — dead code.** Removed the layer preview nothing fed (`visualize_All_Layers`), `Printer.boundsFromGcode`, and the model fields only they read. `TreeSlicer.ts` no longer imports a type from `generateFoamToolpath.ts`.
+- [ ] **Q5 · P3 — no linter.** The code carries `eslint-disable` comments, but ESLint is not installed.
+- [ ] **Q6 · P3 — structure, not attempted.** Three half-pipelines build an augmentation toolpath; change notification is spread over four ad-hoc calls; what belongs to a model is listed by hand in several places (one list, `augmentOverlays`, now feeds the type change); where a tool change happens is a convention each caller follows by hand; three scan-line fillers, three point-in-polygon tests, two Clipper wrappers and four G-code line readers exist side by side; 23 functions are over 100 lines. See also T2, T4.
+- [ ] **Q7 · P3 — README screenshots show the interface from before the Objects list** (`select-model.png`, `saving.png`), and several passages still say "everyday model".
+
+### Behaviour changes to check before printing
+
+- A boundary pause starts with a vertical lift, and parks above everything printed before.
+- Between two PrusaSlicer groups on different tools, the tool changes above the parts, before the crossing.
+- Foam after a PrusaSlicer part prints with the fan off; PrusaSlicer's next moves get the fan back.
+- A curved augmentation onto a surface below the object no longer goes down; its layers sit at one height there.
+- `M83` is written before the start sequence's first retraction.
+- Foam moves carry feed rates with three decimals (`F100.488`, was `F0100`).
+- Scan lines through corners of an outline no longer stop the print with "not watertight"; a region can gain or lose a scan line exactly on its edge.
+- A small sensing area is no longer covered by foam as well.
+- The extra flat layers of a curve augment are whole layers.
+- The line spacing ramp of an augmentation reaches Top Line Spacing on the top layer.
+- The boundary outline is closed, has no printed line between two outlines and none around holes.
+- With PrusaSlicer, bridges, supports, gap fill and outer walls print at Print Speed unless Use Profile Speeds is on.
+- A post-processing script in a PrusaSlicer profile is not run.
+- An object placed after one that did not fit keeps clear of it.

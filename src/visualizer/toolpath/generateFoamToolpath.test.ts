@@ -8,6 +8,7 @@ import { generateAugmentFoamToolpath, generateFoamToolpath } from './generateFoa
 import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import { pointInsideSensing } from './addSensingIntersectionGeo';
+import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 
 /** Just enough of a Visualizer for the toolpath generators: a scene to draw into and a printer. */
 function fakeVisualizer(printer: Printer = new Printer()): Visualizer {
@@ -40,6 +41,9 @@ function blockModel(config: Partial<ToolpathConfig> = {}, initial: Partial<Toolp
     }
 
     return {
+        objectId: 1,
+        kind: 'augment',
+        regularConfig: { ...DEFAULT_REGULAR_CONFIG },
         name: 'block',
         mesh,
         geometry,
@@ -50,7 +54,7 @@ function blockModel(config: Partial<ToolpathConfig> = {}, initial: Partial<Toolp
         initialConfig: toolpathConfig({ initialFoamLayerCount: 0, ...initial }),
         initialOffset: 0,
         toolpathSamplePoints: samplePoints,
-    } as EverydayModel;
+    };
 }
 
 const isFinitePoint = (p: PathPoint) => Number.isFinite(p.point.x) && Number.isFinite(p.point.y) && Number.isFinite(p.point.z);
@@ -396,5 +400,177 @@ describe('pointInsideSensing (G15)', () => {
         expect(pointInsideSensing(new THREE.Vector3(4.9, 0, 0), cylinder, 'cylinder', size)).toBe(true);
         expect(pointInsideSensing(new THREE.Vector3(4, 0, 4), cylinder, 'cylinder', size)).toBe(false);
         expect(pointInsideSensing(new THREE.Vector3(4, 4, 0), cylinder, 'cylinder', size)).toBe(true);
+    });
+});
+
+/** A model like blockModel, with its own sample points. */
+function sampledModel(samplePoints: PointCloudPoint[], config: Partial<ToolpathConfig> = {}, initial: Partial<ToolpathConfig> = {}): EverydayModel {
+    const model = blockModel(config, initial);
+    model.toolpathSamplePoints = samplePoints;
+    return model;
+}
+
+/** Sample points on a square grid over [-half, half]², where `keep` says so. */
+function gridSamples(
+    half: number,
+    step: number,
+    keep: (x: number, y: number) => boolean = () => true,
+    type: (x: number, y: number) => string = () => 'foam',
+    z: (x: number, y: number) => number = () => 10,
+): PointCloudPoint[] {
+    const points: PointCloudPoint[] = [];
+    for (let x = -half; x <= half; x += step) {
+        for (let y = -half; y <= half; y += step) {
+            if (keep(x, y)) points.push({ point: new THREE.Vector3(x, y, z(x, y)), type: type(x, y) });
+        }
+    }
+    return points;
+}
+
+/** A printer with no purge line or tower, so a toolpath is only the model. */
+function barePrinter(): Printer {
+    const printer = new Printer();
+    printer.purgeTower = false;
+    printer.purgeLine = false;
+    return printer;
+}
+
+describe('scan lines through the corners of an outline', () => {
+    it('fills a round selection whose outline has corners exactly on the scan lines', () => {
+        // Every corner of a sampled outline is on the sampling grid. With a 1 mm grid and a line
+        // spacing that divides the width, scan lines run through corners and along edges.
+        for (const [radius, deltaL] of [[10, 1], [10, 2], [17, 1.7]]) {
+            const samples = gridSamples(radius, 1, (x, y) => x * x + y * y <= radius * radius);
+            const model = sampledModel(samples, { deltaL, deltaLEnd: deltaL, gridSize: 1 });
+            const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model)!;
+            expect(toolpath).not.toBeNull();
+            const extruded = toolpath.filter(isModelExtrusion);
+            expect(extruded.length).toBeGreaterThan(0);
+            // Nothing is printed outside the selection.
+            extruded.forEach(p => {
+                expect(Math.hypot(p.point.x - 100, p.point.y - 100)).toBeLessThanOrEqual(radius + 1e-6);
+            });
+        }
+    });
+});
+
+describe('sensing areas and coarse grids', () => {
+    it('does not lay foam over a small sensing area', () => {
+        const inPatch = (x: number, y: number) => Math.abs(x) <= 3 && Math.abs(y) <= 3;
+        const samples = gridSamples(15, 1, () => true, (x, y) => (inPatch(x, y) ? 'sense' : 'foam'));
+        const model = sampledModel(samples, { gridSize: 1, initialFoamLayerCount: 1 });
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model)!;
+
+        // Well inside the 7 mm patch only the sensing extruder prints.
+        const inside = toolpath.filter(isModelExtrusion)
+            .filter(p => Math.abs(p.point.x - 100) < 2.5 && Math.abs(p.point.y - 100) < 2.5);
+        expect(inside.length).toBeGreaterThan(0);
+        inside.forEach(p => expect(p.feature).toBe(FEATURE.sensingFoam));
+        // ... and the foam around it is still there.
+        expect(toolpath.some(p => isModelExtrusion(p) && p.feature === FEATURE.foam)).toBe(true);
+    });
+
+    it('still finds the area on a grid coarser than the usual outline radius', () => {
+        const model = sampledModel(gridSamples(16, 8), { gridSize: 8, initialFoamLayerCount: 1 });
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model);
+        expect(toolpath).not.toBeNull();
+        expect(toolpath!.some(isModelExtrusion)).toBe(true);
+    });
+
+    it('numbers the layers of a sensing area by the layer thickness of the model, not its own', () => {
+        const inPatch = (x: number, y: number) => Math.abs(x) <= 8 && Math.abs(y) <= 8;
+        const samples = gridSamples(20, 1, () => true, (x, y) => (inPatch(x, y) ? 'sense' : 'foam'));
+        const model = sampledModel(samples, { gridSize: 1, initialFoamLayerCount: 3, senseDeltaZ: 3.4 });
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model)!;
+        const senseLayers = new Set(toolpath.filter(p => p.feature === FEATURE.sensingFoam).map(p => p.layer));
+        expect([...senseLayers].sort()).toEqual([0, 1, 2]);
+    });
+});
+
+describe('line spacing ramp and extra flat layers', () => {
+    it('ramps the line spacing over the stack of layers, reaching the end value on the top one', () => {
+        const model = sampledModel(gridSamples(16, 1), { deltaL: 1.7, deltaLEnd: 3.4, gridSize: 1, initialFoamLayerCount: 3 });
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model)!;
+        const spacingOf = (layer: number) => {
+            const points = toolpath.filter(p => isModelExtrusion(p) && p.layer === layer);
+            const distinct = (values: number[]) => [...new Set(values.map(v => v.toFixed(3)))].map(Number).sort((a, b) => a - b);
+            const xs = distinct(points.map(p => p.point.x));
+            const ys = distinct(points.map(p => p.point.y));
+            const lines = xs.length < ys.length ? xs : ys;
+            return lines[1] - lines[0];
+        };
+        expect(spacingOf(0)).toBeCloseTo(1.7, 3);
+        expect(spacingOf(1)).toBeCloseTo(2.55, 3);
+        expect(spacingOf(2)).toBeCloseTo(3.4, 3);
+    });
+
+    it('copies the whole top layer for the extra flat layers of a curve augment on a dome', () => {
+        const dome = (x: number, y: number) => 10 + 5 * (1 - (x * x + y * y) / 512);
+        const samples = gridSamples(16, 2, () => true, () => 'foam', dome);
+        const model = sampledModel(samples, { curveAugment: true, initialFoamLayerCount: 1, gridSize: 2 });
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), model)!;
+        const perLayer = new Map<number, number>();
+        toolpath.filter(isModelExtrusion).forEach(p => perLayer.set(p.layer!, (perLayer.get(p.layer!) ?? 0) + 1));
+
+        // One real layer and three copies of it, each about as many points as the original.
+        expect([...perLayer.keys()].sort()).toEqual([0, 1, 2, 3]);
+        for (const layer of [1, 2, 3]) {
+            expect(perLayer.get(layer)!).toBeGreaterThan(perLayer.get(0)! * 0.9);
+        }
+        // Each copy is one layer thickness above the layer below it, point for point.
+        const layer0 = toolpath.filter(p => p.role === undefined && p.layer === 0);
+        const layer1 = toolpath.filter(p => p.role === undefined && p.layer === 1);
+        expect(layer1).toHaveLength(layer0.length);
+        layer1.forEach((p, i) => expect(p.point.z).toBeCloseTo(layer0[i].point.z + 1.7, 6));
+        // Nothing is extruded on the way back to where a copy starts.
+        expect(layer1[0].travel).toBe(true);
+    });
+});
+
+describe('boundary outline', () => {
+    /** A base with two separate feet, 10 x 10 mm each, 40 mm apart, joined above the bed. */
+    function twoFeetModel(): EverydayModel {
+        const foot = (x: number) => new THREE.BoxGeometry(10, 10, 5).translate(x, 0, 2.5).toNonIndexed();
+        const bridge = new THREE.BoxGeometry(50, 10, 5).translate(0, 0, 7.5).toNonIndexed();
+        const position = [foot(-20), foot(20), bridge].flatMap(g => Array.from(g.getAttribute('position').array));
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+        const model = blockModel();
+        model.mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+        model.mesh.position.set(100, 100, 0);
+        model.geometry = geometry;
+        return model;
+    }
+
+    it('travels between two outlines instead of printing a line from one to the other', () => {
+        const printer = barePrinter();
+        printer.generateBoundary = true;
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(printer), twoFeetModel())!;
+        const boundary = toolpath.filter(p => p.role === 'boundary');
+        expect(boundary.filter(p => p.travel)).toHaveLength(2);
+
+        let longest = 0;
+        for (let i = 1; i < boundary.length; i++) {
+            if (!boundary[i].travel) longest = Math.max(longest, boundary[i].point.distanceTo(boundary[i - 1].point));
+        }
+        // No printed boundary move is longer than a side of a foot's outline (12 mm with the offset).
+        expect(longest).toBeLessThan(13);
+    });
+
+    it('closes each outline', () => {
+        const printer = barePrinter();
+        printer.generateBoundary = true;
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(printer), blockModel())!;
+        const boundary = toolpath.filter(p => p.role === 'boundary');
+        expect(boundary[0].travel).toBe(true);
+        expect(boundary[0].point.distanceTo(boundary[boundary.length - 1].point)).toBeLessThan(1e-6);
+    });
+
+    it('parks for the pause above everything printed before', () => {
+        const printer = barePrinter();
+        printer.generateBoundary = true;
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(printer), blockModel(), { minimumSafeZ: 95 })!;
+        const pause = toolpath.find(p => p.pause)!;
+        expect(pause.point.z).toBeGreaterThanOrEqual(95);
     });
 });

@@ -80,7 +80,10 @@ describe('exportPlateGcode', () => {
     const plateSlice: PlateSlice | null = slice ? {
       gcode: 'G1 X1', fileName: 'part.gcode', previews: [], stale: false,
       fingerprint: plateFingerprint(config, [model]),
-      summary: { objects: new Map([[1, { layers: 1 }]]), tools: [0], height: 1, bytes: 6 },
+      summary: {
+        objects: new Map([[1, { layers: 1 }]]), tools: [0], height: 1, bytes: 6,
+        estimate: { seconds: 60, filament: [100], stops: 0, toolChanges: 0 }, filamentGrams: [0.3],
+      },
     } : null;
     const visualizer = {
       config, everydayModelList: [model], plateSlice,

@@ -130,6 +130,14 @@ function identity(object: object | undefined | null): number | null {
 }
 
 /**
+ * Global settings that only say how an area is drawn on an augmentation. No Foam Print or Regular
+ * Print reads them, so changing one leaves a plate slice as good as it was.
+ */
+const SELECTION_ONLY_SETTINGS: ReadonlySet<string> = new Set([
+    'toolMode', 'selectionMode', 'selectModel', 'liveUpdate', 'selectWireframe',
+]);
+
+/**
  * Describes everything a plate slice depends on: every global setting and extruder, and for each
  * object that prints (in list order) its kind, placement, mesh and parameters, including the
  * files loaded for it. Two plates with the same fingerprint slice to the same G-code.
@@ -140,7 +148,9 @@ function identity(object: object | undefined | null): number | null {
  */
 export function plateFingerprint(settings: object, models: EverydayModel[]): string {
     const config = settings as Record<string, unknown>;
-    const globalSettings = Object.keys(SETTING_SPECS).map(key => config[key]);
+    const globalSettings = Object.keys(SETTING_SPECS)
+        .filter(key => !SELECTION_ONLY_SETTINGS.has(key))
+        .map(key => config[key]);
     return JSON.stringify({
         settings: globalSettings,
         extruders: config.extruders,

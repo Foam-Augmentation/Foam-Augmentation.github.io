@@ -91,6 +91,13 @@ describe('plateFingerprint', () => {
         expect(plateFingerprint(extruders, models)).not.toBe(plateFingerprint(settings(), models));
     });
 
+    it('ignores the settings that only say how an area is drawn on an augmentation', () => {
+        const models = [model('regular', 1), model('foam', 2)];
+        const before = plateFingerprint({ ...settings(), toolMode: 'lasso', selectionMode: 'centroid', selectModel: false, liveUpdate: false }, models);
+        const after = plateFingerprint({ ...settings(), toolMode: 'box', selectionMode: 'intersection', selectModel: true, liveUpdate: true }, models);
+        expect(after).toBe(before);
+    });
+
     it('changes when a print loads another gradient image', () => {
         const models = [model('foam', 2)];
         models[0].gradient = { width: 2, height: 2 } as EverydayModel['gradient'];

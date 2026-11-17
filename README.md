@@ -97,7 +97,6 @@ Every control in the panel has a tooltip with the same description as below; hov
     - `Selection Mode`: Visible Faces Only (only select the visible part of the mesh, i.e. front part); All Faces Touched / All Faces Inside (also selects non-visible mesh)
     - `Select Whole Model`: If checked, select the whole model
     - `Live Update`: If checked, live update the selected mesh and toolpath when lasso/box selection changes.
-    - `Show Selection Wireframe`: If checked, show the selected mesh's wireframe.
 - `Printer Settings` folder:
     - `Bed Temperature (°C)`: Bed temperature.
     - `Bed Width X (mm)`: The max width of the print space.
@@ -177,11 +176,11 @@ These are in the folder of each `Regular Print` object. Settings marked *(PrusaS
 - `Overhang Threshold (°)` *(PrusaSlicer)*: Surfaces flatter than this angle get support; 0 lets PrusaSlicer decide. Only used while Supports is on.
 - `Brim Width (mm)` *(PrusaSlicer)*: Width of a flat ring around the part's first layer, to stop corners lifting. 0 prints none.
 - `Extruder`: Which extruder prints the part.
-- `Print Speed (mm/min)`: Speed of the print head while extruding.
+- `Print Speed (mm/min)`: Speed of the print head while extruding. With PrusaSlicer, every kind of line is printed at this speed (walls, infill, bridges, supports, gap fill); travel moves use the extruder's travel speed.
 - `First Layer Speed (mm/min)` *(PrusaSlicer)*: Speed of every move on the first layer.
 - `Print Profile` *(PrusaSlicer)*: Prusa's print profile to start from (speeds with `Use Profile Speeds`, accelerations, seams, bridging, ...). The settings above win where they overlap. Only the profiles that suit the `PrusaSlicer Printer` are offered.
 - `Filament Profile` *(PrusaSlicer)*: Prusa's filament profile (cooling, fan, retraction, pressure advance). Temperatures still come from the extruder's settings.
-- `Use Profile Speeds` *(PrusaSlicer)*: Use the speeds of your PrusaSlicer profile (or PrusaSlicer's defaults) instead of Print Speed and First Layer Speed.
+- `Use Profile Speeds` *(PrusaSlicer)*: Use the print speeds of your PrusaSlicer profile (or PrusaSlicer's defaults) instead of Print Speed and First Layer Speed. Travel moves still use the extruder's travel speed.
 
 # Presets
 A preset is a plain text file with one `key value` pair per line. It stores every setting above, every extruder, and the parameters of one everyday model (the selected one, or the first one if none is selected), including its Regular Print Settings (as `regular.…` lines). It does not store what type an object is. Files start with a `presetVersion` line; older files, with or without it, still import.
@@ -200,16 +199,39 @@ The same app also runs as a desktop app (Electron), which can slice **Regular Pr
 
 1. Install PrusaSlicer. The app looks for it in the usual install folder (on Windows, `C:\Program Files\Prusa3D\PrusaSlicer\prusa-slicer-console.exe`). If it is somewhere else, use **Slicer → Locate PrusaSlicer…** or set the `PRUSA_SLICER_PATH` environment variable.
 2. Optionally, export a config from PrusaSlicer (**File → Export → Export Config**) and choose it under **Slicer → Choose PrusaSlicer Profile…**. Everything it sets is used, except the settings the app controls: each object's own Regular Print Settings (layer and first-layer height, walls, infill density and pattern, solid layers, supports, brim and, unless `Use Profile Speeds` is checked, the print and first-layer speeds), the machine size, nozzle and filament, and the start/end G-code, skirt and wipe tower (the app's own start/end G-code, purge line and purge tower are used instead).
-3. Start the app:
+3. Install the app's dependencies once, then start it:
+
+```bash
+npm install
+```
 
 ```bash
 npm run desktop
 ```
 
+`npm run desktop` makes a production build of the page first. `npm run desktop:dev` starts with a development build instead (faster to build, with source maps).
+
+Changing the PrusaSlicer program or profile from the **Slicer** menu marks a sliced plate out of date, like any other change to the plate. A post-processing script in a profile is never run: the app reads PrusaSlicer's G-code back as it wrote it.
+
 The app reads Prusa's own printer, print and filament profiles from the PrusaSlicer install (`resources/profiles/PrusaResearch.ini`); it does not ship them. They are applied in this order, each winning over the one before: the `PrusaSlicer Printer` and the object's `Print Profile` and `Filament Profile`, then your own config from step 2, then the app's own settings.
 
 PrusaSlicer's accelerations, jerk and pressure advance (from the print and filament profiles) are kept for the regular parts. Before any move the app makes itself (foam, shells, purge), it sets its own back: pressure advance off (`M572 S0` on the XL, `M900 K0` on the MK3S), 1000 mm/s² acceleration and 8 mm/s jerk. When PrusaSlicer's moves carry on after the app's own (after a purge tower layer, say), the values PrusaSlicer last set for that tool are written again. A foam thread is laid at a fixed ratio V* to the head speed, and pressure advance would push extra filament out whenever the head speeds up. The start G-code now also turns pressure advance off: `M572 S0` on the XL, instead of the MK3-style `M900` lines it wrote before, and `M900 K0` on the MK3S, instead of `M900 K0.05` and `K30`, which turned it on.
 
-Without PrusaSlicer, or in the web version, Regular Print objects are sliced with the built-in slicer as before. Foam and augmentation slicing is unchanged.
+Without PrusaSlicer, or in the web version, Regular Print objects are sliced with the built-in slicer as before. Foam and augmentation slicing is unchanged; foam that follows a PrusaSlicer part is printed with the part cooling fan off, as it is on its own.
 
 PrusaSlicer is a separate program under the AGPL-3.0 licence. The app only runs it; it is not included.
+
+# Running and Developing
+
+The app is a web page built with webpack. With [Node.js](https://nodejs.org/) installed, install the dependencies once:
+
+```bash
+npm install
+```
+
+Then, from the project folder:
+
+- `npm start` builds the page for development and opens it in the browser, rebuilding on every change.
+- `npm run build` makes the production build in `dist/`.
+- `npm test` runs the tests, and `npm run typecheck` checks the types of the app and the tests.
+- `npm run desktop` builds the page and starts the desktop app (see above).

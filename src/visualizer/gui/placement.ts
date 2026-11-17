@@ -68,6 +68,23 @@ export function arrangeSpace(printer: Printer): ArrangeSpace {
  */
 function meshFootprint(mesh: THREE.Mesh): { outline: Point2[], top: number } {
     mesh.updateMatrixWorld(true);
+    // The outline only depends on the geometry and how it is turned and scaled, and the top on
+    // its height above the bed as well. Kept per geometry, so placing one object does not go
+    // through every vertex of every other object again.
+    const key = [...mesh.quaternion.toArray(), ...mesh.scale.toArray(), mesh.position.z].join(',');
+    const cached = footprints.get(mesh.geometry);
+    if (cached && cached.key === key) {
+        return cached.footprint;
+    }
+    const footprint = computeFootprint(mesh);
+    footprints.set(mesh.geometry, { key, footprint });
+    return footprint;
+}
+
+/** The footprint last worked out for each geometry, and the orientation it was worked out for. */
+const footprints = new WeakMap<THREE.BufferGeometry, { key: string, footprint: { outline: Point2[], top: number } }>();
+
+function computeFootprint(mesh: THREE.Mesh): { outline: Point2[], top: number } {
     const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
     const vertex = new THREE.Vector3();
     const points: Point2[] = [];
