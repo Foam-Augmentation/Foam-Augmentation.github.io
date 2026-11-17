@@ -525,6 +525,63 @@ describe('line spacing ramp and extra flat layers', () => {
         // Nothing is extruded on the way back to where a copy starts.
         expect(layer1[0].travel).toBe(true);
     });
+
+    /** The block model with a 4 x 4 x 3.4 mm bump model: two layers of bump every 10 mm. */
+    function bumpyModel(config: Partial<ToolpathConfig>): EverydayModel {
+        const model = blockModel({ generateBumps: true, initialFoamLayerCount: 2, ...config });
+        model.bumpMesh = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 3.4).translate(0, 0, 1.7), new THREE.MeshBasicMaterial());
+        return model;
+    }
+    const zRange = (points: PathPoint[]) => ({
+        min: Math.min(...points.map(p => p.point.z)),
+        max: Math.max(...points.map(p => p.point.z)),
+    });
+
+    it('puts bumps right on top of a stack that has no extra flat layers', () => {
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(barePrinter()), bumpyModel({}))!;
+        const printed = toolpath.filter(isModelExtrusion);
+        const stackTop = zRange(printed.filter(p => p.layer === 1));
+        const bumps = printed.filter(p => p.layer! >= 2);
+
+        expect(bumps.length).toBeGreaterThan(0);
+        expect(zRange(bumps).min).toBeCloseTo(stackTop.max + 1.7, 6);
+    });
+
+    it('prints the bumps of a curve augment above its extra flat layers, and after them', () => {
+        // With the purge tower, so the moves to and from it are checked as well.
+        const printer = new Printer();
+        const toolpath = generateAugmentFoamToolpath(fakeVisualizer(printer), bumpyModel({ curveAugment: true }))!;
+        const printed = toolpath.filter(isModelExtrusion);
+        const layerOf = (layer: number) => printed.filter(p => p.layer === layer);
+
+        // Two layers of stack, three extra flat layers, and the bumps from there up.
+        const flatTop = zRange(layerOf(4));
+        const bumps = printed.filter(p => p.layer! >= 5);
+        expect(layerOf(2).length).toBe(layerOf(1).length);
+        expect(bumps.length).toBeGreaterThan(0);
+        expect(bumps.length).toBeLessThan(layerOf(1).length);
+        expect(flatTop.max).toBeCloseTo(zRange(layerOf(1)).max + 3 * 1.7, 6);
+        expect(zRange(bumps).min).toBeCloseTo(flatTop.max + 1.7, 6);
+
+        // No layer number is shared between a flat layer and a bump: each one is at one height.
+        for (const layer of new Set(printed.map(p => p.layer!))) {
+            const { min, max } = zRange(layerOf(layer));
+            expect(max - min).toBeLessThan(1e-6);
+        }
+
+        // The flat layers are all down before the first bump, and from then on the head never
+        // comes back below the top one while it is over the area.
+        const lastFlat = toolpath.lastIndexOf(layerOf(4)[layerOf(4).length - 1]);
+        const firstBump = toolpath.indexOf(bumps[0]);
+        expect(lastFlat).toBeLessThan(firstBump);
+        toolpath.slice(lastFlat).forEach(p => {
+            const overArea = Math.abs(p.point.x - 100) <= 16 && Math.abs(p.point.y - 100) <= 16;
+            if (overArea) expect(p.point.z).toBeGreaterThanOrEqual(flatTop.max - 1e-6);
+        });
+
+        expect(toolpath.every(isFinitePoint)).toBe(true);
+        expect(buildPrintGcode(printer, [toolpath])).not.toMatch(/NaN|Infinity|undefined/);
+    });
 });
 
 describe('boundary outline', () => {

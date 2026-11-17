@@ -983,6 +983,63 @@ function makeChunkPath(
 
 
 /**
+ * A stretch of path printed once between the chunks of a tree: after every chunk that starts
+ * below a height, and before the first one that starts at or above it (or at the end of the path
+ * if there is none). The chunks after it are approached from where it ends.
+ */
+interface PathInterlude {
+    /** The slice height (model-local, like a region's) that the chunks after it start at or above. */
+    beforeHeight: number;
+    /**
+     * Builds it from the path printed so far.
+     *
+     * @param printed - Every point so far, purge tower and approach moves included.
+     * @returns The points to add. Empty for none.
+     */
+    make(printed: PathPoint[]): PathPoint[];
+}
+
+/**
+ * The extra layers on top of a curve augment's stack: copies of the stack's top layer, each one
+ * layer thickness above the last. The top layer is picked by its number, not by height: its
+ * points are only all at one height when it is flat and printed at a single H*.
+ *
+ * @param {PathPoint[]} modelPoints The model's points printed so far, in order, without the
+ *                                  purge tower and the moves to and from it.
+ * @param {number} layerCount How many layers the stack has. Points on a higher layer (bumps) sit
+ *                            above the stack and are not part of it.
+ * @param {number} deltaZ The layer thickness (mm).
+ * @returns {PathPoint[]} The copies in print order. Empty if nothing of the stack was printed.
+ */
+function makeExtraFlatLayers(modelPoints: PathPoint[], layerCount: number, deltaZ: number): PathPoint[] {
+    let topLayer = -Infinity;
+    for (const tp of modelPoints) {
+        if (tp.layer !== undefined && tp.layer < layerCount && tp.layer > topLayer) {
+            topLayer = tp.layer;
+        }
+    }
+    const topLayerPoints = modelPoints.filter(tp => tp.layer === topLayer);
+
+    const copies: PathPoint[] = [];
+    for (let layer = 1; layer <= CURVE_AUGMENT_EXTRA_FLAT_LAYERS; layer++) {
+        topLayerPoints.forEach((point, i) => {
+            const copy: PathPoint = {
+                ...point,
+                debug: undefined,
+                layer: topLayer + layer,
+                point: new THREE.Vector3(point.point.x, point.point.y, point.point.z + layer * deltaZ),
+            };
+            if (i === 0) {
+                // Nothing is extruded on the way back to where the layer starts.
+                copy.travel = true;
+            }
+            copies.push(copy);
+        });
+    }
+    return copies;
+}
+
+/**
  * Makes a toolpath that minimizes travel movements given a tree of printable chunk regions.
  * Expects the roots to have a modelObj object.
  *
@@ -997,6 +1054,7 @@ function makeChunkPath(
  * @param {LayerHeights} layerHeights Passed straight through to makeChunkPath, so that each chunk's points carry their real heights by the time the travel moves between chunks are worked out.
  * @param {PurgeTowerSpec} [purgeTower] The purge tower to build alongside the print. Leave out for no tower.
  * @param {number} purgeTowerStartHeight How tall the purge tower already is (mm), e.g. from a model printed before this one.
+ * @param {PathInterlude} [interlude] A stretch of path to print once between the chunks.
  * @returns {PathPoint[]} The toolpath that minimizes travel movements as a list of points.
  */
 function makeChunkTreePath(
@@ -1007,6 +1065,7 @@ function makeChunkTreePath(
     layerHeights: LayerHeights,
     purgeTower?: PurgeTowerSpec,
     purgeTowerStartHeight: number = 0,
+    interlude?: PathInterlude,
 ): PathPoint[] {
     const toolpath: PathPoint[] = [];
     let lastPoint = startPoint;
@@ -1024,6 +1083,20 @@ function makeChunkTreePath(
             child.modelObj = chunk.modelObj;
         });
         roots.splice(index, 1, ...chunk.children);
+    };
+
+    /** Adds the interlude to the path, the one time it is asked for. */
+    let interludePlayed = false;
+    const playInterlude = () => {
+        if (!interlude || interludePlayed) return;
+        interludePlayed = true;
+        const extra = interlude.make(toolpath);
+        if (!extra.length) return;
+        pushAll(toolpath, extra);
+        const last = extra[extra.length - 1];
+        lastPoint = last.point;
+        // Its points name their own tools; the next chunk starts from the one it ended with.
+        currentExtruder = last.extruder ?? currentExtruder;
     };
 
     while (roots.length) {
@@ -1044,6 +1117,12 @@ function makeChunkTreePath(
             if (height < lowestHeight) {
                 lowestHeight = height;
             }
+        }
+
+        // Everything below the interlude is printed: it goes in here, and the chunks above it
+        // are approached from where it ends.
+        if (interlude && lowestHeight >= interlude.beforeHeight) {
+            playInterlude();
         }
 
         const printableChunkIndices = eligibleIndices.filter(
@@ -1130,6 +1209,8 @@ function makeChunkTreePath(
         }
         currentExtruder = printExtruder;
     }
+    // No chunk was above it: it ends the path.
+    playInterlude();
 
     return fillToolpath(toolpath, TOOLPATH_FILL_DISTANCE);
 }
@@ -1679,6 +1760,9 @@ export function generateAugmentFoamToolpath(
     const flatLayerNum = config.additionalCurveLayers;
     const layerCount = config.initialFoamLayerCount + modelObj.initialConfig.initialFoamLayerCount +
                        (config.curveAugment ? flatLayerNum : 0);
+    // A curve augment prints its top layer a few more times above the stack (see
+    // makeExtraFlatLayers), so bumps start above those layers rather than inside them.
+    const bumpBaseLayer = layerCount + (config.curveAugment && layerCount > 0 ? CURVE_AUGMENT_EXTRA_FLAT_LAYERS : 0);
 
     if (config.generateBumps && !modelObj.bumpMesh) {
         notify('Bumps are switched on but no bump model is loaded, so no bumps were generated.', 'warning');
@@ -1736,7 +1820,7 @@ export function generateAugmentFoamToolpath(
         }
 
         // Add the bump contours to every point we want to add a bump at.
-        const bumpHeight = layerCount * config.deltaZ;
+        const bumpHeight = bumpBaseLayer * config.deltaZ;
         bumpPoints.forEach(p => {
             // Use .some so we can break by returning true
             bumpContours.some(contour => {
@@ -1763,6 +1847,9 @@ export function generateAugmentFoamToolpath(
         })
     }
 
+    // With bumps, the extra flat layers of a curve augment are printed before them (see below).
+    // Asked here: the stack's regions are added to this same list next.
+    const flatLayersBeforeBumps = config.curveAugment && bumpRegions.length > 0;
     const sliceRegions: SliceRegion[] = bumpRegions;
 
     for (let i = 0; i < layerCount; i++) {
@@ -1798,9 +1885,12 @@ export function generateAugmentFoamToolpath(
         chunkNode.modelObj = modelObj;
     });
 
-    let modelHeight = -Infinity;
+    // Layer 0 is the lowest slice. Every stack starts from the same height, but bumps that were
+    // raised above the extra flat layers have no slice right under them, so they are roots of
+    // the tree as well, higher up, and must not be taken for where the layers start.
+    let modelHeight = Infinity;
     regionTree.forEach(region => {
-        if (region.region.height > modelHeight) {
+        if (region.region.height < modelHeight) {
             modelHeight = region.region.height;
         }
     });
@@ -1865,6 +1955,15 @@ export function generateAugmentFoamToolpath(
         },
         printer.purgeTower ? makePurgeTowerSpec(printer) : undefined,
         options.purgeTowerStartHeight ?? 0,
+        // With bumps, the extra flat layers are printed once the stack is done and before the
+        // first bump, which sits on top of them. (Half a layer below the first height above
+        // the stack, so rounding cannot put a stack layer on the wrong side.)
+        flatLayersBeforeBumps
+            ? {
+                beforeHeight: (layerCount - 0.5) * config.deltaZ,
+                make: printed => makeExtraFlatLayers(printed.filter(tp => tp.role === undefined), layerCount, config.deltaZ),
+            }
+            : undefined,
     );
 
     if (!toolpath.length) {
@@ -1876,38 +1975,9 @@ export function generateAugmentFoamToolpath(
     // leave out everything that carries a role.
     const modelPoints = toolpath.filter(tp => tp.role === undefined);
 
-    // Extra layers on top if needed: copies of the top layer of the stack, each one layer
-    // thickness above the last. The top layer is picked by its number, not by height: its points
-    // are only all at one height when it is flat and printed at a single H*.
-    if (config.curveAugment && modelPoints.length) {
-        let topLayer = -Infinity;
-        for (const tp of modelPoints) {
-            // Bumps sit above the stack and are not part of it.
-            if (tp.layer !== undefined && tp.layer < layerCount && tp.layer > topLayer) {
-                topLayer = tp.layer;
-            }
-        }
-        const topLayerPoints = modelPoints.filter(tp => tp.layer === topLayer);
-
-        for (let layer = 1; layer <= CURVE_AUGMENT_EXTRA_FLAT_LAYERS; layer++) {
-            topLayerPoints.forEach((point, i) => {
-                const copy: PathPoint = {
-                    ...point,
-                    debug: undefined,
-                    layer: topLayer + layer,
-                    point: new THREE.Vector3(
-                        point.point.x,
-                        point.point.y,
-                        point.point.z + (layer * config.deltaZ)
-                    )
-                };
-                if (i === 0) {
-                    // Nothing is extruded on the way back to where the layer starts.
-                    copy.travel = true;
-                }
-                toolpath.push(copy);
-            });
-        }
+    // Extra layers on top if needed. With bumps they are already in the path, under the bumps.
+    if (config.curveAugment && !flatLayersBeforeBumps) {
+        pushAll(toolpath, makeExtraFlatLayers(modelPoints, layerCount, config.deltaZ));
     }
 
     if (printer.checkCollisions && modelPoints.length) {

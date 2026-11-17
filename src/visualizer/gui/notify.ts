@@ -55,8 +55,11 @@ export function notify(message: string, kind: NotifyKind = 'info'): void {
   getToastContainer().appendChild(toast);
 }
 
-/** Whether the busy overlay is up. */
-let busy = false;
+/**
+ * The labels of the work running behind the busy overlay, oldest first. More than one piece can
+ * run at a time: a toolpath refresh that was waiting starts while a slice waits for PrusaSlicer.
+ */
+const busyWork: string[] = [];
 
 /**
  * Whether work is running behind the busy overlay right now. The overlay keeps the pointer off
@@ -65,11 +68,24 @@ let busy = false;
  * @returns True while the overlay is shown.
  */
 export function isBusy(): boolean {
-  return busy;
+  return busyWork.length > 0;
 }
 
-function setBusy(label: string | null): void {
-  busy = label !== null;
+/**
+ * Notes that a piece of work started or ended, and shows the overlay for as long as any is
+ * running, with the label of the one that started last.
+ *
+ * @param label What the user is waiting for.
+ * @param running True when the work starts, false when it ends.
+ */
+function setBusy(label: string, running: boolean): void {
+  if (running) {
+    busyWork.push(label);
+  } else {
+    const index = busyWork.lastIndexOf(label);
+    if (index >= 0) busyWork.splice(index, 1);
+  }
+  const shown = busyWork.length ? busyWork[busyWork.length - 1] : null;
   let overlay = document.getElementById('busyOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -78,8 +94,8 @@ function setBusy(label: string | null): void {
     overlay.setAttribute('aria-busy', 'true');
     document.body.appendChild(overlay);
   }
-  overlay.textContent = label ?? '';
-  overlay.style.display = label === null ? 'none' : 'flex';
+  overlay.textContent = shown ?? '';
+  overlay.style.display = shown === null ? 'none' : 'flex';
 }
 
 /**
@@ -102,7 +118,7 @@ export function withBusy<T>(label: string, work: () => T | Promise<T>): Promise<
   }
 
   return new Promise<T>((resolve, reject) => {
-    setBusy(label);
+    setBusy(label, true);
 
     let started = false;
     const fail = (error: unknown) => {
@@ -118,13 +134,13 @@ export function withBusy<T>(label: string, work: () => T | Promise<T>): Promise<
       try {
         result = work();
       } catch (error) {
-        setBusy(null);
+        setBusy(label, false);
         fail(error);
         return;
       }
       Promise.resolve(result).then(
-        value => { setBusy(null); resolve(value); },
-        error => { setBusy(null); fail(error); },
+        value => { setBusy(label, false); resolve(value); },
+        error => { setBusy(label, false); fail(error); },
       );
     };
 

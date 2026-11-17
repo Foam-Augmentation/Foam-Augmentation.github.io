@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import Visualizer from '../Visualizer';
 import { EverydayModel } from '../types/modelTypes';
 import { createSelectedMeshFromHighlight } from '../interactions/createSelectedMeshFromHighlight';
-import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
-import { sampleSelectedMesh } from './sampleSelectedMesh';
+import { resampleSelection } from './sampleSelectedMesh';
 import { generateAugmentFoamToolpath } from './generateFoamToolpath';
 import { notify } from '../gui/notify';
 
@@ -276,8 +275,7 @@ function _regenerateAfterSenseChange(visualizer: Visualizer, modelObj: EverydayM
     return;
   }
   try {
-    updateSelectedMeshBoundingBox(visualizer, modelObj);
-    sampleSelectedMesh(visualizer, modelObj);
+    resampleSelection(visualizer, modelObj);
     generateAugmentFoamToolpath(visualizer, modelObj);
   } catch (error) {
     console.error(error);

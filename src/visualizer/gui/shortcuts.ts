@@ -12,12 +12,7 @@ import type { EverydayModel } from '../types/modelTypes';
 import { duplicateModel } from '../loaders/modelLoader';
 import { isBusy } from './notify';
 import { arrangePlate } from './placement';
-
-/** Whether a key press goes to something the user is typing in. */
-function isTyping(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null;
-  return Boolean(element?.closest?.('input, select, textarea, [contenteditable="true"]'));
-}
+import { isTyping } from './keyTarget';
 
 /**
  * Turns the shortcuts on. Call once.

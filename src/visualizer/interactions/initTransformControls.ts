@@ -4,6 +4,7 @@ import Visualizer from '../Visualizer';
 import type { EverydayModel } from '../types/modelTypes';
 import { syncAuxTransforms, syncTransformFields } from '../gui/modelActions';
 import { layOnFace } from '../gui/placement';
+import { takesEscape } from '../gui/keyTarget';
 import { pointerToNdc } from './pointerToNdc';
 
 /** Gizmo mode for each transform type offered in a model's Transform folder. */
@@ -81,11 +82,12 @@ function moveModels(visualizer: Visualizer, transformControls: TransformControls
     // Esc releases the gizmo, stops area selection and deselects the model.
     document.addEventListener('keydown', (event: KeyboardEvent) => {
         if (event.key !== 'Escape') return;
-        // In a field, Esc leaves the field. Deselecting the object there would hide the very
-        // settings that are being edited.
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) {
-            target.blur();
+        // In a field, Esc leaves the field (and on a dropdown, closes its list). Deselecting the
+        // object there would hide the very settings that are being edited. A checkbox that only
+        // kept the focus after a click is not being edited: there Esc cancels as usual. (Only
+        // controls outside the settings panel get here: lil-gui keeps its own key presses.)
+        if (takesEscape(event.target)) {
+            (event.target as HTMLElement).blur();
             return;
         }
         visualizer.clearSelection();

@@ -42,6 +42,24 @@ function validateIni(ini, maxLength, what) {
 }
 
 /**
+ * Settings text with every setting that would run a program set to nothing. These settings are
+ * loaded last, so that is also the last word on such a setting in a profile loaded before them
+ * (the user's own, which nothing here checks). Done where PrusaSlicer is started, not left to
+ * the page to have put the empty line in.
+ *
+ * @param {string} ini Settings text that passed validateIni.
+ * @returns {string} The same settings, each forbidden key once, with no value.
+ */
+function withoutPrograms(ini) {
+    const kept = ini.split('\n').filter(line => {
+        const match = /^([a-z0-9_]+) = /.exec(line);
+        return !(match && FORBIDDEN_KEYS.has(match[1]));
+    });
+    while (kept.length && kept[kept.length - 1] === '') kept.pop();
+    return [...kept, ...[...FORBIDDEN_KEYS].map(key => `${key} = `), ''].join('\n');
+}
+
+/**
  * Checks a slicing request from the page.
  *
  * @param {unknown} request The request.
@@ -69,7 +87,9 @@ function validateRequest(request) {
 /**
  * Whether a URL is the app's own page: the given file, whatever query or fragment follows it.
  * Compared as file paths, so two spellings of the same file (the case of a Windows drive letter,
- * an escaped character) do not make the app refuse its own page.
+ * an escaped character) do not make the app refuse its own page. A URL with a host is a file on
+ * a network share on Windows (`file://server/share/...` is `\\server\share\...`), where the app
+ * itself may be; anywhere else such a URL is not a local file, and fileURLToPath refuses it.
  *
  * @param {string} url The URL.
  * @param {string} pageFile The path of the app's page.
@@ -78,7 +98,7 @@ function validateRequest(request) {
 function isPageUrl(url, pageFile) {
     try {
         const parsed = new URL(url);
-        if (parsed.protocol !== 'file:' || parsed.host !== '') return false;
+        if (parsed.protocol !== 'file:') return false;
         const file = path.normalize(fileURLToPath(parsed));
         const page = path.normalize(pageFile);
         return process.platform === 'win32' ? file.toLowerCase() === page.toLowerCase() : file === page;
@@ -87,4 +107,4 @@ function isPageUrl(url, pageFile) {
     }
 }
 
-module.exports = { isPageUrl, validateIni, validateRequest, FORBIDDEN_KEYS, MAX_PARTS, MAX_STL_BYTES };
+module.exports = { isPageUrl, validateIni, validateRequest, withoutPrograms, FORBIDDEN_KEYS, MAX_PARTS, MAX_STL_BYTES };

@@ -35,6 +35,11 @@ const state = {
   /** Whether PrusaSlicer is available (so the dropdowns do something). */
   available: false,
   loading: false,
+  /**
+   * Counts the PrusaSlicer installs the bundle was read for. A read that ends after another
+   * install was located is of the old one, and is dropped.
+   */
+  install: 0,
 };
 
 /** A dropdown, what it was last built for, and what to do when it changes. */
@@ -178,6 +183,10 @@ export function setProfileControlsAvailable(visualizer: Visualizer, available: b
 export function reloadProfileControls(visualizer: Visualizer): void {
   forgetVendorBundle();
   state.bundle = null;
+  // A read that is still under way is of the old install: it is dropped when it ends, and the
+  // refresh below starts one of the new install right away.
+  state.install++;
+  state.loading = false;
   refreshProfileControls(visualizer);
 }
 
@@ -190,7 +199,9 @@ export function reloadProfileControls(visualizer: Visualizer): void {
 export function refreshProfileControls(visualizer: Visualizer): void {
   if (state.available && !state.bundle && !state.loading) {
     state.loading = true;
+    const install = state.install;
     void loadVendorBundle().then(bundle => {
+      if (install !== state.install) return;
       state.loading = false;
       if (bundle) {
         state.bundle = bundle;

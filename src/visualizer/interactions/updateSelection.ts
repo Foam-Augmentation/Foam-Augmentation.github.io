@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import Visualizer from '../Visualizer';
 import { createSelectedMeshFromHighlight } from './createSelectedMeshFromHighlight';
-import { updateSelectedMeshBoundingBox } from '../toolpath/updateSelectedMeshBoundingBox';
-import { sampleSelectedMesh } from '../toolpath/sampleSelectedMesh';
+import { resampleSelection } from '../toolpath/sampleSelectedMesh';
 import { generateAugmentFoamToolpath } from '../toolpath/generateFoamToolpath';
 import type { PathPoint } from '../toolpath/pathTypes';
 import { INTERSECTED, NOT_INTERSECTED, CONTAINED } from 'three-mesh-bvh';
@@ -314,8 +313,7 @@ export function updateSelection(
  * @throws {Error} If sampling or toolpath generation fails (for example an invalid grid size).
  */
 export function regenerateSelectionToolpath(visualizer: Visualizer, modelObj: EverydayModel) {
-    updateSelectedMeshBoundingBox(visualizer, modelObj);
-    sampleSelectedMesh(visualizer, modelObj);
+    resampleSelection(visualizer, modelObj);
 
     visualizer.printer.updateParameters(modelObj.toolpathConfig);
 

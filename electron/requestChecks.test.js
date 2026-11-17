@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import checks from './requestChecks.js';
 
-const { isPageUrl, validateIni, validateRequest } = checks;
+const { isPageUrl, validateIni, validateRequest, withoutPrograms } = checks;
 
 /** The smallest thing that passes for a binary STL: an 80-byte header and a triangle count. */
 const stl = () => new Uint8Array(84);
@@ -65,5 +65,26 @@ describe('isPageUrl', () => {
         expect(isPageUrl('https://example.com/dist/index.html', page)).toBe(false);
         expect(isPageUrl('file://server/share/dist/index.html', page)).toBe(false);
         expect(isPageUrl('not a url', page)).toBe(false);
+    });
+
+    // A URL with a host is a path on a network share on Windows only.
+    it.runIf(process.platform === 'win32')('accepts the page of an app that is on a network share', () => {
+        const shared = '\\\\server\\share\\foam\\dist\\index.html';
+        expect(isPageUrl('file://server/share/foam/dist/index.html', shared)).toBe(true);
+        expect(isPageUrl('file://SERVER/share/foam/dist/index.html?x=1', shared)).toBe(true);
+        expect(isPageUrl('file://other/share/foam/dist/index.html', shared)).toBe(false);
+        expect(isPageUrl('file://server/share/foam/dist/other.html', shared)).toBe(false);
+    });
+});
+
+describe('withoutPrograms', () => {
+    it('ends the settings with an empty post_process, once', () => {
+        expect(withoutPrograms('layer_height = 0.2\n')).toBe('layer_height = 0.2\npost_process = \n');
+        expect(withoutPrograms('post_process = \nlayer_height = 0.2')).toBe('layer_height = 0.2\npost_process = \n');
+        expect(withoutPrograms('')).toBe('post_process = \n');
+    });
+
+    it('gives settings that still pass the check', () => {
+        expect(() => validateIni(withoutPrograms('layer_height = 0.2\n\nfill_density = 20%\n'), 1000, 'settings')).not.toThrow();
     });
 });

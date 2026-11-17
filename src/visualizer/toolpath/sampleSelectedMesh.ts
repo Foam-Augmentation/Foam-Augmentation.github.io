@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel, PointCloudPoint } from '../types/modelTypes';
+import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
 
 /** Refuse to sample more grid cells than this; a grid that fine would freeze the tab. */
 const MAX_GRID_CELLS = 4_000_000;
@@ -145,4 +146,19 @@ export function sampleSelectedMesh(visualizer: Visualizer, modelObj: EverydayMod
     // Save the new sense points mesh.
     modelObj.pointsMesh_sense = pointsMesh_sense;
     pointsMesh_sense.position.copy(modelObj.mesh.position);
+}
+
+/**
+ * Brings a model's selection up to date with the model as it stands now: the selection's box
+ * and outline are moved onto it, and its areas are sampled again with the current rotation,
+ * scale and grid size. Everything that generates an augmentation's toolpath does this first, so
+ * a preview and the G-code that is saved are sampled the same way.
+ *
+ * @param visualizer - The Visualizer instance.
+ * @param modelObj - The model whose selection is brought up to date.
+ * @throws {Error} If the model's grid size cannot be sampled (see sampleSelectedMesh).
+ */
+export function resampleSelection(visualizer: Visualizer, modelObj: EverydayModel): void {
+    updateSelectedMeshBoundingBox(visualizer, modelObj);
+    sampleSelectedMesh(visualizer, modelObj);
 }

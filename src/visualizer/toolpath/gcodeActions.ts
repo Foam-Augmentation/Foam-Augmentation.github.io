@@ -11,8 +11,7 @@ import {
     visualizeToolpath,
 } from './generateFoamToolpath';
 import { sliceRegularParts, type RegularSlicerUsed } from './prusaSlicer';
-import { sampleSelectedMesh } from './sampleSelectedMesh';
-import { updateSelectedMeshBoundingBox } from './updateSelectedMeshBoundingBox';
+import { resampleSelection } from './sampleSelectedMesh';
 import { disposeObject3D } from '../gui/modelActions';
 import { plateFingerprint, summarizePlate } from './plateSlice';
 import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
@@ -58,8 +57,7 @@ export function saveAugmentGcode(visualizer: Visualizer): Promise<void> {
             // refresh that waits for typing to stop, so the area is sampled again here rather
             // than trusting that the refresh has run.
             if (model.selectedRegularFoamMesh) {
-                updateSelectedMeshBoundingBox(visualizer, model);
-                sampleSelectedMesh(visualizer, model);
+                resampleSelection(visualizer, model);
             }
             const toolpath = generateAugmentFoamToolpath(visualizer, model, {
                 purgeTowerStartHeight: purgeTowerHeight,

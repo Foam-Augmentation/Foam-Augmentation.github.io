@@ -14,7 +14,7 @@ const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { isPageUrl, validateRequest } = require('./requestChecks');
+const { isPageUrl, validateRequest, withoutPrograms } = require('./requestChecks');
 
 /** How long PrusaSlicer may run before it is stopped (ms). */
 const SLICE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -164,7 +164,9 @@ async function slice(request) {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'foam-prusa-'));
     try {
         const iniPath = path.join(folder, 'settings.ini');
-        fs.writeFileSync(iniPath, request.ini);
+        // Loaded last (see the arguments below), with no post-processing script: that also
+        // switches off one in the user's own profile, which is loaded before it.
+        fs.writeFileSync(iniPath, withoutPrograms(request.ini));
         const vendorPath = path.join(folder, 'vendor-profiles.ini');
         if (request.profileIni) {
             fs.writeFileSync(vendorPath, request.profileIni);
