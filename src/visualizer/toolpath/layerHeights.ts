@@ -29,6 +29,8 @@ export interface ModelContext {
 export interface LayerHeights {
     /** Nozzle diameter times die swelling for each extruder (by index), which turns a point's hStar into its ZOffset. */
     threadDiameters: number[];
+    /** Nozzle diameter times die swelling (mm) for each extruder (by index), the clearance kept above the layer near walls. */
+    nozzleDiameters: number[];
     /** The layer height (mm) shell regions were sliced at. */
     shellLayerHeight: number;
     /** The surface to drape the layers over. Leave it out for flat layers. */

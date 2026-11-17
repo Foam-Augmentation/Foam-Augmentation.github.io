@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type Visualizer from '../Visualizer';
 import type Printer from '../../printer/Printer';
+import type { VTPSettings } from '../../printer/Printer';
 import type { EverydayModel, PointCloudPoint } from '../types/modelTypes';
 import {
     sliceMeshIntoLayers,
@@ -51,6 +52,36 @@ export type { PathPoint, PathRole } from './pathTypes';
 
 /** How many shell (regular, non-foam) perimeters are printed around each layer of a sliced model. */
 const SHELL_LAYER_COUNT = 2;
+
+/**
+ * Predicts the coil radius (mm), assuming viscous coiling where the radius is proportional to the
+ * fall height H = H* x thread diameter (Ribe, Habibi & Bonn 2006).
+ *
+ * @param {VTPSettings} settings The VTP settings, for H*.
+ * @param {number} threadDiameter The thread diameter (mm), from printer.threadDiameter().
+ * @returns {number} The predicted coil radius in mm.
+ */
+export function predictCoilRadius(settings: VTPSettings, threadDiameter: number): number {
+    /** Coil radius per mm of fall height: 2 mm diameter coils measured at H* = 6 with a 0.4 mm thread. */
+    const COIL_RADIUS_PER_FALL_HEIGHT = 1.9 / 2 / (6 * 0.4);
+    return COIL_RADIUS_PER_FALL_HEIGHT * settings.H_star * threadDiameter;
+}
+
+/** Smallest xy distance from p to the boundary in the BVH, or `best` if nothing is closer. */
+function bvhDistToPoint(node: SliceRegionBVHNode, p: THREE.Vector3, best: number): number {
+    const dx = Math.max(node.min.x - p.x, 0, p.x - node.max.x);
+    const dy = Math.max(node.min.y - p.y, 0, p.y - node.max.y);
+    if (Math.hypot(dx, dy) >= best) {
+        return best;
+    }
+    const closest = new THREE.Vector3();
+    for (const s of node.leafSegments) {
+        best = Math.min(best, new THREE.Line3(s.start, s.end).closestPointToPoint(p, true, closest).distanceTo(p));
+    }
+    if (node.left) best = bvhDistToPoint(node.left, p, best);
+    if (node.right) best = bvhDistToPoint(node.right, p, best);
+    return best;
+}
 
 /**
  * Throws a readable error for a parameter that has to be positive. A zero or negative layer
@@ -280,6 +311,7 @@ function fillToolpath(
                     feature: nextPoint.feature,
                     extruder: point.extruder,
                     hStar: point.hStar,
+                    hStarMax: point.hStarMax,
                     vStar: point.vStar,
                     edot: point.edot,
                     deltaL: point.deltaL
@@ -536,6 +568,9 @@ export function sliceSegments(
  * @param {boolean} scanX If true, the lines have a constant x and varying y instead of the other way around.
  * @param {THREE.Vector3} lastLayerPoint The last point printed so far. The path starts as close to it as possible.
  * @param {number} [edot] Filament feed rate to tag the extruding points with.
+ * @param {number} [hStar] Nominal H* the infill is printed at.
+ * @param {number} [coilRadius] Coil radius (mm) at that H*. Points closer than this to a wall get a lower H* cap.
+ * @param {number} [minHStar] Lowest H* allowed. Points that would need a lower H* are not printed.
  * @returns {PathPoint[]} The infill path. Empty if no scan line crosses the region.
  * @throws {Error} If a scan line crosses the boundary an odd number of times (the outline is open).
  */
@@ -546,6 +581,9 @@ function generateRectilinearInfillWithHoles(
     scanX: boolean,
     lastLayerPoint: THREE.Vector3,
     edot?: number,
+    hStar?: number,
+    coilRadius: number = 0,
+    minHStar: number = 0,
 ): PathPoint[] {
     assertPositive(deltaL, 'Line spacing (deltaL)');
     if (!outContour.length) {
@@ -609,6 +647,12 @@ function generateRectilinearInfillWithHoles(
     if(!printLines.length){
         return [];
     }
+    // Within one coil radius of a wall, cap H* so the coil (R ∝ H*) just reaches the wall.
+    const edgeHStarMax = (p: THREE.Vector3): number | undefined => {
+        const dist = bvhDistToPoint(boundaryBVH, p, coilRadius);
+        return dist < coilRadius ? hStar! * dist / coilRadius : undefined;
+    };
+
     const toolpath: PathPoint[] = [];
     let printHead = printLines[0].start.distanceTo(startPoint) < printLines[0].end.distanceTo(startPoint) ? printLines[0].start: printLines[0].end;
     //toolpath.push({point: printHead, travel: true}) //travel to start
@@ -627,10 +671,37 @@ function generateRectilinearInfillWithHoles(
                 start = chosenDist == distToStart;
             }
         }
+        const from = printLines[bestIndex][start ? 'start': 'end'];
+        const to = printLines[bestIndex][!start ? 'start': 'end'];
+        // Points that would need H* below minHStar can't fit a coil, so they aren't printed.
+        // Printing picks up again with a travel to the next point that fits.
+        let resume = true;
+        const add = (point: THREE.Vector3, hStarMax: number | undefined) => {
+            if (hStarMax !== undefined && hStarMax < minHStar) {
+                resume = true;
+                return;
+            }
+            toolpath.push(resume ? {point, travel: true, hStarMax} : {point, travel: false, edot, hStarMax});
+            resume = false;
+        };
         //travel to segment
-        toolpath.push({point: printLines[bestIndex][start ? 'start': 'end'], travel: true});
+        add(from, edgeHStarMax(from));
+        // Sample the line so the cap ramps near its ends and covers lines running along a wall.
+        // The first sample past the wall zone is kept too, so the cap stops there.
+        if (coilRadius > 0) {
+            const length = from.distanceTo(to);
+            let prevCapped = true;
+            for (let d = coilRadius / 4; d < length; d += coilRadius / 4) {
+                const point = pointAlongLine(from, to, d);
+                const hStarMax = edgeHStarMax(point);
+                if (hStarMax !== undefined || prevCapped) {
+                    add(point, hStarMax);
+                }
+                prevCapped = hStarMax !== undefined;
+            }
+        }
         //move to other
-        toolpath.push({point: printLines[bestIndex][!start ? 'start': 'end'], travel: false, edot});
+        add(to, edgeHStarMax(to));
         printHead = printLines[bestIndex][!start ? 'start': 'end'];
         //remove line
         printLines.splice(bestIndex, 1);
@@ -910,6 +981,9 @@ function makeChunkPath(
     const gradient = modelObj.gradient;
     let count = 0;
     const isFirstChunkPrinted = printedRegions.size === 0;
+    // Each chunk is printed by a single extruder, so its thread diameter sets H = H* d.
+    const extruder = chunk.regions[0]?.extruder ?? 0;
+    const threadDiameter = layerHeights.threadDiameters[extruder] ?? layerHeights.threadDiameters[0];
     const totalHeight = context.maxZ - context.minZ;
 
     for (const region of chunk.regions) {
@@ -968,7 +1042,12 @@ function makeChunkPath(
                     const boundaryBVH = isOffset
                         ? buildSliceRegionBVH(getBoundarySegments(piece.outer, piece.holes))
                         : region.BVH;
-                    piecePath = generateRectilinearInfillWithHoles(boundaryBVH, piece.outer, currentDeltaL, scanX, pieceStart, edot);
+                    const hStar = useInitial ? initialConfig.hStar : VTPSettings.H_star;
+                    const coilRadius = predictCoilRadius({ ...VTPSettings, H_star: hStar }, threadDiameter);
+                    // Lowest nozzle height near walls: one layer (deltaZ) plus a nozzle width of clearance.
+                    const nozzleDiameter = layerHeights.nozzleDiameters[extruder] ?? layerHeights.nozzleDiameters[0];
+                    const minHStar = (configToUse.deltaZ + nozzleDiameter) / threadDiameter;
+                    piecePath = generateRectilinearInfillWithHoles(boundaryBVH, piece.outer, currentDeltaL, scanX, pieceStart, edot, hStar, coilRadius, minHStar);
                 }
 
                 if (!piecePath.length) {
@@ -1026,9 +1105,6 @@ function makeChunkPath(
         return chunkPath;
     }
 
-    // Each chunk is printed by a single extruder, so its thread diameter sets H = H* d.
-    const extruder = chunk.regions[0]?.extruder ?? 0;
-    const threadDiameter = layerHeights.threadDiameters[extruder] ?? layerHeights.threadDiameters[0];
     const stack: LayerStack = {
         meshPosition: modelObj.mesh.position,
         deltaZ: modelObj.toolpathConfig.deltaZ,
@@ -1064,7 +1140,7 @@ function makeChunkPath(
             percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
         }
 
-        point.hStar = hStar + percent * (configToUse.hStarEnd - hStar);
+        point.hStar = Math.min(hStar + percent * (configToUse.hStarEnd - hStar), point.hStarMax ?? Infinity);
         point.vStar = vStar + percent * (configToUse.vStarEnd - vStar);
         point.edot = useInitial ? initialConfig.edot : VTPSettings.Edot;
         point.deltaZ = configToUse.deltaZ;
@@ -1456,6 +1532,7 @@ export function generateFoamToolpath(
         undefined,
         {
             threadDiameters: printer.extruders.map((_, i) => printer.threadDiameter(i)),
+            nozzleDiameters: printer.extruders.map(e => e.nozzleDiameter * e.dieSwelling),
             shellLayerHeight,
             models,
         },
@@ -1928,6 +2005,7 @@ export function generateAugmentFoamToolpath(
         modelHeight,
         {
             threadDiameters: printer.extruders.map((_, i) => printer.threadDiameter(i)),
+            nozzleDiameters: printer.extruders.map(e => e.nozzleDiameter * e.dieSwelling),
             shellLayerHeight: printer.shellLayerHeight,
             surface: {
                 samplePointMatrix: samplePointMatrixCopy,

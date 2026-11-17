@@ -1083,7 +1083,7 @@ export function buildChunkTree(
         rootNodes.push(currentChunkNode);
         break;
       }
-      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? printer.shellLayerHeight : currentChunkNode.VTPSettings.ZOffset);
+      const nozzleHeight = printer.extruders[extruder].nozzleLength/2;
       if (currentNode.children.length > 1
           || currentNode.children[0].region.height - root.region.height > nozzleHeight
           || currentNode.children[0].region.extruder !== chunkExtruder
@@ -1148,8 +1148,10 @@ function splitChunkTreeByOverlap(
   printer: Printer,
 ): void {
   if (roots.length === 0) return;
+
   const allChildren: ChunkNode[] = [];
 
+  // Shell chunks track which regions each of their regions depends on, so a split divides those too.
   const dependenciesFor = (chunk: ChunkNode, regions: SliceRegion[]) => {
     if (!chunk.regionDependencies) return { map: undefined, union: undefined };
     const map = new Map<string, Set<string>>();
@@ -1162,102 +1164,60 @@ function splitChunkTreeByOverlap(
     return { map, union };
   };
 
+  // Moves a chunk's regions from index j up into a new child chunk.
+  const splitAt = (chunk: ChunkNode, j: number) => {
+    const upperRegions = chunk.regions.slice(j);
+    const lowerRegions = chunk.regions.slice(0, j);
+    const upperDeps = dependenciesFor(chunk, upperRegions);
+    const lowerDeps = dependenciesFor(chunk, lowerRegions);
+    const upperNode: ChunkNode = {
+      regions: upperRegions,
+      children: chunk.children,
+      parent: chunk,
+      VTPSettings: printer.getVTPSettings(upperRegions[0].extruder),
+      shell: chunk.shell,
+      dependentRegions: upperDeps.union,
+      regionDependencies: upperDeps.map,
+    }
+    chunk.children = [upperNode];
+    chunk.regions = lowerRegions;
+    chunk.dependentRegions = lowerDeps.union;
+    chunk.regionDependencies = lowerDeps.map;
+  };
+
   for (let i = 0; i < roots.length; i++) {
     const root = roots[i];
-    const siblings = findHeightSiblings(
-      roots.filter((root, idx) => idx != i),
-      root
-    );
+    const siblings = findHeightSiblings(roots.filter((root, idx) => idx != i), root);
 
     for (const sibling of siblings) {
       let foundOverlap = false;
-
-      for (let j = 1; j < sibling.regions.length && !foundOverlap; j++) {
+      for (let j = 1; j < sibling.regions.length; j++) {
         for (let k = 0; k < root.regions.length; k++) {
-          if (checkOverlap(sibling.regions[j], root.regions[k])) {
+          const layerHeight = root.shell ? printer.shellLayerHeight : root.VTPSettings.deltaZ;
+          const siblingLayerHeight = sibling.shell ? printer.shellLayerHeight : sibling.VTPSettings.deltaZ;
+          // Only a sibling region above the root's needs to wait for the root.
+          if (sibling.regions[j].height + siblingLayerHeight > root.regions[k].height + layerHeight && checkOverlap(sibling.regions[j], root.regions[k])) {
+            // Split the sibling and the root at the same height, so both lower parts print first.
+            const splitHeight = sibling.regions[j].height;
+            splitAt(sibling, j);
+            const rootSplit = root.regions.findIndex(r => r.height >= splitHeight - layerHeight);
+            if (rootSplit > 0) {
+              splitAt(root, rootSplit);
+            }
             foundOverlap = true;
             break;
           }
         }
       }
-
       if (foundOverlap) {
-        const tip = (c: ChunkNode) =>
-          c.shell ? printer.shellLayerHeight : c.VTPSettings.ZOffset;
-
-        const rootMax = root.regions[root.regions.length - 1].height;
-
-        const j = sibling.regions.findIndex(
-          r => r.height > rootMax + HEIGHT_EPSILON
-        );
-
-        if (j > 0) {
-          const newNodeRegions = sibling.regions.slice(j);
-          const lowerRegions = sibling.regions.slice(0, j);
-          const upperDeps = dependenciesFor(sibling, newNodeRegions);
-          const lowerDeps = dependenciesFor(sibling, lowerRegions);
-
-          const newNodeSibling: ChunkNode = {
-            regions: newNodeRegions,
-            children: sibling.children,
-            parent: sibling,
-            // Same chunk split in two, so it keeps the settings it was built with.
-            VTPSettings: { ...sibling.VTPSettings },
-            shell: sibling.shell,
-            dependentRegions: upperDeps.union,
-            regionDependencies: upperDeps.map,
-          };
-
-          newNodeSibling.children.forEach(c => (c.parent = newNodeSibling));
-          sibling.children = [newNodeSibling];
-          sibling.regions = lowerRegions;
-          sibling.dependentRegions = lowerDeps.union;
-          sibling.regionDependencies = lowerDeps.map;
-        }
-
-        const siblingBase = sibling.regions[0].height;
-
-        if (
-          root.regions[0].height + tip(root)
-            < siblingBase + tip(sibling) - HEIGHT_EPSILON
-          &&
-          siblingBase + tip(sibling) + HEIGHT_EPSILON
-            <= root.regions[root.regions.length - 1].height
-        ) {
-          const k = root.regions.findIndex(
-            r => r.height > siblingBase + tip(sibling) + HEIGHT_EPSILON
-          );
-
-          if (k > 0) {
-            const upperRegions = root.regions.slice(k);
-            const lowerRegions = root.regions.slice(0, k);
-            const upperDeps = dependenciesFor(root, upperRegions);
-            const lowerDeps = dependenciesFor(root, lowerRegions);
-
-            const upperNode: ChunkNode = {
-              regions: upperRegions,
-              children: root.children,
-              parent: root,
-              VTPSettings: { ...root.VTPSettings },
-              shell: root.shell,
-              dependentRegions: upperDeps.union,
-              regionDependencies: upperDeps.map,
-            };
-
-            upperNode.children.forEach(c => (c.parent = upperNode));
-            root.children = [upperNode];
-            root.regions = lowerRegions;
-            root.dependentRegions = lowerDeps.union;
-            root.regionDependencies = lowerDeps.map;
-          }
-        }
         break;
       }
     }
   }
 
-  for (const r of roots) allChildren.push(...r.children);
-  splitChunkTreeByOverlap(allChildren, printer);
+  // Collected after all splits, so nodes created by a split are checked in the next round too.
+  for (const root of roots) allChildren.push(...root.children);
+  splitChunkTreeByOverlap(allChildren,printer);
 }
 
 /**

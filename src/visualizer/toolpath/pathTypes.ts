@@ -31,6 +31,8 @@ export interface PathPoint {
     /** Written into the G-code as a comment. */
     debug?: string;
     hStar?: number;
+    /** Upper limit on H* here, so the coil doesn't spill over a nearby wall. */
+    hStarMax?: number;
     vStar?: number;
     edot?: number;
     deltaZ?: number;
