@@ -994,7 +994,12 @@ describe('buildChunkForest', () => {
   /** Two 10 mm wide stacks of 15 layers, `gap` mm apart. */
   const twoStacks = (gap: number) =>
     buildRegionTree(foamLayers(15, (k, z) => [rect(0, 0, 10, 10, z), rect(10 + gap, 0, 20 + gap, 10, z)]), 1);
-  const expectPrintable = (chunks: ChunkNode[], tipOffset = CLEARANCE.tipOffset, thickness = CLEARANCE.thickness, offsetOf?: (chunk: ChunkNode) => number) => {
+  const expectPrintable = (
+    chunks: ChunkNode[],
+    tipOffset: (region: SliceRegion) => number = CLEARANCE.tipOffset,
+    thickness: (region: SliceRegion) => number = CLEARANCE.thickness,
+    offsetOf?: (chunk: ChunkNode) => number,
+  ) => {
     for (const lastOfTies of [false, true]) {
       expect(printProblems(printOrder(chunks, lastOfTies), printer, tipOffset, thickness, offsetOf)).toEqual(noProblems);
     }
