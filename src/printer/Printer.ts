@@ -6,8 +6,16 @@ import { DEFAULT_PRUSA_PRINTER_PROFILE, MOTION_COMMANDS, PURGE_LINE_LIFT } from 
 export interface Extruder {
   /** Nozzle diameter (in mm) */
   nozzleDiameter: number;
-  /** Nozzle length (in mm) */
+  /** Nozzle length (in mm): from its tip up to the base of the print head. */
   nozzleLength: number;
+  /** Outer diameter (in mm) of the flat tip of the nozzle, around the hole. */
+  nozzleTipWidth: number;
+  /** Height (in mm) of the cone the nozzle widens over, measured up from its tip. */
+  nozzleConeHeight: number;
+  /** Outer diameter (in mm) of the nozzle at the top of that cone. */
+  nozzleConeWidth: number;
+  /** Outer diameter (in mm) of the nozzle above the cone, up to the print head: its hex, across the corners. */
+  nozzleBodyWidth: number;
   /** Die swelling factor */
   dieSwelling: number;
   /** Print head speed during free movement */
@@ -22,6 +30,44 @@ export interface Extruder {
 }
 
 /**
+ * The outside of the nozzle of a Prusa Nextruder (Original Prusa XL, MK4, Core One), below the
+ * heater block. Measured off E3D's dimensioned drawing of the nozzle, scaled by its own 7 mm hex
+ * and 20.9 mm length callouts: a cone 2 mm tall from the flat tip (0.85 mm across on the drawing,
+ * rounded up here) to 3.7 mm across, then a 7 mm hex 3 mm tall, 8 mm across its corners.
+ */
+export const NEXTRUDER_NOZZLE = {
+  tipWidth: 1,
+  coneHeight: 2,
+  coneWidth: 3.7,
+  bodyWidth: 8,
+} as const;
+
+/**
+ * How much room the nozzle of an extruder takes up around its axis at a height above its tip:
+ * its radius there. Material that stands that far above the nozzle tip has to be at least this
+ * far from where the nozzle goes. The nozzle is a cone from its flat tip, with a wider body (its
+ * hex) from the top of the cone up to the print head.
+ *
+ * @param {Extruder} extruder The extruder whose nozzle it is.
+ * @param {number} height Height above the nozzle tip (in mm).
+ * @returns {number} The nozzle's radius at that height (in mm). 0 at or below the tip. Above the
+ *                   nozzle length it is still the body's radius: what is up there is the print
+ *                   head, which has a footprint of its own.
+ */
+export function nozzleRadiusAt(extruder: Extruder, height: number): number {
+  if (!(height > 0)) return 0;
+  // An extruder from before these settings existed has none of them: it gets the Nextruder's.
+  const setting = (value: number | undefined, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+  const tip = setting(extruder.nozzleTipWidth, NEXTRUDER_NOZZLE.tipWidth) / 2;
+  const cone = Math.max(tip, setting(extruder.nozzleConeWidth, NEXTRUDER_NOZZLE.coneWidth) / 2);
+  const body = Math.max(cone, setting(extruder.nozzleBodyWidth, NEXTRUDER_NOZZLE.bodyWidth) / 2);
+  const coneHeight = Math.min(setting(extruder.nozzleConeHeight, NEXTRUDER_NOZZLE.coneHeight), extruder.nozzleLength);
+  if (height > coneHeight) return body;
+  return tip + (cone - tip) * (height / coneHeight);
+}
+
+/**
  * Creates an extruder with the default parameters.
  * Used when adding a new extruder from the visualizer.
  *
@@ -31,6 +77,10 @@ export function createDefaultExtruder(): Extruder {
   return {
     nozzleDiameter: 0.4,
     nozzleLength: 4.5,
+    nozzleTipWidth: NEXTRUDER_NOZZLE.tipWidth,
+    nozzleConeHeight: NEXTRUDER_NOZZLE.coneHeight,
+    nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
+    nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
     dieSwelling: 1.0,
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
@@ -231,6 +281,10 @@ export default class Printer {
       {// TPU extruder
         nozzleDiameter: 0.4,
         nozzleLength: 4.5,
+        nozzleTipWidth: NEXTRUDER_NOZZLE.tipWidth,
+        nozzleConeHeight: NEXTRUDER_NOZZLE.coneHeight,
+        nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
+        nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
         dieSwelling: 1.0,
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 230,
@@ -241,6 +295,10 @@ export default class Printer {
       {//conductive TPU extruder
         nozzleDiameter: 0.4,
         nozzleLength: 4.5,
+        nozzleTipWidth: NEXTRUDER_NOZZLE.tipWidth,
+        nozzleConeHeight: NEXTRUDER_NOZZLE.coneHeight,
+        nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
+        nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
         dieSwelling: 1.0,
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 240,

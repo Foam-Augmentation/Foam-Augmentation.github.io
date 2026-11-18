@@ -4,7 +4,9 @@ import Delaunator from 'delaunator';
 import type { EverydayModel } from '../types/modelTypes';
 import type { PathPoint } from '../toolpath/pathTypes';
 import type Printer from '../../printer/Printer';
-import type { VTPSettings } from '../../printer/Printer';
+import { nozzleRadiusAt } from '../../printer/Printer';
+import { coilReach } from '../toolpath/coilModel';
+import type { Extruder, VTPSettings } from '../../printer/Printer';
 
 
 // ---------------------------------------------------------------------------------------------
@@ -30,6 +32,13 @@ const SEGMENT_CONNECT_TOLERANCE = 0.00001;
 const MIN_SEGMENT_LENGTH = 0.00001;
 // Slack used when comparing two heights, or when turning a height into a layer index.
 const HEIGHT_EPSILON = 0.0001;
+// Room (mm) left between the side of the nozzle and printed material that stands above its tip.
+const NOZZLE_CLEARANCE = 0.1;
+// How far (mm) to the side of the shell line below it a shell line is still held up by it, when
+// the caller does not say: half the width of a line from a 0.4 mm nozzle.
+const DEFAULT_WALL_OVERHANG = 0.2;
+// Shell lines are checked for what is under them at their corners and this often (mm) in between.
+const WALL_SAMPLE_SPACING = 1;
 // A region can only be the parent of a region that is less than this many layers above it.
 const MAX_PARENT_GAP_LAYERS = 1.5;
 // Extra inset added to the foam region inside a shell so the two never share an edge exactly.
@@ -99,6 +108,11 @@ export interface ChunkNode {
   modelObj?: EverydayModel;
   VTPSettings: VTPSettings;
   shell: boolean;
+  /**
+   * The round the chunk is printed in. Chunks are printed in increasing order; the ones that
+   * share a number can be printed in any order. See buildChunkForest.
+   */
+  order: number;
   dependentRegions?: Set<string>;
   regionDependencies?: Map<string, Set<string>>;
 }
@@ -778,37 +792,68 @@ export function checkPolygonOverlap(
  * @param {SliceRegion} shellRegion The shell region.
  * @param {SliceRegion} regularRegion The regular region to check against.
  * @param {number} maxDz The most the shell may be above the regular region and still count.
+ * @param {SliceRegionBVHNode} [regularBVH] A BVH of the regular region's boundary segments, if the caller already has one.
  * @returns {boolean} Whether or not the shell overlaps the regular region's solid area.
  */
 export function checkShellRegularOverlap(
   shellRegion: SliceRegion,
   regularRegion: SliceRegion,
-  maxDz: number = Infinity //TODO: unhardcode.
+  maxDz: number = Infinity, //TODO: unhardcode.
+  regularBVH?: SliceRegionBVHNode,
+): boolean {
+    const dz = shellRegion.height - regularRegion.height;
+    if (dz < -HEIGHT_EPSILON || dz > maxDz + HEIGHT_EPSILON) {
+        return false;
+    }
+    return shellCrossesRegion(shellRegion, regularRegion, regularBVH);
+}
+
+/**
+ * Determines if the lines of a shell region run over the solid area of a regular (non-shell)
+ * region when looking straight down, whatever their heights are. The solid area of a regular
+ * region is the space inside its outer contour but outside all its holes.
+ *
+ * @param {SliceRegion} shellRegion The shell region.
+ * @param {SliceRegion} regularRegion The regular region to check against.
+ * @param {SliceRegionBVHNode} [regularBVH] A BVH of the regular region's boundary segments (its
+ *                                          contour and holes), if the caller already has one.
+ *                                          Saves building it when one region is checked many times.
+ * @returns {boolean} Whether or not the shell's lines cross the regular region's solid area.
+ */
+export function shellCrossesRegion(
+  shellRegion: SliceRegion,
+  regularRegion: SliceRegion,
+  regularBVH?: SliceRegionBVHNode,
 ): boolean {
     // Fast bounding box check
     if (!checkOverlap(shellRegion, regularRegion)) {
         return false;
     }
-    const dz = shellRegion.height - regularRegion.height;
-    if (dz < -HEIGHT_EPSILON || dz > maxDz + HEIGHT_EPSILON) {
-        return false;
-    }
+    const boundaryBVH = regularBVH ?? buildSliceRegionBVH(getBoundarySegments(regularRegion.contour, regularRegion.holes));
 
-    // A point outside the box around the regular region's contour can't be inside the contour
-    const contourBounds = getBounds(regularRegion.contour, 0);
-
-    // Helper to check if a single point is inside the regular region's solid area
-    const isPointInRegularRegion = (pt: THREE.Vector3) => {
-        if (pt.x < contourBounds.min.x || pt.x > contourBounds.max.x ||
-            pt.y < contourBounds.min.y || pt.y > contourBounds.max.y) {
-            return false;
+    // How many boundary segments a ray from (x, y) towards +x crosses. Same rule as pointInPolygon,
+    // but only the segments near the ray are looked at.
+    const crossingsRightOf = (node: SliceRegionBVHNode, x: number, y: number): number => {
+        if (node.max.y < y || node.min.y > y || node.max.x < x) {
+            return 0;
         }
-        if (!pointInPolygon(pt, regularRegion.contour)) return false;
-        for (const hole of regularRegion.holes) {
-            if (pointInPolygon(pt, hole)) return false;
+        let count = 0;
+        for (const { start, end } of node.leafSegments) {
+            if ((start.y > y) !== (end.y > y) && x < ((end.x - start.x) * (y - start.y)) / (end.y - start.y) + start.x) {
+                count++;
+            }
         }
-        return true;
+        if (node.left) count += crossingsRightOf(node.left, x, y);
+        if (node.right) count += crossingsRightOf(node.right, x, y);
+        return count;
     };
+
+    // Helper to check if a single point is inside the regular region's solid area: inside its
+    // contour and outside its holes, so an odd number of boundary crossings away from the outside.
+    // A point outside the box around the boundary can't be inside it.
+    const isPointInRegularRegion = (pt: THREE.Vector3) =>
+        pt.x >= boundaryBVH.min.x && pt.x <= boundaryBVH.max.x && pt.y >= boundaryBVH.min.y && pt.y <= boundaryBVH.max.y
+        && crossingsRightOf(boundaryBVH, pt.x, pt.y) % 2 === 1;
 
     // Gather all contours from the shell (outer contour + inner shell layers stored in holes)
     const shellContours = [shellRegion.contour, ...shellRegion.holes];
@@ -826,7 +871,6 @@ export function checkShellRegularOverlap(
     // 2. Edge Intersection Check
     // Fallback in case a shell segment crosses entirely over a regular region
     // without any of its vertices falling inside the area.
-    const regularSegments = getBoundarySegments(regularRegion.contour, regularRegion.holes);
     const shellSegments = getBoundarySegments(shellRegion.contour, shellRegion.holes);
 
     const ccw = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
@@ -855,11 +899,9 @@ export function checkShellRegularOverlap(
             || (node.right !== undefined && crossesAny(node.right, sSeg, minX, maxX, minY, maxY));
     };
 
-    const regularBVH = buildSliceRegionBVH(regularSegments);
-
     for (const sSeg of shellSegments) {
         if (crossesAny(
-            regularBVH,
+            boundaryBVH,
             sSeg,
             Math.min(sSeg.start.x, sSeg.end.x), Math.max(sSeg.start.x, sSeg.end.x),
             Math.min(sSeg.start.y, sSeg.end.y), Math.max(sSeg.start.y, sSeg.end.y),
@@ -868,6 +910,61 @@ export function checkShellRegularOverlap(
         }
     }
 
+    return false;
+}
+
+/**
+ * Determines if a shell region rests on a regular (non-shell) region: whether any of its lines
+ * runs over the regular region's solid area at a spot where the shell layer below does not hold
+ * it up. A wall that leans is held up by the wall under it, a little to the side, so it does not
+ * rest on the foam it leans over and can be printed before that foam. The first wall of a part
+ * that starts on top of foam has nothing but the foam under it.
+ *
+ * The lines are checked at their corners and every {@link WALL_SAMPLE_SPACING} mm in between.
+ *
+ * @param {SliceRegion} shellRegion The shell region.
+ * @param {SliceRegion} regularRegion The regular region it may rest on.
+ * @param {SliceRegion[]} wallsBelow The shell regions one shell layer below the shell region.
+ * @param {number} wallOverhang How far (mm) to the side of a line of the shell layer below a
+ *                              shell line can be and still be held up by it.
+ * @param {SliceRegionBVHNode} [regularBVH] A BVH of the regular region's boundary segments, if the caller already has one.
+ * @returns {boolean} Whether or not the shell rests on the regular region.
+ */
+export function shellRestsOnRegion(
+  shellRegion: SliceRegion,
+  regularRegion: SliceRegion,
+  wallsBelow: SliceRegion[],
+  wallOverhang: number,
+  regularBVH?: SliceRegionBVHNode,
+): boolean {
+    // Fast bounding box check
+    if (!checkOverlap(shellRegion, regularRegion)) {
+        return false;
+    }
+    const boundaryBVH = regularBVH ?? buildSliceRegionBVH(getBoundarySegments(regularRegion.contour, regularRegion.holes));
+
+    const restsAt = (x: number, y: number): boolean => {
+        // over the regular region's solid area: inside its contour and outside its holes
+        if (x < boundaryBVH.min.x || x > boundaryBVH.max.x || y < boundaryBVH.min.y || y > boundaryBVH.max.y
+            || boundaryCrossingsRightOf(boundaryBVH, x, y) % 2 === 0) {
+            return false;
+        }
+        // and with no line of the shell layer below close enough under it
+        return !wallsBelow.some(wall => segmentNearBoundary(wall.BVH, x, y, x, y, wallOverhang));
+    };
+
+    for (const line of [shellRegion.contour, ...shellRegion.holes]) {
+        for (let i = 0; i < line.length; i++) {
+            const from = line[i], to = line[(i + 1) % line.length];
+            const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / WALL_SAMPLE_SPACING));
+            for (let k = 0; k < steps; k++) {
+                const t = k / steps;
+                if (restsAt(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)) {
+                    return true;
+                }
+            }
+        }
+    }
     return false;
 }
 
@@ -881,16 +978,21 @@ export function checkShellRegularOverlap(
  *
  * Shell regions are printed layer by layer, so they are simply chained in order of height, each
  * one the child of the one before it, whether or not they overlap. Each shell region also records
- * which regular regions lie directly underneath it.
+ * which regular regions it rests on (see shellRestsOnRegion): the foam under it that has to be
+ * printed first, because the shell layer below does not hold it up there.
  *
  * @param {SliceRegion[]} regions The list of slice regions to build the tree from.
  * @param {number} layerHeight The layer height of the slice regions. Must be positive.
+ * @param {number} [wallOverhang] How far (mm) to the side of a line of the shell layer below a
+ *                                shell line can be and still be held up by it: about half the
+ *                                width of a shell line.
  * @returns {RegionNode[]} The root nodes of the tree.
  * @throws {Error} If layerHeight is not a positive, finite number.
  */
 export function buildRegionTree(
   regions: SliceRegion[],
-  layerHeight: number
+  layerHeight: number,
+  wallOverhang: number = DEFAULT_WALL_OVERHANG,
 ): RegionNode[] {
     assertPositiveStep(layerHeight, 'Layer height');
 
@@ -947,19 +1049,47 @@ export function buildRegionTree(
         next.parent = node;
     }
 
-    // --- which regular regions each shell region sits on ---
+    // --- which regular regions each shell region rests on ---
     const shellsByLayer = new Map<number, RegionNode[]>();
     for (const shellNode of sortedShell) {
         const list = shellsByLayer.get(shellNode.layer);
         if (list) list.push(shellNode); else shellsByLayer.set(shellNode.layer, [shellNode]);
     }
+
+    // The shell regions one shell layer below each shell region: the walls that can hold it up.
+    // Shell layers are evenly spaced, so anything further down than that is not right below it.
+    let shellSpacing = Infinity;
+    for (let i = 0; i + 1 < sortedShell.length; i++) {
+        const step = sortedShell[i + 1].region.height - sortedShell[i].region.height;
+        if (step > HEIGHT_EPSILON) shellSpacing = Math.min(shellSpacing, step);
+    }
+    const wallsBelow = new Map<RegionNode, SliceRegion[]>();
+    let levelBelow: RegionNode[] = [];
+    let level: RegionNode[] = [];
+    for (const shellNode of sortedShell) {
+        if (level.length && shellNode.region.height - level[0].region.height > HEIGHT_EPSILON) {
+            levelBelow = level;
+            level = [];
+        }
+        level.push(shellNode);
+        const rightBelow = levelBelow.length > 0
+            && shellNode.region.height - levelBelow[0].region.height <= shellSpacing * 1.5;
+        wallsBelow.set(shellNode, rightBelow ? levelBelow.map(below => below.region) : []);
+    }
+
     for (const node of regularNodes) {
+        // Built once for the region, and only if a shell comes near it.
+        let boundaryBVH: SliceRegionBVHNode | undefined;
         for (const layer of [node.layer, node.layer + 1]) {
             const shells = shellsByLayer.get(layer);
             if (!shells) continue;
             for (const shellNode of shells) {
+                if (!checkOverlap(shellNode.region, node.region)) continue;
+                const dz = shellNode.region.height - node.region.height;
+                if (dz < -HEIGHT_EPSILON || dz > layerHeight + HEIGHT_EPSILON) continue;
+                boundaryBVH ??= buildSliceRegionBVH(getBoundarySegments(node.region.contour, node.region.holes));
                 //check to see if the shell depends on this region
-                if (checkShellRegularOverlap(shellNode.region, node.region, layerHeight)) {
+                if (shellRestsOnRegion(shellNode.region, node.region, wallsBelow.get(shellNode)!, wallOverhang, boundaryBVH)) {
                     shellNode.shellDependentRegions!.add(node.region.id);
                 }
             }
@@ -1041,223 +1171,458 @@ export function buildSliceRegionBVH(
 }
 
 /**
- * Builds a tree of printable chunks from a tree of regions by splitting the regions into
- * super nodes and splitting the supernodes when they overlap. Note, this does not group
- * nodes when they are closer than nozzle width/2, so there may be issues if regions are
- * very close to each other.
+ * What the chunk builder needs to know about one model's regions. Everything but the roots has a
+ * default, so a single model at the origin only needs its region tree.
+ */
+export interface ChunkSource {
+  /** The root nodes of the model's region tree. */
+  roots: RegionNode[];
+  /** Where the model sits on the bed. Region coordinates are relative to it. Defaults to the origin. */
+  position?: THREE.Vector3;
+  /** The settings a chunk printed by an extruder is created with. Defaults to the printer's current ones. */
+  settings?: (extruder: number) => VTPSettings;
+  /** The model the regions were sliced from. Set on every chunk. */
+  modelObj?: EverydayModel;
+  /**
+   * How far (mm) above a region's slice plane the nozzle tip is at its lowest while the region is
+   * printed. Defaults to the shell layer height for a shell and to H = H* d for foam.
+   */
+  tipOffset?: (region: SliceRegion) => number;
+  /**
+   * How far (mm) above its slice plane a region's material reaches once it is printed. Defaults
+   * to the shell layer height for a shell and to the layer thickness (deltaZ) for foam.
+   */
+  thickness?: (region: SliceRegion) => number;
+  /**
+   * How far (mm) a region's material reaches past the path the nozzle takes to print it. Defaults
+   * to half a line for a shell, and for foam to the reach of its coils at the largest H* its
+   * settings give (see coilReach).
+   */
+  reach?: (region: SliceRegion) => number;
+}
+
+/** A region as the chunk builder sees it: where it is on the bed, and which chunk it ended up in. */
+interface ChunkSlot {
+  node: RegionNode;
+  region: SliceRegion;
+  source: ChunkSource;
+  /** Where the region's model sits on the bed, which its coordinates are relative to. */
+  dx: number;
+  dy: number;
+  /** Height of the slice plane above the bed. */
+  z: number;
+  /** Height the region's material reaches once printed. */
+  top: number;
+  /** Height of the nozzle tip, at its lowest, while the region is printed. */
+  tipZ: number;
+  /** The extruder that prints the region, for the shape of its nozzle. */
+  extruder: Extruder;
+  /** How far the region's material reaches past its outline: half a shell line, or the reach of foam's coils. */
+  margin: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  chunk: ChunkNode | null;
+  /** The printing round of the chunk it is in (see ChunkNode.order). */
+  order: number;
+  /** The region's boundary, as segments and as a BVH of them. Made when first needed. */
+  segments?: LineSegment[];
+  bvh?: SliceRegionBVHNode;
+}
+
+/**
+ * How many boundary segments a ray from (x, y) towards +x crosses. An odd number means the point
+ * is inside the boundary's contour and outside its holes. Same rule as pointInPolygon, but only
+ * the segments near the ray are looked at.
+ */
+function boundaryCrossingsRightOf(node: SliceRegionBVHNode, x: number, y: number): number {
+  if (node.max.y < y || node.min.y > y || node.max.x < x) {
+    return 0;
+  }
+  let count = 0;
+  for (const { start, end } of node.leafSegments) {
+    if ((start.y > y) !== (end.y > y) && x < ((end.x - start.x) * (y - start.y)) / (end.y - start.y) + start.x) {
+      count++;
+    }
+  }
+  if (node.left) count += boundaryCrossingsRightOf(node.left, x, y);
+  if (node.right) count += boundaryCrossingsRightOf(node.right, x, y);
+  return count;
+}
+
+/** Squared distance in x and y from a point to a segment. */
+function pointSegmentDistanceSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const abx = bx - ax, aby = by - ay;
+  const lengthSq = abx * abx + aby * aby;
+  const t = lengthSq > 0 ? Math.min(1, Math.max(0, ((px - ax) * abx + (py - ay) * aby) / lengthSq)) : 0;
+  const dx = px - (ax + t * abx), dy = py - (ay + t * aby);
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Whether the segment from (ax, ay) to (bx, by) comes closer than `distance` to any boundary
+ * segment in a BVH, looking straight down. Segments that cross are closer than any distance.
+ */
+function segmentNearBoundary(
+  node: SliceRegionBVHNode,
+  ax: number, ay: number, bx: number, by: number,
+  distance: number,
+): boolean {
+  if (node.max.x < Math.min(ax, bx) - distance || node.min.x > Math.max(ax, bx) + distance
+      || node.max.y < Math.min(ay, by) - distance || node.min.y > Math.max(ay, by) + distance) {
+    return false;
+  }
+  const distanceSq = distance * distance;
+  for (const { start, end } of node.leafSegments) {
+    if (pointSegmentDistanceSq(ax, ay, start.x, start.y, end.x, end.y) < distanceSq
+        || pointSegmentDistanceSq(bx, by, start.x, start.y, end.x, end.y) < distanceSq
+        || pointSegmentDistanceSq(start.x, start.y, ax, ay, bx, by) < distanceSq
+        || pointSegmentDistanceSq(end.x, end.y, ax, ay, bx, by) < distanceSq) {
+      return true;
+    }
+    // Neither end of one is near the other, so they are only this close if they cross.
+    const side1 = (end.x - start.x) * (ay - start.y) - (end.y - start.y) * (ax - start.x);
+    const side2 = (end.x - start.x) * (by - start.y) - (end.y - start.y) * (bx - start.x);
+    const side3 = (bx - ax) * (start.y - ay) - (by - ay) * (start.x - ax);
+    const side4 = (bx - ax) * (end.y - ay) - (by - ay) * (end.x - ax);
+    if ((side1 > 0) !== (side2 > 0) && (side3 > 0) !== (side4 > 0)) {
+      return true;
+    }
+  }
+  return (node.left !== undefined && segmentNearBoundary(node.left, ax, ay, bx, by, distance))
+      || (node.right !== undefined && segmentNearBoundary(node.right, ax, ay, bx, by, distance));
+}
+
+/**
+ * Builds the tree of printable chunks of one model that sits at the origin. See
+ * {@link buildChunkForest}, which this is a shorthand for.
  *
  * @param {RegionNode[]} roots The root nodes of the region tree.
- * @param {printer} Printer settings
+ * @param {Printer} printer The printer, for its head and nozzle dimensions and current settings.
  * @returns {ChunkNode[]} The root nodes of the printable chunk tree.
  */
 export function buildChunkTree(
   roots: RegionNode[],
   printer: Printer,
 ): ChunkNode[] {
-  if (roots.length === 0) {
-    return [];
-  }
-  const rootNodes: ChunkNode[] = [];
-  for (const root of roots) {
-    let currentNode = root;
-    const extruder = currentNode.region.extruder
-    let currentChunkNode: ChunkNode = {
-      regions: [],
-      children: [],
-      parent: null,
-      // A copy, so later updateParameters calls (e.g. for the next model) don't change this chunk.
-      VTPSettings: printer.getVTPSettings(extruder),
-      shell: root.shell,
-      dependentRegions: root.shell ? new Set(root.shellDependentRegions) : undefined,
-      regionDependencies: root.shell
-        ? new Map([[root.region.id, new Set(root.shellDependentRegions)]])
-        : undefined,
-    }
-
-    let regions: SliceRegion[] = [currentNode.region];
-    // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
-    const chunkExtruder = root.region.extruder;
-    while (true) {
-      if (currentNode.children.length === 0) {
-        currentChunkNode.regions = regions;
-        rootNodes.push(currentChunkNode);
-        break;
-      }
-      const nozzleHeight = printer.extruders[extruder].nozzleLength + (currentChunkNode.shell ? printer.shellLayerHeight : currentChunkNode.VTPSettings.ZOffset);
-      if (currentNode.children.length > 1
-          || currentNode.children[0].region.height - root.region.height > nozzleHeight
-          || currentNode.children[0].region.extruder !== chunkExtruder
-          || (root.shell && (currentNode.children[0].shellDependentRegions!.size > 0) !== (currentChunkNode.dependentRegions!.size > 0))) {
-        currentChunkNode.regions = regions;
-        currentChunkNode.children = buildChunkTree(currentNode.children, printer);
-        for (const child of currentChunkNode.children) {
-          child.parent = currentChunkNode;
-        }
-        rootNodes.push(currentChunkNode);
-        break;
-      }
-      currentNode = currentNode.children[0];
-      regions.push(currentNode.region);
-      currentNode.shellDependentRegions?.forEach(id => currentChunkNode.dependentRegions!.add(id));
-      if (currentNode.shell) {
-        currentChunkNode.regionDependencies!.set(currentNode.region.id, new Set(currentNode.shellDependentRegions));
-      }
-    }
-  }
-  splitChunkTreeByOverlap(rootNodes,printer);
-
-  return rootNodes;
+  return buildChunkForest([{ roots }], printer);
 }
 
-
 /**
- * Finds nodes in a tree whose heights overlap with the given node.
- * 
- * @param {ChunkNode[]} roots The roots of the tree to find siblings in.
- * @param {ChunkNode} rootToFindSiblings The node to find the siblings of.
- * @returns {ChunkNode[]} The list of siblings found.
+ * Builds the trees of printable chunks for everything on the plate. A chunk is a run of regions
+ * stacked on top of each other that is printed in one go, without leaving for another part of the
+ * print, which is what saves travel moves.
+ *
+ * This follows TRAvel Slicer (Gould, Friedman-Gerlicz and Buechley, UIST 2024), with one change.
+ * TRAvel Slicer cuts every stack at fixed multiples of the nozzle height. Here a chunk is as tall
+ * as the nozzle and the print head allow at that spot: it keeps growing until its next region
+ * would be in the way of something that is printed after it. That depends on what is still to be
+ * printed nearby, on how far away it is, and on how high the nozzle rides there (on the layer for
+ * a shell, H = H* d above it for foam). A stack with nothing near it is one chunk.
+ *
+ * The chunks are cut in the order they are printed in, a round at a time, and each gets the
+ * number of its round (ChunkNode.order). A round is the stacks that can go next, with the lowest
+ * nozzle first; they are printed in any order. A region goes into a chunk only if it can be
+ * printed before every region that is not in an earlier round. For each of those:
+ *  - it does not cover the other region from above, which the nozzle could then not reach. A
+ *    shell counts as covering foam only where it rests on it (see shellRestsOnRegion): a wall
+ *    that leans over foam goes first, and the foam nozzle passes over it;
+ *  - it stays below the nozzle tip where the nozzle comes right next to it, and further away it
+ *    stays clear of the nozzle, which widens upwards (see nozzleRadiusAt);
+ *  - it stays below the head body, one nozzle length above the nozzle tip, wherever it lies
+ *    inside the head's footprint while the other region is printed.
+ * A stack starts a round only when its first region passes the same test. If none does (a shell
+ * that is printed into the foam under it, say), the one with the lowest nozzle goes anyway.
+ *
+ * Stacks that never come within reach of each other, nozzle or head, are done one group after
+ * the other, so that parts far apart on the plate are each finished in one visit.
+ *
+ * A chunk also ends where the stack branches, where the extruder changes, and where a shell goes
+ * from resting on foam to not resting on foam or back.
+ *
+ * @param {ChunkSource[]} sources The region trees to build chunks from, one per model.
+ * @param {Printer} printer The printer, for its head and nozzle dimensions and current settings.
+ * @returns {ChunkNode[]} The root nodes of the chunk trees, in the order of the sources' roots.
  */
-function findHeightSiblings(
-  roots: ChunkNode[],
-  rootToFindSiblings: ChunkNode,
-): ChunkNode[] {
-  const rootMax  = rootToFindSiblings.regions[rootToFindSiblings.regions.length - 1].height;
-  const siblings: ChunkNode[] = [];
-  for (const root of roots) {
-    const min = root.regions[0].height;
-    const max = root.regions[root.regions.length - 1].height;
-    if (min < rootMax && max > rootMax) {
-      siblings.push(root);
-    } else if (max < rootMax) {
-      siblings.push(...findHeightSiblings(root.children, rootToFindSiblings));
-    }
-  }
-  return siblings;
-}
-
-
-/**
- * Splits the chunks in a tree into smaller nodes when one node overlaps with another.
- * This is to prevent overlap being printed, and then the printer attempting to print
- * something below the overlap.
- * 
- * @param {ChunkNode[]} roots The roots of the tree to split.
- */
-function splitChunkTreeByOverlap(
-  roots: ChunkNode[],
+export function buildChunkForest(
+  sources: ChunkSource[],
   printer: Printer,
-): void {
-  if (roots.length === 0) return;
-  const allChildren: ChunkNode[] = [];
+): ChunkNode[] {
+  const head = printer.printHeadDims;
+  const slots: ChunkSlot[] = [];
+  const slotOf = new Map<RegionNode, ChunkSlot>();
+  // Chunks waiting to be cut: the region each one starts with, and where it goes in the tree.
+  type Pending = { slot: ChunkSlot; siblings: ChunkNode[]; index: number; parent: ChunkNode | null };
+  let pending: Pending[] = [];
+  const rootChunks: ChunkNode[] = [];
+  const settingsOf = (source: ChunkSource, extruder: number): VTPSettings =>
+    source.settings ? source.settings(extruder) : printer.getVTPSettings(extruder);
 
-  const dependenciesFor = (chunk: ChunkNode, regions: SliceRegion[]) => {
-    if (!chunk.regionDependencies) return { map: undefined, union: undefined };
-    const map = new Map<string, Set<string>>();
-    const union = new Set<string>();
-    for (const r of regions) {
-      const deps = chunk.regionDependencies.get(r.id) ?? new Set<string>();
-      map.set(r.id, deps);
-      deps.forEach(id => union.add(id));
+  for (const source of sources) {
+    const position = source.position ?? new THREE.Vector3();
+    const tipOffset = source.tipOffset ?? ((region: SliceRegion) => {
+      if (region.shell) return printer.shellLayerHeight;
+      const vtp = settingsOf(source, region.extruder);
+      return Math.min(vtp.H_star, vtp.hStarEnd ?? vtp.H_star) * printer.threadDiameter(region.extruder);
+    });
+    const thickness = source.thickness ?? ((region: SliceRegion) =>
+      region.shell ? printer.shellLayerHeight : settingsOf(source, region.extruder).deltaZ);
+    const reach = source.reach ?? ((region: SliceRegion) => {
+      if (region.shell) return (printer.extruders[region.extruder] ?? printer.extruders[0]).nozzleDiameter / 2;
+      const vtp = settingsOf(source, region.extruder);
+      return coilReach(Math.max(vtp.H_star, vtp.hStarEnd ?? vtp.H_star), printer.threadDiameter(region.extruder));
+    });
+
+    // Walked with a stack rather than by recursion: a tall model's regions are one long chain.
+    const stack = [...source.roots];
+    while (stack.length) {
+      const node = stack.pop()!;
+      const region = node.region;
+      const z = region.height + position.z;
+      const extruder = printer.extruders[region.extruder] ?? printer.extruders[0];
+      const tip = tipOffset(region);
+      const slot: ChunkSlot = {
+        node,
+        region,
+        source,
+        dx: position.x,
+        dy: position.y,
+        z,
+        // Material cannot stand higher than the nozzle that laid it.
+        top: z + Math.min(thickness(region), tip),
+        tipZ: z + tip,
+        extruder,
+        margin: reach(region),
+        minX: region.bounds.min.x + position.x,
+        maxX: region.bounds.max.x + position.x,
+        minY: region.bounds.min.y + position.y,
+        maxY: region.bounds.max.y + position.y,
+        chunk: null,
+        order: Infinity,
+      };
+      slots.push(slot);
+      slotOf.set(node, slot);
+      for (const child of node.children) stack.push(child);
     }
-    return { map, union };
+
+    for (const root of source.roots) {
+      pending.push({ slot: slotOf.get(root)!, siblings: rootChunks, index: rootChunks.length, parent: null });
+      rootChunks.length++;
+    }
+  }
+
+  // Sorted by height, so the regions below a height are the start of the list.
+  const byHeight = slots.slice().sort((a, b) => a.z - b.z);
+  // Everything before this index is in a chunk of an earlier round, so it is already printed.
+  let firstOpen = 0;
+
+  const boundaryOf = (slot: ChunkSlot): SliceRegionBVHNode => {
+    slot.segments ??= getBoundarySegments(slot.region.contour, slot.region.holes);
+    return slot.bvh ??= buildSliceRegionBVH(slot.segments);
   };
 
-  for (let i = 0; i < roots.length; i++) {
-    const root = roots[i];
-    const siblings = findHeightSiblings(
-      roots.filter((root, idx) => idx != i),
-      root
-    );
+  // Whether the material of two regions overlaps when looking straight down. Worked out once per pair.
+  const overlaps = new Map<ChunkSlot, Map<ChunkSlot, boolean>>();
+  const materialOverlaps = (a: ChunkSlot, b: ChunkSlot): boolean => {
+    if (a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY) return false;
+    // Regions of two models are in different coordinates, so their boxes are all there is to compare.
+    if (a.source !== b.source) return true;
+    let known = overlaps.get(a);
+    if (!known) overlaps.set(a, known = new Map());
+    let result = known.get(b);
+    if (result === undefined) {
+      if (a.region.shell === b.region.shell) {
+        result = checkPolygonOverlap(a.region, b.region);
+      } else {
+        // A shell is lines, not an area: it overlaps foam where its lines run over the foam.
+        const [shell, foam] = a.region.shell ? [a, b] : [b, a];
+        result = shellCrossesRegion(shell.region, foam.region, boundaryOf(foam));
+      }
+      known.set(b, result);
+    }
+    return result;
+  };
 
-    for (const sibling of siblings) {
-      let foundOverlap = false;
+  /**
+   * Whether two regions come closer to each other than a distance, looking straight down. A shell
+   * is its lines; anything else is the area inside its contour and outside its holes.
+   */
+  const closerThan = (a: ChunkSlot, b: ChunkSlot, distance: number): boolean => {
+    const bBoundary = boundaryOf(b);
+    boundaryOf(a);
+    // a's coordinates, moved to where b's are.
+    const ox = a.dx - b.dx, oy = a.dy - b.dy;
+    for (const { start, end } of a.segments!) {
+      if (segmentNearBoundary(bBoundary, start.x + ox, start.y + oy, end.x + ox, end.y + oy, distance)) return true;
+    }
+    // No two boundary lines are near each other, so they are only this close if one is inside the other.
+    const inside = (point: THREE.Vector3 | undefined, area: ChunkSlot, shiftX: number, shiftY: number) =>
+      point !== undefined && !area.region.shell
+      && boundaryCrossingsRightOf(area.bvh!, point.x + shiftX, point.y + shiftY) % 2 === 1;
+    return inside(a.region.contour[0], b, ox, oy) || inside(b.region.contour[0], a, -ox, -oy);
+  };
 
-      for (let j = 1; j < sibling.regions.length && !foundOverlap; j++) {
-        for (let k = 0; k < root.regions.length; k++) {
-          if (checkOverlap(sibling.regions[j], root.regions[k])) {
-            foundOverlap = true;
-            break;
-          }
+  // What is known about how far apart two regions are: closer than `under`, and not closer than `atLeast`.
+  const gaps = new Map<ChunkSlot, Map<ChunkSlot, { under: number; atLeast: number }>>();
+  const isCloserThan = (a: ChunkSlot, b: ChunkSlot, distance: number): boolean => {
+    const gapX = Math.max(b.minX - a.maxX, a.minX - b.maxX, 0);
+    const gapY = Math.max(b.minY - a.maxY, a.minY - b.maxY, 0);
+    if (gapX * gapX + gapY * gapY >= distance * distance) return false;
+    let known = gaps.get(a);
+    if (!known) gaps.set(a, known = new Map());
+    let gap = known.get(b);
+    if (!gap) known.set(b, gap = { under: Infinity, atLeast: 0 });
+    if (distance >= gap.under) return true;
+    if (distance <= gap.atLeast) return false;
+    const closer = closerThan(a, b, distance);
+    if (closer) gap.under = distance; else gap.atLeast = distance;
+    return closer;
+  };
+
+  /**
+   * Whether a region can be printed in a round, before every region that is not in an earlier
+   * round: the rest of its own chunk aside, those are printed after it, or in the same round in
+   * either order.
+   */
+  const canPrint = (slot: ChunkSlot, own: ChunkNode | null, round: number): boolean => {
+    // Only a region lower than the top of this one can be covered by it or have the nozzle or head reach it.
+    for (let i = firstOpen; i < byHeight.length && byHeight[i].z < slot.top; i++) {
+      const other = byHeight[i];
+      if (other === slot || (own !== null && other.chunk === own)) continue;
+      // In a chunk of an earlier round: printed before this one is.
+      if (other.order < round) continue;
+
+      // A shell only has to wait for foam it rests on. A wall that leans over foam is held up by
+      // the wall under it and goes first: the foam nozzle then passes over it.
+      const covers = slot.region.shell && !other.region.shell
+        ? slot.source === other.source && (slot.node.shellDependentRegions?.has(other.region.id) ?? false)
+        : other.z < slot.z - HEIGHT_EPSILON && materialOverlaps(slot, other);
+      if (covers) return false;
+
+      // How far this region would stand above the nozzle tip while the other one is printed.
+      const above = slot.top - other.tipZ;
+      if (above <= HEIGHT_EPSILON) continue;
+      if (above > other.extruder.nozzleLength + HEIGHT_EPSILON
+          && other.minX + head.min.x <= slot.maxX && other.maxX + head.max.x >= slot.minX
+          && other.minY + head.min.y <= slot.maxY && other.maxY + head.max.y >= slot.minY) {
+        return false;
+      }
+      if (isCloserThan(slot, other, nozzleRadiusAt(other.extruder, above) + slot.margin + NOZZLE_CLEARANCE)) return false;
+    }
+    return true;
+  };
+
+  // Stacks that never come within reach of each other, nozzle or head, cannot get in each
+  // other's way. They are grouped by reach, and each group is finished before the next is
+  // started, so the head does not go back and forth between parts that are far apart.
+  const reachOf = new Map<Pending, { minX: number; maxX: number; minY: number; maxY: number }>();
+  for (const entry of pending) {
+    const box = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    const stack = [entry.slot.node];
+    while (stack.length) {
+      const node = stack.pop()!;
+      const slot = slotOf.get(node)!;
+      box.minX = Math.min(box.minX, slot.minX); box.maxX = Math.max(box.maxX, slot.maxX);
+      box.minY = Math.min(box.minY, slot.minY); box.maxY = Math.max(box.maxY, slot.maxY);
+      for (const child of node.children) stack.push(child);
+    }
+    reachOf.set(entry, box);
+  }
+  let widestNozzle = 0;
+  for (const extruder of printer.extruders) widestNozzle = Math.max(widestNozzle, nozzleRadiusAt(extruder, Infinity));
+  // How far the head, or the widest nozzle with its clearance, reaches from where the nozzle is.
+  const reach = {
+    minX: Math.min(head.min.x, -widestNozzle) - 1, maxX: Math.max(head.max.x, widestNozzle) + 1,
+    minY: Math.min(head.min.y, -widestNozzle) - 1, maxY: Math.max(head.max.y, widestNozzle) + 1,
+  };
+  const reaches = (from: Pending, to: Pending): boolean => {
+    const a = reachOf.get(from)!, b = reachOf.get(to)!;
+    return a.minX + reach.minX <= b.maxX && a.maxX + reach.maxX >= b.minX
+        && a.minY + reach.minY <= b.maxY && a.maxY + reach.maxY >= b.minY;
+  };
+  const groups: Pending[][] = [];
+  const ungrouped = new Set(pending);
+  for (const entry of pending) {
+    if (!ungrouped.delete(entry)) continue;
+    const group = [entry];
+    for (let i = 0; i < group.length; i++) {
+      for (const other of ungrouped) {
+        if (reaches(group[i], other) || reaches(other, group[i])) {
+          ungrouped.delete(other);
+          group.push(other);
         }
       }
+    }
+    groups.push(group);
+  }
 
-      if (foundOverlap) {
-        const tip = (c: ChunkNode) =>
-          c.shell ? printer.shellLayerHeight : c.VTPSettings.ZOffset;
+  let round = 0;
+  for (const group of groups) {
+    pending = group;
+    while (pending.length) {
+      round++;
+      while (firstOpen < byHeight.length && byHeight[firstOpen].order < round) firstOpen++;
 
-        const rootMax = root.regions[root.regions.length - 1].height;
+      // The stacks that can go next, lowest nozzle first. If none can go without getting in the
+      // way of something, the lowest nozzle goes anyway.
+      const free = pending.filter(entry => canPrint(entry.slot, null, round));
+      const candidates = free.length ? free : pending;
+      let lowestTip = Infinity;
+      for (const entry of candidates) lowestTip = Math.min(lowestTip, entry.slot.tipZ);
+      const starting = free.length
+        ? free.filter(entry => entry.slot.tipZ <= lowestTip + HEIGHT_EPSILON)
+        : [candidates.find(entry => entry.slot.tipZ <= lowestTip)!];
+      pending = pending.filter(entry => !starting.includes(entry));
 
-        const j = sibling.regions.findIndex(
-          r => r.height > rootMax + HEIGHT_EPSILON
-        );
+      for (const { slot: first, siblings, index, parent } of starting) {
+        const shell = first.node.shell;
+        const chunk: ChunkNode = {
+          regions: [],
+          children: [],
+          parent,
+          modelObj: first.source.modelObj,
+          // A copy, so later updateParameters calls (e.g. for the next model) don't change this chunk.
+          VTPSettings: { ...settingsOf(first.source, first.region.extruder) },
+          shell,
+          order: round,
+          dependentRegions: shell ? new Set<string>() : undefined,
+          regionDependencies: shell ? new Map<string, Set<string>>() : undefined,
+        };
+        siblings[index] = chunk;
 
-        if (j > 0) {
-          const newNodeRegions = sibling.regions.slice(j);
-          const lowerRegions = sibling.regions.slice(0, j);
-          const upperDeps = dependenciesFor(sibling, newNodeRegions);
-          const lowerDeps = dependenciesFor(sibling, lowerRegions);
-
-          const newNodeSibling: ChunkNode = {
-            regions: newNodeRegions,
-            children: sibling.children,
-            parent: sibling,
-            // Same chunk split in two, so it keeps the settings it was built with.
-            VTPSettings: { ...sibling.VTPSettings },
-            shell: sibling.shell,
-            dependentRegions: upperDeps.union,
-            regionDependencies: upperDeps.map,
-          };
-
-          newNodeSibling.children.forEach(c => (c.parent = newNodeSibling));
-          sibling.children = [newNodeSibling];
-          sibling.regions = lowerRegions;
-          sibling.dependentRegions = lowerDeps.union;
-          sibling.regionDependencies = lowerDeps.map;
-        }
-
-        const siblingBase = sibling.regions[0].height;
-
-        if (
-          root.regions[0].height + tip(root)
-            < siblingBase + tip(sibling) - HEIGHT_EPSILON
-          &&
-          siblingBase + tip(sibling) + HEIGHT_EPSILON
-            <= root.regions[root.regions.length - 1].height
-        ) {
-          const k = root.regions.findIndex(
-            r => r.height > siblingBase + tip(sibling) + HEIGHT_EPSILON
-          );
-
-          if (k > 0) {
-            const upperRegions = root.regions.slice(k);
-            const lowerRegions = root.regions.slice(0, k);
-            const upperDeps = dependenciesFor(root, upperRegions);
-            const lowerDeps = dependenciesFor(root, lowerRegions);
-
-            const upperNode: ChunkNode = {
-              regions: upperRegions,
-              children: root.children,
-              parent: root,
-              VTPSettings: { ...root.VTPSettings },
-              shell: root.shell,
-              dependentRegions: upperDeps.union,
-              regionDependencies: upperDeps.map,
-            };
-
-            upperNode.children.forEach(c => (c.parent = upperNode));
-            root.children = [upperNode];
-            root.regions = lowerRegions;
-            root.dependentRegions = lowerDeps.union;
-            root.regionDependencies = lowerDeps.map;
+        const add = (slot: ChunkSlot) => {
+          slot.chunk = chunk;
+          slot.order = round;
+          chunk.regions.push(slot.region);
+          if (shell) {
+            slot.node.shellDependentRegions?.forEach(id => chunk.dependentRegions!.add(id));
+            chunk.regionDependencies!.set(slot.region.id, new Set(slot.node.shellDependentRegions));
           }
+        };
+        add(first);
+
+        let node = first.node;
+        while (node.children.length === 1) {
+          const next = slotOf.get(node.children[0])!;
+          // A chunk is printed without a tool change, so it can only ever hold one extruder's regions.
+          if (next.region.extruder !== first.region.extruder) break;
+          // A shell on top of foam is ironed and has to wait for that foam; one that is not, is not.
+          if (shell && ((next.node.shellDependentRegions?.size ?? 0) > 0) !== (chunk.dependentRegions!.size > 0)) break;
+          if (!canPrint(next, chunk, round)) break;
+          add(next);
+          node = next.node;
         }
-        break;
+
+        chunk.children.length = node.children.length;
+        node.children.forEach((child, i) => {
+          pending.push({ slot: slotOf.get(child)!, siblings: chunk.children, index: i, parent: chunk });
+        });
       }
     }
   }
 
-  for (const r of roots) allChildren.push(...r.children);
-  splitChunkTreeByOverlap(allChildren, printer);
+  return rootChunks;
 }
 
 /**

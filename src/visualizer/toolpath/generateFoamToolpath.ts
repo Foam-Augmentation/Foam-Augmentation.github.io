@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type Visualizer from '../Visualizer';
 import type Printer from '../../printer/Printer';
+import type { VTPSettings } from '../../printer/Printer';
 import type { EverydayModel, PointCloudPoint } from '../types/modelTypes';
 import {
     sliceMeshIntoLayers,
@@ -11,8 +12,9 @@ import {
     generateInsetContourTree,
     getBounds,
     connectIsocontours,
-    buildChunkTree,
+    buildChunkForest,
     ChunkNode,
+    ChunkSource,
     extractRegionsFromPointCloud,
     pointAlongLine,
     pointInPolygon,
@@ -23,12 +25,14 @@ import {
     SliceRegionBVHNode,
     extractShellRegionsFromLayer,
     subtractRegions,
+    PolygonWithHoles,
 } from '../utils/TreeSlicer';
 import { notify } from '../gui/notify';
 import { FEATURE, type PathPoint } from './pathTypes';
 import { buildToolpathPreview } from './toolpathPreview';
 import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
 import { getRequiredZOffset } from './collision';
+import { coilReach, coilWallInset } from './coilModel';
 import {
     BOUNDARY_FIRST_LAYER_Z,
     BOUNDARY_LAYER_HEIGHT,
@@ -56,6 +60,8 @@ const SHELL_LAYER_COUNT = 2;
 const SCAN_EDGE_INSET = 1e-6;
 /** Scan line pieces shorter than this (mm) are not printed: the outline only touches the line there. */
 const MIN_SCAN_LINE_LENGTH = 0.01;
+/** A foam region's edge is checked for the H* its gradient gives there at its corners and this often (mm) in between. */
+const WALL_GRADIENT_SAMPLE_SPACING = 1;
 /**
  * The alpha radius of a sampled area, in sampling grid steps, when that is more than
  * POINT_CLOUD_ALPHA. A grid's own triangles have a circumradius of 0.71 steps; anything below
@@ -803,7 +809,6 @@ function makeChunkPath(
     const modelHeight = height ?? context.minZ;
     const layerOf = (z: number) => Math.floor((z - modelHeight + LAYER_INDEX_TOLERANCE) / stackDeltaZ);
     const initialOffset = modelObj.initialOffset;
-    const gradient = modelObj.gradient;
     let count = 0;
     const isFirstChunkPrinted = printedRegions.size === 0;
     const ramp = context.spacingRamp ?? { minZ: context.minZ, maxZ: context.maxZ };
@@ -841,12 +846,12 @@ function makeChunkPath(
             assertPositive(currentDeltaL, 'Line spacing (deltaL)');
             const edot = useInitial ? initialConfig.edot : VTPSettings.Edot;
 
-            // The initial layers are printed inside the region offset by `initialOffset`. The whole
-            // region is offset at once (outer and holes together), so a region that splits apart
-            // prints every piece, and holes that grow into the wall are clipped against it.
-            const pieces = useInitial && initialOffset
-                ? offsetRegion(region.contour, region.holes, initialOffset)
-                : [{ outer: region.contour, holes: region.holes }];
+            // The initial layers are printed inside the region offset by `initialOffset`, and foam
+            // inside walls is kept a coil's radius away from them. The whole region is offset at
+            // once (outer and holes together), so a region that splits apart prints every piece,
+            // and holes that grow into the wall are clipped against it.
+            const wallInset = foamWallInset(region, modelObj, context, modelHeight, VTPSettings, layerHeights.threadDiameters);
+            const { pieces } = foamFill(region, useInitial ? initialOffset : 0, wallInset);
             const isOffset = pieces.length !== 1 || pieces[0].outer !== region.contour;
 
             path = [];
@@ -938,10 +943,6 @@ function makeChunkPath(
         flatLayerZOffset: modelObj.toolpathConfig.flatLayerZOffset,
         augmentSamplePoints: modelObj.augmentSamplePoints,
     };
-    // The SVG gradient is stretched over the whole model, so neighbouring chunks agree on it.
-    const gradientMin = context.gradientBounds.min;
-    const gradientWidth = context.gradientBounds.max.x - gradientMin.x;
-    const gradientHeight = context.gradientBounds.max.y - gradientMin.y;
     const usesInitialMaterial = initialConfig.initialFoamLayerCount > 0;
 
     // Resolve H*, V* and Edot for every point, then finish off its height.
@@ -951,19 +952,7 @@ function makeChunkPath(
         const hStar = useInitial ? initialConfig.hStar : VTPSettings.H_star;
         const vStar = useInitial ? initialConfig.vStar : VTPSettings.V_Star;
 
-        // How far along the gradient the point is: 0 = start values, 1 = end values.
-        let percent: number;
-        if (context.verticalGradient) {
-            const { minZ, maxZ } = context.verticalGradient;
-            percent = maxZ > minZ ? Math.min(1, Math.max(0, (point.point.z - minZ) / (maxZ - minZ))) : 0;
-        } else {
-            // A model with no width in x or y has nothing to stretch the gradient over.
-            const scaledX = gradientWidth > 0 ? ((point.point.x - gradientMin.x) / gradientWidth) * gradient.width : 0;
-            const scaledY = gradientHeight > 0 ? ((point.point.y - gradientMin.y) / gradientHeight) * gradient.height : 0;
-            const sampledColor = gradient.sampleColor(scaledX, scaledY);
-            // Black is 1 white is 0
-            percent = 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
-        }
+        const percent = gradientPercent(point.point.x, point.point.y, point.point.z, modelObj, context);
 
         point.hStar = hStar + percent * (configToUse.hStarEnd - hStar);
         point.vStar = vStar + percent * (configToUse.vStarEnd - vStar);
@@ -979,6 +968,208 @@ function makeChunkPath(
     }
 
     return chunkPath;
+}
+
+
+/**
+ * What the chunk builder needs to know about how a foam region is printed: how low the nozzle
+ * gets over it, and how far its coils reach to the side of the nozzle's path. Both follow from
+ * the range of H* its points can get (H = H* d): the smallest for the nozzle height, the largest
+ * for the coils, which grow with H*. Which settings apply is worked out the way makeChunkPath
+ * does for each point.
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {EverydayModel} modelObj The model the region is part of, for its initial layers.
+ * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
+ * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
+ * @param {number[]} threadDiameters The thread diameter of each extruder (by index).
+ * @returns {{ nozzleHeight: number, reach: number }} The nozzle's lowest height above the
+ *          region's slice plane, and how far the foam reaches past the nozzle's path (both mm).
+ */
+function foamClearance(
+    region: SliceRegion,
+    modelObj: EverydayModel,
+    layerZeroHeight: number,
+    vtpSettings: VTPSettings,
+    threadDiameters: number[],
+): { nozzleHeight: number; reach: number } {
+    const [start, end] = foamHStarRange(region, modelObj, layerZeroHeight, vtpSettings);
+    const threadDiameter = threadDiameters[region.extruder] ?? threadDiameters[0];
+    return {
+        nozzleHeight: Math.min(start, end) * threadDiameter,
+        reach: coilReach(Math.max(start, end), threadDiameter),
+    };
+}
+
+
+/**
+ * The H* a foam region's gradient runs between: its initial settings on an initial layer, the
+ * extruder's otherwise. Which one applies is worked out the way makeChunkPath does for each point.
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {EverydayModel} modelObj The model the region is part of, for its initial layers.
+ * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
+ * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
+ * @returns {[number, number]} H* at the start of the gradient and at its end.
+ */
+function foamHStarRange(
+    region: SliceRegion,
+    modelObj: EverydayModel,
+    layerZeroHeight: number,
+    vtpSettings: VTPSettings,
+): [number, number] {
+    const initialConfig = modelObj.initialConfig;
+    const layer = Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
+    return layer < initialConfig.initialFoamLayerCount
+        ? [initialConfig.hStar, initialConfig.hStarEnd]
+        : [vtpSettings.H_star, vtpSettings.hStarEnd];
+}
+
+
+/**
+ * How far along its gradient a point of a model's foam is: 0 where H* and V* have their start
+ * values, 1 where they have their end values.
+ *
+ * @param {number} x The point's x, in model-local coordinates.
+ * @param {number} y The point's y, in model-local coordinates.
+ * @param {number} z The height of the slice the point is on.
+ * @param {EverydayModel} modelObj The model, for its SVG gradient.
+ * @param {ModelContext} context What the gradient is stretched over.
+ * @returns {number} The position along the gradient, from 0 to 1.
+ */
+function gradientPercent(x: number, y: number, z: number, modelObj: EverydayModel, context: ModelContext): number {
+    if (context.verticalGradient) {
+        const { minZ, maxZ } = context.verticalGradient;
+        return maxZ > minZ ? Math.min(1, Math.max(0, (z - minZ) / (maxZ - minZ))) : 0;
+    }
+    // The SVG gradient is stretched over the whole model, so neighbouring chunks agree on it.
+    const gradient = modelObj.gradient;
+    const { min, max } = context.gradientBounds;
+    const width = max.x - min.x;
+    const height = max.y - min.y;
+    // A model with no width in x or y has nothing to stretch the gradient over.
+    const scaledX = width > 0 ? ((x - min.x) / width) * gradient.width : 0;
+    const scaledY = height > 0 ? ((y - min.y) / height) * gradient.height : 0;
+    const sampledColor = gradient.sampleColor(scaledX, scaledY);
+    // Black is 1 white is 0
+    return 1 - (sampledColor.r + sampledColor.g + sampledColor.b) / (3 * 255);
+}
+
+
+/**
+ * How far in from its edge a foam region's path is moved so that its coils end at the wall around
+ * it instead of landing on it. The coils are as large as the largest H* gives anywhere along the
+ * edge, so where the gradient lowers H* the foam stops a little short of the wall.
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {EverydayModel} modelObj The model the region is part of.
+ * @param {ModelContext} context The model's placement, and how far its foam regions are from its walls.
+ * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
+ * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
+ * @param {number[]} threadDiameters The thread diameter of each extruder (by index).
+ * @returns {number} The inset (mm). 0 for a shell, and for a model that is printed without walls.
+ */
+function foamWallInset(
+    region: SliceRegion,
+    modelObj: EverydayModel,
+    context: ModelContext,
+    layerZeroHeight: number,
+    vtpSettings: VTPSettings,
+    threadDiameters: number[],
+): number {
+    if (region.shell || context.wallGap === undefined) {
+        return 0;
+    }
+    const [start, end] = foamHStarRange(region, modelObj, layerZeroHeight, vtpSettings);
+    let hStar = start;
+    if (end !== start) {
+        for (const ring of [region.contour, ...region.holes]) {
+            for (let i = 0; i < ring.length; i++) {
+                const from = ring[i];
+                const to = ring[(i + 1) % ring.length];
+                const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / WALL_GRADIENT_SAMPLE_SPACING));
+                for (let s = 0; s < steps; s++) {
+                    const t = s / steps;
+                    const percent = gradientPercent(
+                        from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, region.height, modelObj, context);
+                    hStar = Math.max(hStar, start + percent * (end - start));
+                }
+            }
+        }
+    }
+    const threadDiameter = threadDiameters[region.extruder] ?? threadDiameters[0];
+    return coilWallInset(hStar, threadDiameter, context.wallGap);
+}
+
+
+/** The area a foam region's infill is laid in, and how far that was moved in from the region's walls. */
+interface FoamFill {
+    pieces: PolygonWithHoles[];
+    /** The wall inset the pieces were made with: 0 when the region is too small to take one. */
+    wallInset: number;
+}
+
+/** The last fill worked out for each region: the chunk builder and the path generator both ask. */
+const foamFillCache = new WeakMap<SliceRegion, { offset: number; wallInset: number; fill: FoamFill }>();
+
+/**
+ * The area a foam region's infill is laid in: the region grown by `offset` (the initial layers'
+ * own offset) and shrunk by `wallInset`. A region the wall inset would leave nothing of keeps its
+ * foam and gives up the inset instead, as there is no room in it for coils that miss the walls.
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {number} offset How much to grow the region by (negative to shrink it), walls aside.
+ * @param {number} wallInset How far to keep the path from the region's edge (see foamWallInset).
+ * @returns {FoamFill} The pieces to fill, and the wall inset they were made with.
+ */
+function foamFill(region: SliceRegion, offset: number, wallInset: number): FoamFill {
+    const cached = foamFillCache.get(region);
+    if (cached && cached.offset === offset && cached.wallInset === wallInset) {
+        return cached.fill;
+    }
+
+    let fill: FoamFill | undefined;
+    if (wallInset > 0) {
+        const pieces = offsetRegion(region.contour, region.holes, offset - wallInset).filter(piece => piece.outer.length >= 3);
+        if (pieces.length) {
+            fill = { pieces, wallInset };
+        }
+    }
+    fill ??= {
+        pieces: offset ? offsetRegion(region.contour, region.holes, offset) : [{ outer: region.contour, holes: region.holes }],
+        wallInset: 0,
+    };
+
+    foamFillCache.set(region, { offset, wallInset, fill });
+    return fill;
+}
+
+
+/**
+ * How far a foam region's foam reaches past the region's own edge: its coils' reach, less what
+ * its path is moved in from the walls, plus what its initial layers are grown by.
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {EverydayModel} modelObj The model the region is part of.
+ * @param {ModelContext} context The model's placement, and how far its foam regions are from its walls.
+ * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
+ * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
+ * @param {number[]} threadDiameters The thread diameter of each extruder (by index).
+ * @returns {number} The distance (mm) from the region's edge to the edge of its foam.
+ */
+function foamReach(
+    region: SliceRegion,
+    modelObj: EverydayModel,
+    context: ModelContext,
+    layerZeroHeight: number,
+    vtpSettings: VTPSettings,
+    threadDiameters: number[],
+): number {
+    const layer = Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
+    const offset = layer < modelObj.initialConfig.initialFoamLayerCount ? modelObj.initialOffset : 0;
+    const wallInset = foamWallInset(region, modelObj, context, layerZeroHeight, vtpSettings, threadDiameters);
+    const reach = foamClearance(region, modelObj, layerZeroHeight, vtpSettings, threadDiameters).reach;
+    return reach - foamFill(region, offset, wallInset).wallInset + Math.max(0, offset);
 }
 
 
@@ -1113,10 +1304,7 @@ function makeChunkTreePath(
 
         let lowestHeight = Infinity;
         for (const i of eligibleIndices) {
-            const height = roots[i].regions[0].height;
-            if (height < lowestHeight) {
-                lowestHeight = height;
-            }
+            lowestHeight = Math.min(lowestHeight, roots[i].regions[0].height);
         }
 
         // Everything below the interlude is printed: it goes in here, and the chunks above it
@@ -1124,10 +1312,18 @@ function makeChunkTreePath(
         if (interlude && lowestHeight >= interlude.beforeHeight) {
             playInterlude();
         }
+        // Until then, only what is below the interlude may be printed.
+        const beforeInterlude = interlude && !interludePlayed
+            ? eligibleIndices.filter(i => roots[i].regions[0].height < interlude.beforeHeight)
+            : eligibleIndices;
 
-        const printableChunkIndices = eligibleIndices.filter(
-            i => roots[i].regions[0].height <= lowestHeight
-        );
+        // The chunks of the earliest round go first, in any order. buildChunkForest relies on
+        // this: it only keeps the nozzle and the head clear of what is printed in a later round.
+        let earliestRound = Infinity;
+        for (const i of beforeInterlude) {
+            earliestRound = Math.min(earliestRound, roots[i].order);
+        }
+        const printableChunkIndices = beforeInterlude.filter(i => roots[i].order <= earliestRound);
 
         const shellIndices = printableChunkIndices.filter(i => roots[i].shell);
         const pool = shellIndices.length ? shellIndices : printableChunkIndices;
@@ -1348,6 +1544,7 @@ export function generateFoamToolpath(
 
     const printer = visualizer.printer;
     const chunkRoots: ChunkNode[] = [];
+    const chunkSources: ChunkSource[] = [];
     let highestStartHeight = -Infinity;
     let boundaryPath: PathPoint[] = [];
     const models = new Map<EverydayModel, ModelContext>();
@@ -1380,14 +1577,15 @@ export function generateFoamToolpath(
 
         // Layer indices, the deltaL ramp and the gradient all have to follow the mesh as it is
         // placed (scaled and rotated), not its raw geometry.
-        models.set(modelObj, {
+        const context: ModelContext = {
             minZ: bbox.min.z,
             maxZ: bbox.max.z,
             gradientBounds: {
                 min: new THREE.Vector2(bbox.min.x, bbox.min.y),
                 max: new THREE.Vector2(bbox.max.x, bbox.max.y),
             },
-        });
+        };
+        models.set(modelObj, context);
 
         if (printer.generateBoundary) {
             const boundary = makeBoundaryPath(transformedMesh, modelObj.mesh.position, printer.machine_depth_y, 1, BOUNDARY_OFFSET, false);
@@ -1401,17 +1599,27 @@ export function generateFoamToolpath(
         // --- 1. Slice mesh into layers and extract regions ---
         const layers = sliceMeshIntoLayers(transformedMesh, modelObj.toolpathConfig.deltaZ);
         const allRegions: SliceRegion[] = [];
+        const foamEdgeSpacing = printer.threadDiameter(0);
         for (const { z, segments } of layers) {
-            pushAll(allRegions, extractRegionsFromLayer(z, segments, printer.threadDiameter(0), SHELL_LAYER_COUNT));
+            pushAll(allRegions, extractRegionsFromLayer(z, segments, foamEdgeSpacing, SHELL_LAYER_COUNT));
         }
 
         // Shells are regular extrusions, sliced at their own layer height (printer.shellLayerHeight).
+        const shellLineWidth = printer.extruders[0].nozzleDiameter;
         const shellLayers = sliceMeshIntoLayers(transformedMesh, shellLayerHeight);
         for (const { z, segments } of shellLayers) {
-            pushAll(allRegions, extractShellRegionsFromLayer(z, segments, printer.extruders[0].nozzleDiameter, SHELL_LAYER_COUNT));
+            pushAll(allRegions, extractShellRegionsFromLayer(z, segments, shellLineWidth, SHELL_LAYER_COUNT));
         }
 
-        const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ);
+        // The foam regions are cut (SHELL_LAYER_COUNT + 1) spacings inside the outline, and the
+        // innermost shell line is centred (SHELL_LAYER_COUNT - 1) line widths inside it, so its
+        // inner face is half a line width further in. What is between the two is the room the
+        // foam's coils have before they are on the wall.
+        context.wallGap = Math.max(0, foamEdgeSpacing * (SHELL_LAYER_COUNT + 1) - shellLineWidth * (SHELL_LAYER_COUNT - 0.5));
+
+        // A shell line is one nozzle diameter wide, and is held up by the line below it as long
+        // as it is no more than half its width to the side of it.
+        const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ, printer.extruders[0].nozzleDiameter / 2);
         regionTree.forEach(root => {
             const height = root.region.height + modelObj.mesh.position.z
             if (height > highestStartHeight) {
@@ -1419,14 +1627,32 @@ export function generateFoamToolpath(
             }
         });
 
-        const chunkTree = buildChunkTree(regionTree, printer);
-
-        chunkTree.forEach(chunkNode => {
-            chunkNode.modelObj = modelObj;
+        // The chunks are cut once every model is sliced, as a model next to this one limits how
+        // tall they can be. What each model's regions need is kept as it is now: the printer's
+        // settings are overwritten by the next model.
+        const vtpSettings = [printer.getVTPSettings(0), printer.getVTPSettings(1)];
+        const settingsOf = (extruder: number) => vtpSettings[extruder === 0 ? 0 : 1];
+        const threadDiameters = printer.extruders.map((_, i) => printer.threadDiameter(i));
+        const stackDeltaZ = modelObj.toolpathConfig.deltaZ;
+        const minZ = bbox.min.z;
+        chunkSources.push({
+            roots: regionTree,
+            position: modelObj.mesh.position,
+            settings: settingsOf,
+            modelObj,
+            tipOffset: region => region.shell
+                ? shellLayerHeight
+                : foamClearance(region, modelObj, minZ, settingsOf(region.extruder), threadDiameters).nozzleHeight,
+            thickness: region => region.shell ? shellLayerHeight : stackDeltaZ,
+            // A shell line is one nozzle diameter wide; foam is as wide as its coils, from a path
+            // that is kept away from the walls.
+            reach: region => region.shell
+                ? shellLineWidth / 2
+                : foamReach(region, modelObj, context, minZ, settingsOf(region.extruder), threadDiameters),
         });
-
-        pushAll(chunkRoots, chunkTree);
     });
+
+    pushAll(chunkRoots, buildChunkForest(chunkSources, printer));
 
     const startPoint = new THREE.Vector3(0, 0, Number.isFinite(highestStartHeight) ? highestStartHeight : 0);
     // Each point's ZOffset is applied in makeChunkPath, where its hStar is resolved. The boundary
@@ -1880,10 +2106,6 @@ export function generateAugmentFoamToolpath(
     }
 
     const regionTree = buildRegionTree(sliceRegions, config.deltaZ);
-    const chunkTree = buildChunkTree(regionTree, printer);
-    chunkTree.forEach(chunkNode => {
-        chunkNode.modelObj = modelObj;
-    });
 
     // Layer 0 is the lowest slice. Every stack starts from the same height, but bumps that were
     // raised above the extra flat layers have no slice right under them, so they are roots of
@@ -1897,6 +2119,15 @@ export function generateAugmentFoamToolpath(
     if (!Number.isFinite(modelHeight)) {
         return null;
     }
+
+    const threadDiameters = printer.extruders.map((_, i) => printer.threadDiameter(i));
+    const chunkTree = buildChunkForest([{
+        roots: regionTree,
+        modelObj,
+        tipOffset: region => foamClearance(region, modelObj, modelHeight, printer.getVTPSettings(region.extruder), threadDiameters).nozzleHeight,
+        thickness: () => config.deltaZ,
+        reach: region => foamClearance(region, modelObj, modelHeight, printer.getVTPSettings(region.extruder), threadDiameters).reach,
+    }], printer);
 
     transformedMesh.geometry.computeBoundingBox();
     const bbox = transformedMesh.geometry.boundingBox!;

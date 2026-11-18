@@ -19,6 +19,10 @@ function makeExtruder(): ExtruderValues {
   return {
     nozzleDiameter: 0.4,
     nozzleLength: 4.5,
+    nozzleTipWidth: 1,
+    nozzleConeHeight: 2,
+    nozzleConeWidth: 3.7,
+    nozzleBodyWidth: 8,
     dieSwelling: 1.0,
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,

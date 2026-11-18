@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import Printer, { nozzleRadiusAt } from '../../printer/Printer';
+import { coilReach } from '../toolpath/coilModel';
+import type { EverydayModel } from '../types/modelTypes';
 import {
+  buildChunkForest,
+  buildChunkTree,
   buildRegionTree,
+  ChunkNode,
   checkPolygonOverlap,
+  shellCrossesRegion,
+  shellRestsOnRegion,
+  SliceRegion,
   checkShellRegularOverlap,
   connectIsocontours,
   connectSegments,
@@ -17,6 +26,7 @@ import {
   offsetContour,
   offsetContourAll,
   offsetRegion,
+  pointInPolygon,
   RegionNode,
   sliceMeshIntoLayers,
   traceBoundaryLoops,
@@ -769,5 +779,419 @@ describe('point cloud regions (S4, S13)', () => {
     expect(regions[0].holes).toHaveLength(1);
     // an 8 x 8 hole, less the four corner triangles that are small enough to count as filled
     expect(Math.abs(signedArea(regions[0].holes[0]))).toBeCloseTo(62, 6);
+  });
+});
+
+/** Foam regions for `count` layers 1 mm apart, with the outlines `outlinesAt` gives for each layer. */
+function foamLayers(count: number, outlinesAt: (layer: number, z: number) => THREE.Vector3[][]): SliceRegion[] {
+  const regions: SliceRegion[] = [];
+  for (let k = 0; k < count; k++) {
+    const z = 0.00001 + k;
+    regions.push(...extractRegionsFromLayer(z, outlinesAt(k, z).flatMap(toSegments), 0.4, 0));
+  }
+  return regions;
+}
+
+/** A 10 x 10 mm stack of foam regions starting at x0, leaning `lean` mm in x per layer. */
+function foamStack(count: number, x0: number, lean = 0): SliceRegion[] {
+  return foamLayers(count, (k, z) => [rect(x0 + lean * k, 0, x0 + 10 + lean * k, 10, z)]);
+}
+
+/**
+ * The nozzle rides 2 mm above a layer, a layer is 1 mm thick and its material reaches 0.2 mm past
+ * the nozzle's path, whatever the printer's settings are.
+ */
+const CLEARANCE = { tipOffset: () => 2, thickness: () => 1, reach: () => 0.2 };
+
+/** How many regions each chunk of a chain holds, from the bottom up. Follows only children. */
+function chunkSizes(root: ChunkNode): number[] {
+  const sizes: number[] = [];
+  for (let chunk: ChunkNode | undefined = root; chunk; chunk = chunk.children[0]) {
+    sizes.push(chunk.regions.length);
+  }
+  return sizes;
+}
+
+/**
+ * The order makeChunkTreePath prints chunks in: a round at a time, shells first within a round.
+ * The rest of a round goes first to last, or last to first.
+ */
+function printOrder(roots: ChunkNode[], lastOfTies: boolean): ChunkNode[] {
+  const open = [...roots];
+  const order: ChunkNode[] = [];
+  while (open.length) {
+    const round = Math.min(...open.map(chunk => chunk.order));
+    const inRound = open.filter(chunk => chunk.order <= round);
+    const shells = inRound.filter(chunk => chunk.shell);
+    const ties = shells.length ? shells : inRound;
+    const next = lastOfTies ? ties[ties.length - 1] : ties[0];
+    open.splice(open.indexOf(next), 1, ...next.children);
+    order.push(next);
+  }
+  return order;
+}
+
+/** The distance in x and y between two regions, 0 if they overlap, found by trying every pair of edges. */
+function regionGap(a: SliceRegion, b: SliceRegion, shiftA: number): number {
+  const edges = (region: SliceRegion, shift: number) => [region.contour, ...region.holes].flatMap(ring =>
+    ring.map((p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return [p.x + shift, p.y, q.x + shift, q.y];
+    }));
+  const pointToEdge = (px: number, py: number, [ax, ay, bx, by]: number[]) => {
+    const abx = bx - ax, aby = by - ay;
+    const t = Math.min(1, Math.max(0, ((px - ax) * abx + (py - ay) * aby) / (abx * abx + aby * aby || 1)));
+    return Math.hypot(px - ax - t * abx, py - ay - t * aby);
+  };
+  const side = (ax: number, ay: number, bx: number, by: number, px: number, py: number) =>
+    Math.sign((bx - ax) * (py - ay) - (by - ay) * (px - ax));
+  const solidContains = (region: SliceRegion, shift: number, point: THREE.Vector3, pointShift: number) => {
+    if (region.shell) return false;
+    const moved = new THREE.Vector3(point.x + pointShift - shift, point.y, 0);
+    return pointInPolygon(moved, region.contour) && !region.holes.some(hole => pointInPolygon(moved, hole));
+  };
+
+  if (solidContains(b, 0, a.contour[0], shiftA) || solidContains(a, shiftA, b.contour[0], 0)) return 0;
+  let gap = Infinity;
+  for (const e of edges(a, shiftA)) {
+    for (const f of edges(b, 0)) {
+      const crossing = side(e[0], e[1], e[2], e[3], f[0], f[1]) !== side(e[0], e[1], e[2], e[3], f[2], f[3])
+        && side(f[0], f[1], f[2], f[3], e[0], e[1]) !== side(f[0], f[1], f[2], f[3], e[2], e[3]);
+      if (crossing) return 0;
+      gap = Math.min(gap, pointToEdge(e[0], e[1], f), pointToEdge(e[2], e[3], f), pointToEdge(f[0], f[1], e), pointToEdge(f[2], f[3], e));
+    }
+  }
+  return gap;
+}
+
+/**
+ * Prints the chunks in order and counts the regions that cannot be printed: ones underneath a
+ * region that is already there, ones the nozzle cannot get to past what stands next to them, and
+ * ones the head body cannot get to past taller regions.
+ */
+function printProblems(
+  order: ChunkNode[],
+  printer: Printer,
+  tipOffset: (region: SliceRegion) => number,
+  thickness: (region: SliceRegion) => number,
+  offsetOf: (chunk: ChunkNode) => number = () => 0,
+): { covered: number; nozzleHits: number; headHits: number } {
+  const head = printer.printHeadDims;
+  const extruder = printer.extruders[0];
+  const printed: { region: SliceRegion; dx: number }[] = [];
+  let covered = 0, nozzleHits = 0, headHits = 0;
+
+  for (const chunk of order) {
+    const dx = offsetOf(chunk);
+    for (const region of chunk.regions) {
+      const tip = region.height + tipOffset(region);
+      let isCovered = false, hitsNozzle = false, hitsHead = false;
+      for (const before of printed) {
+        if (before.dx === dx && before.region.height > region.height + 1e-6) {
+          // Foam can go in under a wall that leans over it; a wall cannot go in under foam.
+          if (region.shell === before.region.shell) isCovered ||= checkPolygonOverlap(before.region, region);
+          else if (region.shell) isCovered ||= shellCrossesRegion(region, before.region);
+        }
+        // How far what is already there stands above the nozzle tip.
+        const above = before.region.height + Math.min(thickness(before.region), tipOffset(before.region)) - tip;
+        if (above <= 1e-6) continue;
+        const a = region.bounds, b = before.region.bounds;
+        const inReach = a.min.x + dx + head.min.x <= b.max.x + before.dx && a.max.x + dx + head.max.x >= b.min.x + before.dx
+          && a.min.y + head.min.y <= b.max.y && a.max.y + head.max.y >= b.min.y;
+        hitsHead ||= inReach && above > extruder.nozzleLength + 1e-6;
+        hitsNozzle ||= regionGap(before.region, region, before.dx - dx) < nozzleRadiusAt(extruder, above);
+      }
+      if (isCovered) covered++;
+      if (hitsNozzle) nozzleHits++;
+      if (hitsHead) headHits++;
+      printed.push({ region, dx });
+    }
+  }
+  return { covered, nozzleHits, headHits };
+}
+
+describe('shellRestsOnRegion', () => {
+  const shellAt = (x: number, z: number, half = 10) => extractShellRegionsFromLayer(z, toSegments(square(x, 0, half, z)), 0.4, 2)[0];
+  const foamAt = (x: number, z: number, half = 10) => extractRegionsFromLayer(z, toSegments(square(x, 0, half, z)), 0.4, 2)[0];
+
+  it('says a straight wall does not rest on the foam inside it', () => {
+    expect(shellRestsOnRegion(shellAt(0, 0.1), foamAt(0, 0), [shellAt(0, 0)], 0.2)).toBe(false);
+    expect(shellRestsOnRegion(shellAt(0, 0.1), foamAt(0, 0), [], 0.2)).toBe(false);
+  });
+
+  it('says a wall that leans over the foam does not rest on it while the wall below holds it up', () => {
+    // 1.3 mm to the side of the foam layer's own wall, which puts its lines over the foam
+    const leaning = shellAt(1.3, 1);
+    const foam = foamAt(0, 0);
+    expect(shellCrossesRegion(leaning, foam)).toBe(true);
+
+    // the wall layer right below it is 0.15 mm back: close enough to hold it up
+    expect(shellRestsOnRegion(leaning, foam, [shellAt(1.15, 0.9)], 0.2)).toBe(false);
+    // 0.5 mm back is too far, and so is no wall at all
+    expect(shellRestsOnRegion(leaning, foam, [shellAt(0.8, 0.9)], 0.2)).toBe(true);
+    expect(shellRestsOnRegion(leaning, foam, [], 0.2)).toBe(true);
+  });
+
+  it('says the first wall of a part that starts on top of foam rests on it', () => {
+    // a 6 mm post starting on a 20 mm base: the base's wall is nowhere near under it
+    expect(shellRestsOnRegion(shellAt(0, 1, 3), foamAt(0, 0), [shellAt(0, 0.9)], 0.2)).toBe(true);
+  });
+
+  it('lets buildRegionTree tell the two apart', () => {
+    // a bar leaning 0.15 mm per 0.1 mm shell layer over two 1 mm foam layers
+    const regions: SliceRegion[] = [];
+    for (let k = 0; k < 2; k++) regions.push(foamAt(1.5 * k, 0.00001 + k));
+    for (let k = 0; k < 20; k++) regions.push(shellAt(0.15 * k, 0.00001 + k * 0.1));
+    let shell = buildRegionTree(regions, 1, 0.2).find(root => root.shell)!;
+    for (; shell; shell = shell.children[0]) {
+      expect(shell.shellDependentRegions!.size).toBe(0);
+    }
+
+    // the same bar, leaning too fast for the wall below to hold the next one
+    const steep: SliceRegion[] = [];
+    for (let k = 0; k < 2; k++) steep.push(foamAt(5 * k, 0.00001 + k));
+    for (let k = 0; k < 20; k++) steep.push(shellAt(0.5 * k, 0.00001 + k * 0.1));
+    const resting: number[] = [];
+    shell = buildRegionTree(steep, 1, 0.2).find(root => root.shell)!;
+    for (; shell; shell = shell.children[0]) resting.push(shell.shellDependentRegions!.size);
+    // from the layer where its wall first comes over the edge of the first foam layer, 1.2 mm in
+    expect(resting.slice(0, 2)).toEqual([0, 0]);
+    expect(resting.slice(2, 10).every(count => count > 0)).toBe(true);
+  });
+});
+
+describe('nozzleRadiusAt', () => {
+  const nozzle = new Printer().extruders[0];
+
+  it('follows the cone and the hex of a Prusa XL nozzle', () => {
+    expect(nozzleRadiusAt(nozzle, 0)).toBe(0);
+    expect(nozzleRadiusAt(nozzle, -1)).toBe(0);
+    // just above the tip it is the flat of the tip, 1 mm across
+    expect(nozzleRadiusAt(nozzle, 1e-9)).toBeCloseTo(0.5, 6);
+    // half way up the 2 mm cone, which is 3.7 mm across at the top
+    expect(nozzleRadiusAt(nozzle, 1)).toBeCloseTo((0.5 + 1.85) / 2, 6);
+    expect(nozzleRadiusAt(nozzle, 2)).toBeCloseTo(1.85, 6);
+    // the hex, 8 mm across its corners, from there up
+    expect(nozzleRadiusAt(nozzle, 2.01)).toBe(4);
+    expect(nozzleRadiusAt(nozzle, 30)).toBe(4);
+  });
+
+  it('never narrows going up, and takes the Nextruder for an extruder without a shape', () => {
+    const odd = { ...nozzle, nozzleTipWidth: 6, nozzleConeWidth: 2, nozzleBodyWidth: 1 };
+    expect(nozzleRadiusAt(odd, 0.5)).toBe(3);
+    expect(nozzleRadiusAt(odd, 4)).toBe(3);
+
+    const old = { ...nozzle } as Partial<typeof nozzle>;
+    delete old.nozzleTipWidth; delete old.nozzleConeHeight; delete old.nozzleConeWidth; delete old.nozzleBodyWidth;
+    expect(nozzleRadiusAt(old as typeof nozzle, 1)).toBeCloseTo(1.175, 6);
+    expect(nozzleRadiusAt(old as typeof nozzle, 3)).toBe(4);
+  });
+});
+
+describe('buildChunkForest', () => {
+  const printer = new Printer();
+  const noProblems = { covered: 0, nozzleHits: 0, headHits: 0 };
+  /** Two 10 mm wide stacks of 15 layers, `gap` mm apart. */
+  const twoStacks = (gap: number) =>
+    buildRegionTree(foamLayers(15, (k, z) => [rect(0, 0, 10, 10, z), rect(10 + gap, 0, 20 + gap, 10, z)]), 1);
+  const expectPrintable = (chunks: ChunkNode[], tipOffset = CLEARANCE.tipOffset, thickness = CLEARANCE.thickness, offsetOf?: (chunk: ChunkNode) => number) => {
+    for (const lastOfTies of [false, true]) {
+      expect(printProblems(printOrder(chunks, lastOfTies), printer, tipOffset, thickness, offsetOf)).toEqual(noProblems);
+    }
+  };
+
+  it('prints a stack with nothing near it in one go, however tall it is', () => {
+    const chunks = buildChunkForest([{ roots: buildRegionTree(foamStack(40, 0), 1), ...CLEARANCE }], printer);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunkSizes(chunks[0])).toEqual([40]);
+  });
+
+  it('stops a stack where the head body could no longer get to the stack next to it', () => {
+    // 5 mm apart: clear of the nozzle, which is 4 mm at its widest, but under the head.
+    const chunks = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE }], printer);
+
+    // The top of layer k is at k + 1. The nozzle tip is 2 above the lowest layer still to print,
+    // and the head body a nozzle length (4.5) above that.
+    expect(chunks.map(chunkSizes)).toEqual([[6, 6, 3], [6, 6, 3]]);
+    expectPrintable(chunks);
+  });
+
+  it('stops a stack sooner the closer the next one is, for the nozzle to fit beside it', () => {
+    const sizes = (gap: number) => {
+      const chunks = buildChunkForest([{ roots: twoStacks(gap), ...CLEARANCE }], printer);
+      expectPrintable(chunks);
+      return chunkSizes(chunks[0]);
+    };
+
+    // 4 mm apart, the hex (4 mm from the nozzle's axis, from 2 mm above its tip) is in the way.
+    expect(sizes(4)).toEqual([4, 4, 4, 3]);
+    // 1.5 mm apart, the cone is: it is that wide a little over 1 mm above the tip.
+    expect(sizes(1.5)).toEqual([3, 3, 3, 3, 3]);
+    // 0.5 mm apart, the flat of the tip is: the stack may not stand above the tip at all.
+    expect(sizes(0.5)).toEqual([2, 2, 2, 2, 2, 2, 2, 1]);
+  });
+
+  it('follows how high the nozzle rides over the layer', () => {
+    // On top of the layer, the head body is a nozzle length above it: five layers fit under it.
+    const low = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE, tipOffset: () => 1 }], printer);
+    expect(chunkSizes(low[0])).toEqual([5, 5, 5]);
+    // 6 mm above the layer, ten do.
+    const high = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE, tipOffset: () => 6 }], printer);
+    expect(chunkSizes(high[0])).toEqual([10, 5]);
+  });
+
+  it('gives foam the reach of its coils when it is told nothing else', () => {
+    // 5 mm apart, a thin line leaves room for the nozzle's hex; coiled foam does not.
+    const thin = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE }], printer);
+    expect(chunkSizes(thin[0])).toEqual([6, 6, 3]);
+
+    const hStar = printer.getVTPSettings(0).H_star;
+    const reach = coilReach(hStar, printer.threadDiameter(0));
+    // the hex is 4 mm from the nozzle's axis, and the coils reach over a millimetre towards it
+    expect(reach).toBeGreaterThan(1);
+    const coiled = buildChunkForest([{ roots: twoStacks(5), tipOffset: () => 2, thickness: () => 1 }], printer);
+    expect(chunkSizes(coiled[0])).toEqual([4, 4, 4, 3]);
+    // far enough apart for the coils as well, it is the head body again
+    const apart = buildChunkForest([{ roots: twoStacks(4 + reach + 0.2), tipOffset: () => 2, thickness: () => 1 }], printer);
+    expect(chunkSizes(apart[0])).toEqual([6, 6, 3]);
+  });
+
+  it('numbers the chunks in the order they have to be printed in', () => {
+    const chunks = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE }], printer);
+
+    // Both stacks can start, so they share a round; each next chunk is a round of its own pair.
+    expect(chunks.map(chunk => chunk.order)).toEqual([1, 1]);
+    expect(chunks.map(chunk => chunk.children[0].order)).toEqual([2, 2]);
+    expect(chunks.map(chunk => chunk.children[0].children[0].order)).toEqual([3, 3]);
+  });
+
+  it('takes the printer\'s own settings when it is told nothing else', () => {
+    const chunks = buildChunkTree(twoStacks(5), printer);
+    const vtp = printer.getVTPSettings(0);
+
+    expectPrintable(chunks, () => vtp.H_star * printer.threadDiameter(0), () => vtp.deltaZ);
+    expect(chunks[0].VTPSettings).toEqual(vtp);
+    expect(chunks[0].children.length).toBeGreaterThan(0);
+  });
+
+  it('leaves a stack whole when the head cannot reach the other one', () => {
+    // The head is 40 mm wide to the left of the nozzle and 35 mm to the right.
+    const chunks = buildChunkForest([{ roots: twoStacks(50), ...CLEARANCE }], printer);
+
+    expect(chunks.map(chunkSizes)).toEqual([[15], [15]]);
+  });
+
+  it('finishes the stacks in reach of each other before starting ones that are out of reach', () => {
+    // Two pairs of stacks, 5 mm apart within a pair, the pairs 75 mm apart.
+    const regions = foamLayers(15, (k, z) => [0, 15, 100, 115].map(x => rect(x, 0, x + 10, 10, z)));
+    const chunks = buildChunkForest([{ roots: buildRegionTree(regions, 1), ...CLEARANCE }], printer);
+
+    const rounds = chunks.map(root => {
+      const orders: number[] = [];
+      for (let chunk: ChunkNode | undefined = root; chunk; chunk = chunk.children[0]) orders.push(chunk.order);
+      return orders;
+    });
+    expect(rounds).toEqual([[1, 2, 3], [1, 2, 3], [4, 5, 6], [4, 5, 6]]);
+    expectPrintable(chunks);
+  });
+
+  it('never prints a region over a lower one that is still to come', () => {
+    // Two bars leaning the same way: the left one ends up over the foot of the right one.
+    const regions = foamLayers(12, (k, z) => [rect(k, 0, 10 + k, 10, z), rect(12 + k, 0, 22 + k, 10, z)]);
+    const chunks = buildChunkForest([{ roots: buildRegionTree(regions, 1), ...CLEARANCE }], printer);
+
+    // Layer 2 of the left bar already touches the foot of the right one, above its nozzle.
+    expect(chunkSizes(chunks[0])[0]).toBe(2);
+    expectPrintable(chunks);
+  });
+
+  it('prints both legs of an arch before the bridge across them', () => {
+    const regions = foamLayers(6, (k, z) => k < 4
+      ? [rect(0, 0, 10, 10, z), rect(20, 0, 30, 10, z)]
+      : [rect(0, 0, 30, 10, z)]);
+    const roots = buildRegionTree(regions, 1);
+    // The bridge is the child of one leg only, so nothing in the tree says it rests on the other.
+    expect(roots.map(chainLength).sort()).toEqual([4, 6]);
+
+    const chunks = buildChunkForest([{ roots, ...CLEARANCE }], printer);
+
+    expect(chunks.map(chunkSizes).sort()).toEqual([[4], [4, 2]]);
+    expectPrintable(chunks);
+  });
+
+  it('keeps a model from running ahead of the model next to it', () => {
+    const source = (x: number, count: number) => ({
+      roots: buildRegionTree(foamStack(count, 0), 1),
+      position: new THREE.Vector3(x, 0, 0),
+      modelObj: { name: `at ${x}` } as unknown as EverydayModel,
+      ...CLEARANCE,
+    });
+    const offsetOf = (chunk: ChunkNode) => Number(chunk.modelObj!.name.slice(3));
+
+    const near = buildChunkForest([source(0, 30), source(15, 8)], printer);
+    // The tall one keeps pace with the short one, and is free once the short one is finished.
+    expect(near.map(chunkSizes)).toEqual([[6, 6, 18], [6, 2]]);
+    expect(near[0].children[0].modelObj).toBe(near[0].modelObj);
+    expectPrintable(near, CLEARANCE.tipOffset, CLEARANCE.thickness, offsetOf);
+
+    const far = buildChunkForest([source(0, 30), source(200, 8)], printer);
+    expect(far.map(chunkSizes)).toEqual([[30], [8]]);
+  });
+
+  it('builds a leaning wall before the foam it leans over', () => {
+    // A 20 mm square bar leaning 0.3 mm per mm: 0.15 mm per shell layer, which the wall below holds up.
+    const outline = (z: number) => toSegments(square(0.3 * z, 0, 10, z));
+    const regions: SliceRegion[] = [];
+    for (let k = 0; k < 12; k++) {
+      regions.push(...extractRegionsFromLayer(0.00001 + k, outline(0.00001 + k), 0.4, 2));
+    }
+    for (let k = 0; k < 24; k++) {
+      regions.push(...extractShellRegionsFromLayer(0.00001 + k * 0.5, outline(0.00001 + k * 0.5), 0.4, 2));
+    }
+    const tipOffset = (region: SliceRegion) => region.shell ? 0.5 : 2;
+    const thickness = (region: SliceRegion) => region.shell ? 0.5 : 1;
+    // Higher up, the wall is over the foam layers below it.
+    expect(shellCrossesRegion(regions.find(r => r.shell && r.height > 5)!, regions[0])).toBe(true);
+
+    const chunks = buildChunkForest([{ roots: buildRegionTree(regions, 1, 0.2), tipOffset, thickness }], printer);
+
+    const shell = chunks.find(chunk => chunk.shell)!;
+    const foam = chunks.find(chunk => !chunk.shell)!;
+    // Same as for a straight post: the wall first, up to the foam nozzle, then one layer of foam.
+    expect(shell.order).toBeLessThan(foam.order);
+    expect(shell.dependentRegions!.size).toBe(0);
+    expect(shell.regions[shell.regions.length - 1].height + 0.5).toBeCloseTo(2, 3);
+    expect(chunkSizes(shell).reduce((a, b) => a + b)).toBe(24);
+    expect(chunkSizes(foam).reduce((a, b) => a + b)).toBe(12);
+    expectPrintable(chunks, tipOffset, thickness);
+  });
+
+  it('builds the wall of a post before the foam inside it, and never above the foam nozzle', () => {
+    // A 20 mm square post: foam layers 1 mm apart inside shell layers 0.5 mm apart.
+    const outline = (z: number) => toSegments(square(0, 0, 10, z));
+    const regions: SliceRegion[] = [];
+    for (let k = 0; k < 20; k++) {
+      regions.push(...extractRegionsFromLayer(0.00001 + k, outline(0.00001 + k), 0.4, 2));
+    }
+    for (let k = 0; k < 40; k++) {
+      regions.push(...extractShellRegionsFromLayer(0.00001 + k * 0.5, outline(0.00001 + k * 0.5), 0.4, 2));
+    }
+    // The shell is printed on its layer; the foam nozzle rides 2 mm over a 1 mm foam layer.
+    const tipOffset = (region: SliceRegion) => region.shell ? 0.5 : 2;
+    const thickness = (region: SliceRegion) => region.shell ? 0.5 : 1;
+
+    const chunks = buildChunkForest([{ roots: buildRegionTree(regions, 1), tipOffset, thickness }], printer);
+
+    const shell = chunks.find(chunk => chunk.shell)!;
+    const foam = chunks.find(chunk => !chunk.shell)!;
+    // The wall goes first, up to the height the foam nozzle will be at over the first foam layer.
+    expect(shell.order).toBeLessThan(foam.order);
+    expect(shell.regions[shell.regions.length - 1].height + 0.5).toBeCloseTo(2, 3);
+    // The foam then fills the wall that is there, and stops at its rim.
+    expect(foam.regions[foam.regions.length - 1].height + 1).toBeCloseTo(2, 3);
+    expect(chunkSizes(shell).reduce((a, b) => a + b)).toBe(40);
+    expect(chunkSizes(foam).reduce((a, b) => a + b)).toBe(20);
+    expectPrintable(chunks, tipOffset, thickness);
   });
 });

@@ -9,6 +9,7 @@ import { buildPrintGcode, getPurgeTowerHeight } from './buildGcode';
 import { sampleSelectedMesh } from './sampleSelectedMesh';
 import { pointInsideSensing } from './addSensingIntersectionGeo';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
+import { coilDiameter } from './coilModel';
 
 /** Just enough of a Visualizer for the toolpath generators: a scene to draw into and a printer. */
 function fakeVisualizer(printer: Printer = new Printer()): Visualizer {
@@ -266,6 +267,92 @@ describe('generateFoamToolpath (Slice Plate)', () => {
         expect(toolpath.every(isFinitePoint)).toBe(true);
         const gcode = buildPrintGcode(printer, [toolpath]);
         expect(gcode).not.toMatch(/NaN|Infinity|undefined/);
+    });
+});
+
+describe('foam inside walls', () => {
+    // The block's outline is 80..120 in x and y. Its foam regions are cut three thread diameters
+    // inside it, and the inner face of its two shell lines is 1.5 line widths inside it.
+    const printer = () => new Printer();
+    const wallFace = (p: Printer) => 1.5 * p.extruders[0].nozzleDiameter;
+    const coilRadius = (p: Printer, hStar: number) => coilDiameter(hStar, p.threadDiameter(0)) / 2;
+    const foamOf = (toolpath: PathPoint[]) =>
+        toolpath.filter(p => !p.travel && (p.feature === FEATURE.foam || p.feature === FEATURE.initialFoam));
+    const span = (points: PathPoint[], axis: 'x' | 'y') =>
+        [Math.min(...points.map(p => p.point[axis])), Math.max(...points.map(p => p.point[axis]))];
+
+    it('keeps the path a coil radius from the inner face of the wall, on every side', () => {
+        const p = printer();
+        const foam = foamOf(generateFoamToolpath(fakeVisualizer(p), [blockModel()]));
+        expect(foam.length).toBeGreaterThan(0);
+
+        // 0.6 mm of wall, then 1.0 mm of coil: the path stops 1.6 mm inside the outline, where
+        // the edge of the region alone would have let it come to 1.2 mm.
+        const edge = wallFace(p) + coilRadius(p, 6);
+        expect(edge).toBeCloseTo(1.6, 1);
+        for (const axis of ['x', 'y'] as const) {
+            const [low, high] = span(foam, axis);
+            expect(low).toBeCloseTo(80 + edge, 3);
+            expect(high).toBeCloseTo(120 - edge, 3);
+        }
+    });
+
+    it('sizes the coils by the largest H* the gradient gives along the walls', () => {
+        // Black on the left half of the model (H* 12), white on the right half (H* 6).
+        const model = blockModel({ hStar: 6, hStarEnd: 12 });
+        model.gradient = {
+            width: 2, height: 1,
+            sampleColor: x => x < 1 ? { r: 0, g: 0, b: 0, a: 255 } : { r: 255, g: 255, b: 255, a: 255 },
+        };
+        const p = printer();
+        const foam = foamOf(generateFoamToolpath(fakeVisualizer(p), [model]));
+
+        expect(foam.some(point => point.hStar === 12)).toBe(true);
+        expect(foam.some(point => point.hStar === 6)).toBe(true);
+        const edge = wallFace(p) + coilRadius(p, 12);
+        const [low, high] = span(foam, 'x');
+        expect(low).toBeCloseTo(80 + edge, 3);
+        // one inset for the whole region: the smaller coils on the right stop short of the wall
+        expect(high).toBeCloseTo(120 - edge, 3);
+    });
+
+    it('uses the H* of the initial layers on the initial layers', () => {
+        const p = printer();
+        const model = blockModel({}, { initialFoamLayerCount: 1, hStar: 12, hStarEnd: 12 });
+        const foam = foamOf(generateFoamToolpath(fakeVisualizer(p), [model]));
+        const initial = foam.filter(point => point.feature === FEATURE.initialFoam);
+        const main = foam.filter(point => point.feature === FEATURE.foam);
+        expect(initial.length).toBeGreaterThan(0);
+        expect(main.length).toBeGreaterThan(0);
+
+        // One layer is scanned one way only, and its lines reach the edge along the scan alone.
+        const closest = (points: PathPoint[]) => Math.min(span(points, 'x')[0], span(points, 'y')[0]) - 80;
+        expect(closest(initial)).toBeCloseTo(wallFace(p) + coilRadius(p, 12), 3);
+        expect(closest(main)).toBeCloseTo(wallFace(p) + coilRadius(p, 6), 3);
+    });
+
+    it('still fills a part too narrow to keep its coils off the walls', () => {
+        // 3 mm wide: the foam region is 0.6 mm wide, less than twice the 0.4 mm it would be moved in.
+        const model = blockModel();
+        model.geometry = new THREE.BoxGeometry(3, 40, 10).translate(0, 0, 5);
+        model.mesh = new THREE.Mesh(model.geometry, new THREE.MeshBasicMaterial());
+        model.mesh.position.set(100, 100, 0);
+        const p = printer();
+        const foam = foamOf(generateFoamToolpath(fakeVisualizer(p), [model]));
+
+        expect(foam.length).toBeGreaterThan(0);
+        const [low, high] = span(foam, 'x');
+        expect(low).toBeCloseTo(98.5 + 3 * p.threadDiameter(0), 3);
+        expect(high).toBeCloseTo(101.5 - 3 * p.threadDiameter(0), 3);
+    });
+
+    it('leaves an augmentation, which has no walls, filled to its edge', () => {
+        const model = blockModel();
+        const foam = foamOf(generateAugmentFoamToolpath(fakeVisualizer(), model)!);
+        const again = foamOf(generateAugmentFoamToolpath(fakeVisualizer(), blockModel({ hStar: 20, hStarEnd: 20 }))!);
+        // larger coils do not move the path of a stack that is not inside walls
+        expect(span(again, 'x')).toEqual(span(foam, 'x'));
+        expect(span(again, 'y')).toEqual(span(foam, 'y'));
     });
 });
 

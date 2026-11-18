@@ -148,6 +148,10 @@ export const SETTING_SPECS = {
 export const EXTRUDER_SPECS = {
   nozzleDiameter: num('Nozzle Diameter (mm)', 0.05, 2, 0.01, 'Diameter of this extruder\'s nozzle.', false, [0.1, 1.2]),
   nozzleLength: num('Nozzle Length (mm)', 0, 100, 0.01, 'Length of the nozzle from its tip to the base of the print head.', false, [0, 20]),
+  nozzleTipWidth: num('Nozzle Tip Width (mm)', 0, 20, 0.01, 'Outer diameter of the flat tip of the nozzle, around the hole. Material next to where the nozzle goes is kept below the tip. About 1 mm on a Prusa XL.', false, [0.2, 5]),
+  nozzleConeHeight: num('Nozzle Cone Height (mm)', 0, 100, 0.01, 'How far up from its tip the nozzle widens as a cone. 2 mm on a Prusa XL.', false, [0, 20]),
+  nozzleConeWidth: num('Nozzle Cone Width (mm)', 0, 50, 0.01, 'Outer diameter of the nozzle at the top of its cone. 3.7 mm on a Prusa XL.', false, [0.2, 20]),
+  nozzleBodyWidth: num('Nozzle Body Width (mm)', 0, 50, 0.01, 'Outer diameter of the nozzle above its cone, up to the print head: across the corners of its hex. 8 mm on a Prusa XL.', false, [0.2, 30]),
   dieSwelling: num('Die Swell Factor', 0.1, 2, 0.01, 'How much the thread widens as it leaves the nozzle (thread diameter ÷ nozzle diameter).', false, [0.5, 2]),
   print_temp_extruder: num('Print Temperature (°C)', 0, 300, 1, 'Nozzle temperature while this extruder is printing.', false, [150, 300]),
   idle_temp_extruder: num('Idle Temperature (°C)', 0, 300, 1, 'Standby temperature while this extruder is parked.'),

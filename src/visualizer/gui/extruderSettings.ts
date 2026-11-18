@@ -9,6 +9,10 @@ import { notify } from './notify';
 const EXTRUDER_CONTROL_KEYS: ExtruderKey[] = [
   'nozzleDiameter',
   'nozzleLength',
+  'nozzleTipWidth',
+  'nozzleConeHeight',
+  'nozzleConeWidth',
+  'nozzleBodyWidth',
   'dieSwelling',
   'print_temp_extruder',
   'idle_temp_extruder',

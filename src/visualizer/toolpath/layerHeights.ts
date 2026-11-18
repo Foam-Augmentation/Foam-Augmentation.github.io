@@ -26,6 +26,12 @@ export interface ModelContext {
      * whatever the height of the object under it, so it names its own range.
      */
     spacingRamp?: { minZ: number; maxZ: number };
+    /**
+     * How far (mm) the edge of the model's foam regions is from the inner face of the wall printed
+     * around them. Set only for a model that is printed with walls: its foam paths are then kept
+     * a coil's radius away from the wall, so the coils end at it instead of landing on it.
+     */
+    wallGap?: number;
 }
 
 /**
