@@ -149,6 +149,22 @@ describe('findHeadCollisions', () => {
         expect(beside(3.8).moves).toBe(0);
     });
 
+    it('takes foam thinned under a roof to lie only as thick as its own layer', () => {
+        // Under a roof H* is lowered to 3: the nozzle at z = 8.8 is 1.2 mm over its layer at 7.6,
+        // and the layer comes out 0.5 mm thick (its deltaZ), to 8.1 mm.
+        const foam: PathPoint[] = [
+            { point: new THREE.Vector3(100, 100, 8.8), travel: true, objectId: 1 },
+            { point: new THREE.Vector3(104, 100, 8.8), hStar: 3, deltaZ: 0.5, vStar: 0.15, edot: 50, objectId: 1 },
+        ];
+        const beside = (z: number) => findHeadCollisions([...foam, liftOff(foam), ...dab(110, 100, z, 2)], HEAD);
+
+        // Head body at 3.7 + 4.5 = 8.2 mm: clear of the thinned foam. A whole 1.7 mm layer would
+        // reach 9.3 mm.
+        expect(beside(3.7).moves).toBe(0);
+        // At 8.0 mm it is 0.1 mm into it.
+        expect(beside(3.5).depth).toBeCloseTo(0.1, 6);
+    });
+
     it('uses the nozzle length of the extruder that is picked', () => {
         const head: PrintHeadModel = { ...HEAD, nozzleLengths: [4.5, 40] };
         const tall = post(100, 100, 30, 1);

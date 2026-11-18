@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import Printer from '../../printer/Printer';
+import Printer, { nozzleRadiusAt } from '../../printer/Printer';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel, PointCloudPoint, ToolpathConfig } from '../types/modelTypes';
 import { FEATURE, type PathPoint } from './pathTypes';
@@ -520,6 +520,174 @@ describe('foam inside walls', () => {
         // larger coils do not move the path of a stack that is not inside walls
         expect(span(again, 'x')).toEqual(span(foam, 'x'));
         expect(span(again, 'y')).toEqual(span(foam, 'y'));
+    });
+});
+
+describe('foam under roofs (Thin Foam Under Roofs, C6)', () => {
+    /** A block of `geometry` at (x, 100), sliced as a Foam Print with the usual settings. */
+    function modelOf(geometry: THREE.BufferGeometry, x = 100, objectId = 1): EverydayModel {
+        const model = { ...blockModel(), objectId };
+        model.geometry = geometry;
+        model.mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+        model.mesh.position.set(x, 100, 0);
+        return model;
+    }
+
+    /** A 24 x 16 mm box, 4 mm tall, with a gable roof rising `degrees` from horizontal to a ridge along y. */
+    function gable(degrees: number): THREE.BufferGeometry {
+        const rise = 12 * Math.tan(degrees * Math.PI / 180);
+        const shape = new THREE.Shape([
+            new THREE.Vector2(-12, 0), new THREE.Vector2(12, 0), new THREE.Vector2(12, 4),
+            new THREE.Vector2(0, 4 + rise), new THREE.Vector2(-12, 4),
+        ]);
+        // The shape is drawn in x and z, and pushed out 16 mm along y.
+        return new THREE.ExtrudeGeometry(shape, { depth: 16, bevelEnabled: false }).rotateX(Math.PI / 2).translate(0, 8, 0);
+    }
+
+    /** A 10 x 10 x 20 mm bar leaning `degrees` from vertical towards +x. */
+    function bar(degrees: number): THREE.BufferGeometry {
+        const lean = Math.tan(degrees * Math.PI / 180);
+        const geometry = new THREE.BoxGeometry(10, 10, 20).translate(0, 0, 10);
+        const position = geometry.attributes.position;
+        for (let i = 0; i < position.count; i++) {
+            position.setX(i, position.getX(i) + position.getZ(i) * lean);
+        }
+        return geometry;
+    }
+
+    /** A 10 mm post on a 30 x 30 x 4.5 mm base: its wall starts on top of the base's foam. */
+    function postOnBase(): THREE.BufferGeometry {
+        const base = new THREE.BoxGeometry(30, 30, 4.5).translate(0, 0, 2.25).toNonIndexed();
+        const post = new THREE.BoxGeometry(10, 10, 15.5).translate(0, 0, 4.5 + 7.75).toNonIndexed();
+        return mergeGeometries([base, post])!;
+    }
+
+    /** Slices models with Thin Foam Under Roofs on or off, and keeps what the chunk builder warned. */
+    function slice(models: EverydayModel[], on: boolean) {
+        const printer = new Printer();
+        printer.thinFoamUnderRoofs = on;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const toolpath = generateFoamToolpath(fakeVisualizer(printer), models);
+            const warnings = warn.mock.calls.map(call => String(call[0])).filter(text => text.startsWith('Chunk builder'));
+            return { printer, toolpath, warnings };
+        } finally {
+            warn.mockRestore();
+        }
+    }
+
+    /** A toolpath as plain numbers, to compare two of them. */
+    const plain = (toolpath: PathPoint[]) =>
+        toolpath.map(p => [p.point.x, p.point.y, p.point.z, p.hStar, p.deltaZ, !!p.travel].map(v => typeof v === 'number' ? +v.toFixed(6) : v));
+
+    /** How far a point is from a line segment, in x and y. */
+    function distanceToSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const lengthSq = dx * dx + dy * dy;
+        const t = lengthSq > 0 ? Math.min(1, Math.max(0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq)) : 0;
+        return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    }
+
+    /**
+     * Checks every foam point against the wall lines of its own foam layer:
+     *  - `over`: how far its foam stands above the bottom of a wall line printed after it, within
+     *    its coils' reach of the line (above 0: the foam stands up into that line);
+     *  - `nozzle`: how far into the nozzle that prints such a line its foam reaches, where the foam
+     *    stands above that nozzle's tip (above 0: that nozzle runs into the foam);
+     *  - `dip`: how far a wall line printed before it stands above its nozzle tip, beside the
+     *    nozzle (above 0: its nozzle runs into that wall).
+     */
+    function audit(toolpath: PathPoint[], printer: Printer) {
+        const lineWidth = printer.extruders[0].nozzleDiameter;
+        const lineHeight = printer.shellLayerHeight;
+        const d = printer.threadDiameter(0);
+        const nozzle = printer.extruders[0];
+        const coilRadius = coilDiameter(6, d) / 2;
+        const walls = new Map<number, { index: number; a: THREE.Vector3; b: THREE.Vector3; z: number }[]>();
+        for (let i = 1; i < toolpath.length; i++) {
+            const point = toolpath[i];
+            if (point.travel || (point.feature !== FEATURE.shell && point.feature !== FEATURE.ironing)) continue;
+            const list = walls.get(point.layer!) ?? [];
+            list.push({ index: i, a: toolpath[i - 1].point, b: point.point, z: point.point.z });
+            walls.set(point.layer!, list);
+        }
+        let over = -Infinity, intoNozzle = -Infinity, dip = -Infinity;
+        toolpath.forEach((point, i) => {
+            if (point.travel || point.feature !== FEATURE.foam) return;
+            const top = point.point.z - point.hStar! * d + point.deltaZ!;
+            for (const wall of walls.get(point.layer!) ?? []) {
+                const distance = distanceToSegment(point.point, wall.a, wall.b);
+                if (wall.index > i) {
+                    if (distance < lineWidth / 2 + coilRadius) over = Math.max(over, top - (wall.z - lineHeight));
+                    const above = top - wall.z;
+                    if (above > 1e-4) intoNozzle = Math.max(intoNozzle, nozzleRadiusAt(nozzle, above) - (distance - lineWidth / 2 - coilRadius));
+                } else if (distance < nozzleRadiusAt(nozzle, Math.max(0, wall.z - point.point.z)) + lineWidth / 2) {
+                    dip = Math.max(dip, wall.z - point.point.z);
+                }
+            }
+        });
+        return { over, intoNozzle, dip };
+    }
+
+    it('reproduces C6 with the setting off: the roof is printed over foam that is not there yet', () => {
+        const { warnings } = slice([modelOf(gable(11))], false);
+        expect(warnings.length).toBeGreaterThan(0);
+        expect(warnings[0]).toMatch(/which it covers from above\. It is printed over foam that is not there yet/);
+    });
+
+    it.each([
+        ['an 11° gable roof', () => gable(11)],
+        ['a bar leaning 68° from vertical (C1)', () => bar(68)],
+        ['a post on top of a wider base', postOnBase],
+    ])('fits the foam under %s, and prints the walls onto it without a fallback', (_name, geometry) => {
+        const { printer, toolpath, warnings } = slice([modelOf(geometry())], true);
+        expect(warnings).toEqual([]);
+
+        const foam = toolpath.filter(p => !p.travel && p.feature === FEATURE.foam);
+        const lowered = foam.filter(p => p.hStar! < 6);
+        expect(lowered.length).toBeGreaterThan(0);
+        const d = printer.threadDiameter(0);
+        for (const p of lowered) {
+            // Never below Lowest H*, never thinner than the thinnest layer it gives (0.5 mm), and
+            // each point's layer is as thick as its nozzle height says.
+            expect(p.hStar!).toBeGreaterThanOrEqual(3 - 1e-9);
+            expect(p.deltaZ!).toBeGreaterThanOrEqual(0.5 - 1e-9);
+            expect(p.deltaZ!).toBeCloseTo(1.7 - (6 - p.hStar!) * d, 9);
+        }
+
+        const { over, intoNozzle, dip } = audit(toolpath, printer);
+        // 1 µm of Clipper rounding.
+        expect(over).toBeLessThan(0.002);
+        expect(intoNozzle).toBeLessThan(0.002);
+        expect(dip).toBeLessThan(0.002);
+        expect(buildPrintGcode(printer, [toolpath])).not.toMatch(/NaN|Infinity|undefined/);
+    });
+
+    it('slices a roofed part next to another part without a fallback', () => {
+        const block = modelOf(new THREE.BoxGeometry(16, 16, 8).translate(0, 0, 4), 130, 2);
+        const { toolpath, warnings } = slice([modelOf(gable(11)), block], true);
+        expect(warnings).toEqual([]);
+        expect(toolpath.some(p => !p.travel && p.feature === FEATURE.foam && p.objectId === 2)).toBe(true);
+    });
+
+    it.each([
+        ['a block with vertical walls', () => new THREE.BoxGeometry(40, 40, 10).translate(0, 0, 5)],
+        ['a 30° gable roof (each of its lines stands on the one below)', () => gable(30)],
+    ])('leaves %s unchanged', (_name, geometry) => {
+        const on = slice([modelOf(geometry())], true);
+        const off = slice([modelOf(geometry())], false);
+        expect(on.warnings).toEqual([]);
+        expect(plain(on.toolpath)).toEqual(plain(off.toolpath));
+    });
+
+    it('leaves an augmentation, which has no walls, unchanged', () => {
+        const on = new Printer();
+        on.thinFoamUnderRoofs = true;
+        const thinned = generateAugmentFoamToolpath(fakeVisualizer(on), blockModel())!;
+        const off = new Printer();
+        off.thinFoamUnderRoofs = false;
+        const plainPath = generateAugmentFoamToolpath(fakeVisualizer(off), blockModel())!;
+        expect(plain(thinned)).toEqual(plain(plainPath));
     });
 });
 

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { PathPoint } from './pathTypes';
 import type { EverydayModel } from '../types/modelTypes';
-import type { PolygonWithHoles } from '../utils/TreeSlicer';
+import type { PolygonWithHoles, RoofRoom } from '../utils/TreeSlicer';
+import type { LayerResponse } from './layerModel';
 
 /**
  * Facts about one model that the chunk path generator needs but that depend on how the model is
@@ -44,6 +45,31 @@ export interface ModelContext {
      * its foam has no entry.
      */
     wallOverhangs?: Map<number, PolygonWithHoles[]>;
+    /**
+     * Set for a model printed with walls when Thin Foam Under Roofs is on: how its top foam layer
+     * under a roof is fitted under it.
+     */
+    roofFit?: RoofFit;
+}
+
+/**
+ * How a Foam Print's foam is fitted under the walls that lean over it within its layer and rest on
+ * it (a roof): its H* is lowered point by point so that the layer is only as thick as the room
+ * under the roof, and where there is less room than the thinnest layer it can be made, no foam is
+ * laid. The roof is printed onto it afterwards. See findRoofRooms and plans/C6-foam-under-roofs.md.
+ */
+export interface RoofFit {
+    /**
+     * The room under the roof in each foam layer that has one, by layer number (from 0), in
+     * model-local coordinates, measured up from the layer's slice plane.
+     */
+    rooms: Map<number, RoofRoom>;
+    /** The ids of the shell regions each layer's room was worked out from, by layer number. */
+    fedBy: Map<number, Set<string>>;
+    /** Each extruder's Lowest H* and Layer Response (by index). */
+    layers: LayerResponse[];
+    /** The least height (mm) the nozzle keeps above the top of the foam it lays (see lowestHStar). */
+    minGap: number;
 }
 
 /**

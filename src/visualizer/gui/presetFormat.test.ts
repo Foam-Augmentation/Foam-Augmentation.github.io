@@ -24,6 +24,8 @@ function makeExtruder(): ExtruderValues {
     nozzleConeWidth: 3.7,
     nozzleBodyWidth: 8,
     dieSwelling: 1.0,
+    minHStar: 3,
+    layerResponse: 1,
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
@@ -49,6 +51,7 @@ function makeSettings(): SettingsTarget {
     useFermatSpirals: false,
     generateBoundary: false,
     purgeLine: true,
+    thinFoamUnderRoofs: true,
     checkCollisions: false,
     printHeadMinX: -40,
     printHeadMinY: -15,
@@ -140,6 +143,9 @@ describe('round trip', () => {
     settings.printHeadMinX = -12.5;
     settings.extruders.push({ ...makeExtruder(), nozzleDiameter: 0.6, color: 0xff0000 });
     settings.extruders[0].idle_temp_extruder = 90;
+    settings.extruders[1].minHStar = 2.5;
+    settings.extruders[1].layerResponse = 0.8;
+    settings.thinFoamUnderRoofs = false;
     Object.assign(model.toolpathConfig, {
       deltaZ: 0.8, deltaLEnd: 2.5, senseHStar: 4, SenseVStarEnd: 0.4, senseEdot: 60,
       curveAugment: true, generateBumps: true, steepnessThreshold: 42.5,
@@ -160,6 +166,14 @@ describe('round trip', () => {
 
     expect(restoredSettings).toEqual(settings);
     expect(restoredModel).toEqual(model);
+  });
+
+  it("keeps an extruder's Lowest H* and Layer Response when a preset from before them leaves them out", () => {
+    const preset = parsePreset('extruderCount 1\nextruder0.nozzleDiameter 0.6');
+    const target = makeSettings();
+    target.extruders[0].minHStar = 2.5;
+    applyPresetToSettings(preset, target, makeExtruder);
+    expect(target.extruders[0]).toMatchObject({ nozzleDiameter: 0.6, minHStar: 2.5, layerResponse: 1 });
   });
 
   it('shrinks the extruder list when the preset has fewer extruders', () => {

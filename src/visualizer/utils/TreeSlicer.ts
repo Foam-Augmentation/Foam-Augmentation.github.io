@@ -33,7 +33,9 @@ const MIN_SEGMENT_LENGTH = 0.00001;
 // Slack used when comparing two heights, or when turning a height into a layer index.
 const HEIGHT_EPSILON = 0.0001;
 // Room (mm) left between the side of the nozzle and printed material that stands above its tip.
-const NOZZLE_CLEARANCE = 0.1;
+export const NOZZLE_CLEARANCE = 0.1;
+// Two limits of the room under a roof closer than this (mm) are one level (see buildRoofRoom).
+const ROOM_LEVEL_TOLERANCE = 0.0001;
 // How far (mm) to the side of the shell line below it a shell line is still held up by it, when
 // the caller does not say: half the width of a line from a 0.4 mm nozzle.
 const DEFAULT_WALL_OVERHANG = 0.2;
@@ -1215,6 +1217,36 @@ export interface ChunkSource {
    * settings give (see coilReach).
    */
   reach?: (region: SliceRegion) => number;
+  /**
+   * Whether a foam region is fitted under a shell region of the same model: kept below its lines
+   * and below its nozzle while it is printed (foam under a roof, see Thin Foam Under Roofs). The
+   * foam then does not wait for that shell; the shell still waits for the foam it rests on, so
+   * the roof is printed onto the foam. Defaults to never.
+   */
+  keptBelow?: (foam: SliceRegion, shell: SliceRegion) => boolean;
+  /**
+   * How far (mm) above a region's slice plane the nozzle tip gets at its very lowest, where that
+   * is below `tipOffset`: foam thinned under a roof, whose nozzle is lowered there. Every other
+   * region is checked against this low nozzle, except the walls of the same model that the foam
+   * is not kept below. Those are printed before the foam and lie below the lowest line of the
+   * roof (see wallsBeforeFoam in generateFoamToolpath), the foam is never thinner than the room
+   * up to that line, and its nozzle stays above the top of the foam it lays (see lowestHStar).
+   * Defaults to `tipOffset`.
+   */
+  lowestTipOffset?: (region: SliceRegion) => number;
+}
+
+/** What stops a region from being printed in a round: the region in the way, and why. */
+interface Blocker {
+  other: ChunkSlot;
+  /**
+   * 'covers': the region lies over the other one, which would have to be printed under it later.
+   * 'nozzle' and 'head': the region would stand in the way of the nozzle, or of the print head
+   * body, while the other one is printed.
+   */
+  kind: 'covers' | 'nozzle' | 'head';
+  /** The reason in words, for the fallback warning. */
+  reason: string;
 }
 
 /** A region as the chunk builder sees it: where it is on the bed, and which chunk it ended up in. */
@@ -1231,6 +1263,8 @@ interface ChunkSlot {
   top: number;
   /** Height of the nozzle tip, at its lowest, while the region is printed. */
   tipZ: number;
+  /** Height of the nozzle tip where it dips under a roof (see ChunkSource.lowestTipOffset). */
+  lowTipZ: number;
   /** The extruder that prints the region, for the shape of its nozzle. */
   extruder: Extruder;
   /** How far the region's material reaches past its outline: half a shell line, or the reach of foam's coils. */
@@ -1348,8 +1382,12 @@ export function buildChunkTree(
  *    stays clear of the nozzle, which widens upwards (see nozzleRadiusAt);
  *  - it stays below the head body, one nozzle length above the nozzle tip, wherever it lies
  *    inside the head's footprint while the other region is printed.
+ * Foam fitted under a roof (ChunkSource.keptBelow) does not wait for the roof's lines, which are
+ * then printed onto it; where its nozzle dips under the roof, the lower nozzle is what the other
+ * regions are checked against (ChunkSource.lowestTipOffset).
  * A stack starts a round only when its first region passes the same test. If none does (a shell
- * that is printed into the foam under it, say), the one with the lowest nozzle goes anyway.
+ * that is printed into the foam under it, say), the one with the lowest nozzle goes anyway, and a
+ * warning says what it gets in the way of.
  *
  * Stacks that never come within reach of each other, nozzle or head, are done one group after
  * the other, so that parts far apart on the plate are each finished in one visit.
@@ -1398,6 +1436,7 @@ export function buildChunkForest(
       const z = region.height + position.z;
       const extruder = printer.extruders[region.extruder] ?? printer.extruders[0];
       const tip = tipOffset(region);
+      const lowTip = Math.min(tip, source.lowestTipOffset?.(region) ?? tip);
       const slot: ChunkSlot = {
         node,
         region,
@@ -1408,6 +1447,7 @@ export function buildChunkForest(
         // Material cannot stand higher than the nozzle that laid it.
         top: z + Math.min(thickness(region), tip),
         tipZ: z + tip,
+        lowTipZ: z + lowTip,
         extruder,
         margin: reach(region),
         minX: region.bounds.min.x + position.x,
@@ -1501,7 +1541,7 @@ export function buildChunkForest(
    * earlier round (the rest of its own chunk aside, those are printed after it, or in the same
    * round in either order): the first region in the way and why, or null if nothing is.
    */
-  const blockerOf = (slot: ChunkSlot, own: ChunkNode | null, round: number): { other: ChunkSlot; reason: string } | null => {
+  const blockerOf = (slot: ChunkSlot, own: ChunkNode | null, round: number): Blocker | null => {
     // Only a region lower than the top of this one can be covered by it or have the nozzle or head reach it.
     for (let i = firstOpen; i < byHeight.length && byHeight[i].z < slot.top; i++) {
       const other = byHeight[i];
@@ -1514,18 +1554,29 @@ export function buildChunkForest(
       const covers = slot.region.shell && !other.region.shell
         ? slot.source === other.source && (slot.node.shellDependentRegions?.has(other.region.id) ?? false)
         : other.z < slot.z - HEIGHT_EPSILON && materialOverlaps(slot, other);
-      if (covers) return { other, reason: 'which it covers from above' };
+      if (covers) return { other, kind: 'covers', reason: 'which it covers from above' };
 
+      // Foam fitted under a roof is kept below the roof's lines and their nozzle, so it does not
+      // wait for them: the roof is printed onto it afterwards.
+      if (!slot.region.shell && other.region.shell && slot.source === other.source
+          && slot.source.keptBelow?.(slot.region, other.region)) continue;
+
+      // Where the other region is foam thinned under a roof, its nozzle dips there. A wall of the
+      // same model printed before that foam is clear of the dip (see ChunkSource.lowestTipOffset);
+      // everything else is checked against it.
+      const clearOfDip = slot.region.shell && slot.source === other.source
+        && !other.source.keptBelow?.(other.region, slot.region);
+      const tipZ = clearOfDip ? other.tipZ : other.lowTipZ;
       // How far this region would stand above the nozzle tip while the other one is printed.
-      const above = slot.top - other.tipZ;
+      const above = slot.top - tipZ;
       if (above <= HEIGHT_EPSILON) continue;
       if (above > other.extruder.nozzleLength + HEIGHT_EPSILON
           && other.minX + head.min.x <= slot.maxX && other.maxX + head.max.x >= slot.minX
           && other.minY + head.min.y <= slot.maxY && other.maxY + head.max.y >= slot.minY) {
-        return { other, reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, where the print head body passes` };
+        return { other, kind: 'head', reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, where the print head body passes` };
       }
       if (isCloserThan(slot, other, nozzleRadiusAt(other.extruder, above) + slot.margin + NOZZLE_CLEARANCE)) {
-        return { other, reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, beside the nozzle` };
+        return { other, kind: 'nozzle', reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, beside the nozzle` };
       }
     }
     return null;
@@ -1599,10 +1650,14 @@ export function buildChunkForest(
       if (!free.length) {
         const forced = starting[0].slot;
         const blocker = blockerOf(forced, null, round);
+        // Printed before foam it covers, the region is laid over foam that is not there yet, and
+        // the foam is then laid around it. Otherwise it stands in the way of a later nozzle.
         console.warn(`Chunk builder: no stack can print without getting in the way of another, so the ${describe(forced)} `
           + `(extruder ${forced.region.extruder}, nozzle tip at z ${forced.tipZ.toFixed(2)} mm) is printed anyway`
           + (blocker ? ` before the ${describe(blocker.other)}, ${blocker.reason}.` : '.')
-          + ' The nozzle may hit printed material there.');
+          + (blocker?.kind === 'covers'
+            ? ' It is printed over foam that is not there yet, and that foam is then laid around and over it.'
+            : ' The nozzle may hit printed material there.'));
       }
       pending = pending.filter(entry => !starting.includes(entry));
 
@@ -2667,6 +2722,140 @@ export function keepAwayFrom(polygons: PolygonWithHoles[], area: PolygonWithHole
   }
   return result;
 }
+
+
+/**
+ * The area the lines of a wall cover: from half a line outside its outline, which the outer line
+ * runs along, to half a line inside the middle of its innermost line.
+ *
+ * @param {ShellWall} wall The wall.
+ * @param {number} lineWidth The width (mm) of a line of the wall.
+ * @returns {PolygonWithHoles[]} The area. Every contour is wound counter clockwise.
+ */
+export function wallLineArea(wall: ShellWall, lineWidth: number): PolygonWithHoles[] {
+  const z = wall.outline.outer[0]?.z ?? 0;
+  const clipper = new ClipperLib.Clipper();
+  clipper.AddPaths(executeOffset(areaPaths([wall.outline]), lineWidth / 2), ClipperLib.PolyType.ptSubject, true);
+  clipper.AddPaths(executeOffset(areaPaths(wall.inside), -lineWidth / 2), ClipperLib.PolyType.ptClip, true);
+  const solution: ClipperLib.Paths = [];
+  clipper.Execute(ClipperLib.ClipType.ctDifference, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  return polygonsFromPaths(solution, z);
+}
+
+
+/** One limit on the room under a roof: no more than `room` anywhere within `grow` of `area`. */
+export interface RoomLimit {
+  /** The room (mm) above the foam's slice plane. */
+  room: number;
+  area: PolygonWithHoles[];
+  /** How far (mm) around the area the limit holds. */
+  grow: number;
+}
+
+/**
+ * How much room there is for the foam of one layer under the walls that lean over it: how far
+ * above the layer's slice plane its foam may reach at each point (see findRoofRooms in
+ * generateFoamToolpath). Kept as nested levels: the area of each level is everywhere the room is
+ * at most that level's room, so it holds the area of every level before it.
+ */
+export interface RoofRoom {
+  /** By room, from the smallest. */
+  levels: { room: number; area: PolygonWithHoles[]; bvh: SliceRegionBVHNode }[];
+}
+
+/**
+ * Puts limits on the room under a roof together into nested levels (see RoofRoom).
+ *
+ * @param {RoomLimit[]} limits The limits.
+ * @param {number} reach How far (mm) every limit is grown on top of its own `grow`: the reach of
+ *                       the coils laid at a point, so that the room at a point is the smallest
+ *                       anywhere its coils land.
+ * @param {number} fullRoom The room (mm) where nothing limits it: a whole layer. Limits of this
+ *                          much or more limit nothing and are left out.
+ * @returns {RoofRoom} The room. No levels if no limit is below `fullRoom`.
+ */
+export function buildRoofRoom(limits: RoomLimit[], reach: number, fullRoom: number): RoofRoom {
+  const sorted = limits.filter(limit => limit.room < fullRoom).sort((a, b) => a.room - b.room);
+  const levels: RoofRoom['levels'] = [];
+  let union: ClipperLib.Paths = [];
+  let z = 0;
+  for (let i = 0; i < sorted.length;) {
+    // Limits within the tolerance of each other are one level, at the smallest room of them.
+    const room = sorted[i].room;
+    const grown: ClipperLib.Paths = [...union];
+    for (; i < sorted.length && sorted[i].room - room < ROOM_LEVEL_TOLERANCE; i++) {
+      const limit = sorted[i];
+      z = limit.area[0]?.outer[0]?.z ?? z;
+      for (const path of executeOffset(areaPaths(limit.area), limit.grow + reach)) grown.push(path);
+    }
+    if (grown.length === union.length) continue;
+    const clipper = new ClipperLib.Clipper();
+    clipper.AddPaths(grown, ClipperLib.PolyType.ptSubject, true);
+    const merged: ClipperLib.Paths = [];
+    clipper.Execute(ClipperLib.ClipType.ctUnion, merged, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    union = merged;
+    const area = polygonsFromPaths(merged, z);
+    if (!area.length) continue;
+    levels.push({ room, area, bvh: buildSliceRegionBVH(area.flatMap(polygon => getBoundarySegments(polygon.outer, polygon.holes))) });
+  }
+  return { levels };
+}
+
+
+/**
+ * Whether a point lies in an area, from a BVH of the area's boundary segments.
+ *
+ * @param {SliceRegionBVHNode} bvh The BVH of the area's boundary (see buildSliceRegionBVH).
+ * @param {number} x The point's x.
+ * @param {number} y The point's y.
+ * @returns {boolean} True inside the area's outers and outside their holes.
+ */
+export function pointInArea(bvh: SliceRegionBVHNode, x: number, y: number): boolean {
+  if (x < bvh.min.x || x > bvh.max.x || y < bvh.min.y || y > bvh.max.y) return false;
+  return boundaryCrossingsRightOf(bvh, x, y) % 2 === 1;
+}
+
+
+/**
+ * The room under a roof at a point.
+ *
+ * @param {RoofRoom} room The room.
+ * @param {number} x The point's x, in the coordinates the room was built in.
+ * @param {number} y The point's y.
+ * @param {number} fullRoom The room where nothing limits it (a whole layer).
+ * @returns {number} The room of the first level whose area holds the point, or `fullRoom`.
+ */
+export function roofRoomAt(room: RoofRoom, x: number, y: number, fullRoom: number): number {
+  const { levels } = room;
+  // The areas are nested, so once a level holds the point every level after it does too.
+  let low = 0, high = levels.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (pointInArea(levels[mid].bvh, x, y)) high = mid; else low = mid + 1;
+  }
+  return low < levels.length ? levels[low].room : fullRoom;
+}
+
+
+/**
+ * Where the room under a roof is less than some height.
+ *
+ * @param {RoofRoom} room The room.
+ * @param {number} height The height (mm).
+ * @returns {PolygonWithHoles[]} The area of the last level whose room is below `height`. The
+ *          same array each time it is asked for. Empty if no level is.
+ */
+export function roofRoomBelow(room: RoofRoom, height: number): PolygonWithHoles[] {
+  let area: PolygonWithHoles[] = NO_AREA;
+  for (const level of room.levels) {
+    if (level.room >= height) break;
+    area = level.area;
+  }
+  return area;
+}
+
+/** The area of nothing, shared so that it can be compared by identity. */
+const NO_AREA: PolygonWithHoles[] = [];
 
 
 /**

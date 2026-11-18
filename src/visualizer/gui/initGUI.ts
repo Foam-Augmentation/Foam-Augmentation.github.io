@@ -194,7 +194,7 @@ export default function initGUI(visualizer: Visualizer): InitGUIResult {
   );
   addSettings(
     slicerFolder,
-    ['useFermatSpirals', 'generateBoundary', 'purgeLine', 'checkCollisions', 'bedLeveling', 'testSweep'],
+    ['useFermatSpirals', 'generateBoundary', 'purgeLine', 'thinFoamUnderRoofs', 'checkCollisions', 'bedLeveling', 'testSweep'],
     syncPrinter
   );
   addPrinterProfileControl(slicerFolder, visualizer);

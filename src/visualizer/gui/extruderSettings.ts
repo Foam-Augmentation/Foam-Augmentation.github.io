@@ -14,6 +14,8 @@ const EXTRUDER_CONTROL_KEYS: ExtruderKey[] = [
   'nozzleConeWidth',
   'nozzleBodyWidth',
   'dieSwelling',
+  'minHStar',
+  'layerResponse',
   'print_temp_extruder',
   'idle_temp_extruder',
   'printHead_speed_when_free_move',

@@ -18,6 +18,16 @@ export interface Extruder {
   nozzleBodyWidth: number;
   /** Die swelling factor */
   dieSwelling: number;
+  /**
+   * The lowest H* this extruder's foam may be printed at where it is thinned under a roof (Thin
+   * Foam Under Roofs): the lowest that still lays foam a roof can be printed onto. Not measured.
+   */
+  minHStar: number;
+  /**
+   * How much thinner a foam layer comes out per mm its nozzle is lowered, from 0 to 1 (g′, see
+   * layerModel.ts). Not measured.
+   */
+  layerResponse: number;
   /** Print head speed during free movement */
   printHead_speed_when_free_move: number;
   /** Extruder temperature (in °C) */
@@ -67,6 +77,27 @@ export function nozzleRadiusAt(extruder: Extruder, height: number): number {
   return tip + (cone - tip) * (height / coneHeight);
 }
 
+/** The Lowest H* and Layer Response an extruder gets when nothing else is set. Both are assumptions. */
+export const DEFAULT_LAYER_RESPONSE = {
+  minHStar: 3,
+  layerResponse: 1,
+} as const;
+
+/**
+ * An extruder's Lowest H* and Layer Response, with the defaults for an extruder from before these
+ * settings existed.
+ *
+ * @param {Extruder} extruder The extruder.
+ * @returns {{ minHStar: number, response: number }} Lowest H*, and Layer Response in (0, 1].
+ */
+export function layerResponseOf(extruder: Extruder): { minHStar: number; response: number } {
+  const minHStar = typeof extruder.minHStar === 'number' && Number.isFinite(extruder.minHStar) && extruder.minHStar >= 0
+    ? extruder.minHStar : DEFAULT_LAYER_RESPONSE.minHStar;
+  const response = typeof extruder.layerResponse === 'number' && extruder.layerResponse > 0 && extruder.layerResponse <= 1
+    ? extruder.layerResponse : DEFAULT_LAYER_RESPONSE.layerResponse;
+  return { minHStar, response };
+}
+
 /**
  * Creates an extruder with the default parameters.
  * Used when adding a new extruder from the visualizer.
@@ -82,6 +113,8 @@ export function createDefaultExtruder(): Extruder {
     nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
     nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
     dieSwelling: 1.0,
+    minHStar: DEFAULT_LAYER_RESPONSE.minHStar,
+    layerResponse: DEFAULT_LAYER_RESPONSE.layerResponse,
     printHead_speed_when_free_move: 1000,
     print_temp_extruder: 230,
     idle_temp_extruder: 70,
@@ -226,6 +259,11 @@ export default class Printer {
   public generateBoundary: boolean;
   public purgeLine: boolean;
   public checkCollisions: boolean;
+  /**
+   * Whether a Foam Print's top foam layer under a roof is thinned to the room under the roof, by
+   * lowering H* there, and the roof printed onto it afterwards (see plans/C6-foam-under-roofs.md).
+   */
+  public thinFoamUnderRoofs: boolean;
 
   public printHeadDims: { min: THREE.Vector2, max: THREE.Vector2 };
 
@@ -286,6 +324,8 @@ export default class Printer {
         nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
         nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
         dieSwelling: 1.0,
+        minHStar: DEFAULT_LAYER_RESPONSE.minHStar,
+        layerResponse: DEFAULT_LAYER_RESPONSE.layerResponse,
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 230,
         idle_temp_extruder: 70,
@@ -300,6 +340,8 @@ export default class Printer {
         nozzleConeWidth: NEXTRUDER_NOZZLE.coneWidth,
         nozzleBodyWidth: NEXTRUDER_NOZZLE.bodyWidth,
         dieSwelling: 1.0,
+        minHStar: DEFAULT_LAYER_RESPONSE.minHStar,
+        layerResponse: DEFAULT_LAYER_RESPONSE.layerResponse,
         printHead_speed_when_free_move: 1000,
         print_temp_extruder: 240,
         idle_temp_extruder: 70,
@@ -341,6 +383,7 @@ export default class Printer {
     this.generateBoundary = false;
     this.purgeLine = true;
     this.checkCollisions = false;
+    this.thinFoamUnderRoofs = true;
     this.printHeadDims = { min: new THREE.Vector2(-40, -15), max: new THREE.Vector2(35, 70) }
     this.bedLeveling = true;
     this.testSweep = false;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import Printer, { nozzleRadiusAt } from '../../printer/Printer';
 import { coilReach } from '../toolpath/coilModel';
@@ -6,6 +6,7 @@ import type { EverydayModel } from '../types/modelTypes';
 import {
   buildChunkForest,
   buildChunkTree,
+  buildRoofRoom,
   buildRegionTree,
   ChunkNode,
   checkPolygonOverlap,
@@ -28,8 +29,11 @@ import {
   offsetRegion,
   pointInPolygon,
   RegionNode,
+  roofRoomAt,
+  roofRoomBelow,
   sliceMeshIntoLayers,
   traceBoundaryLoops,
+  wallLineArea,
 } from './TreeSlicer';
 
 /** A counter clockwise rectangle from (x0, y0) to (x1, y1) at height z. */
@@ -1198,5 +1202,131 @@ describe('buildChunkForest', () => {
     expect(chunkSizes(shell).reduce((a, b) => a + b)).toBe(40);
     expect(chunkSizes(foam).reduce((a, b) => a + b)).toBe(20);
     expectPrintable(chunks, tipOffset, thickness);
+  });
+
+  describe('under a roof (C6, C7)', () => {
+    /**
+     * A square that narrows 2 mm per mm up, like a shallow roof: each 0.25 mm shell layer is
+     * 0.5 mm inside the one below, too far to be held up by it, so it rests on the foam of its
+     * layer, which stands 1 mm thick, above the nozzle that prints it.
+     */
+    const roof = (): SliceRegion[] => {
+      const outline = (z: number) => toSegments(square(0, 0, 10 - 2 * z, z));
+      const regions: SliceRegion[] = [];
+      for (let k = 0; k < 4; k++) regions.push(...extractRegionsFromLayer(0.00001 + k, outline(0.00001 + k), 0.4, 2));
+      for (let k = 0; k < 16; k++) regions.push(...extractShellRegionsFromLayer(0.00001 + k * 0.25, outline(0.00001 + k * 0.25), 0.4, 2));
+      return regions;
+    };
+    const tipOffset = (region: SliceRegion) => region.shell ? 0.25 : 2;
+    const thickness = (region: SliceRegion) => region.shell ? 0.25 : 1;
+    const layerOf = (region: SliceRegion) => Math.floor(region.height + 0.0001);
+    /** Every region's printing round. */
+    const rounds = (chunks: ChunkNode[]) => {
+      const order = new Map<string, number>();
+      const stack = [...chunks];
+      while (stack.length) {
+        const chunk = stack.pop()!;
+        chunk.regions.forEach(region => order.set(region.id, chunk.order));
+        stack.push(...chunk.children);
+      }
+      return order;
+    };
+
+    it('prints the roof over foam that is not there yet when the foam is not fitted under it, and says so', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const roots = buildRegionTree(roof(), 1, 0.2);
+        buildChunkForest([{ roots, tipOffset, thickness }], printer);
+        expect(warn).toHaveBeenCalled();
+        const message = String(warn.mock.calls[0][0]);
+        expect(message).toMatch(/shell region .* before the foam region .*, which it covers from above\./);
+        expect(message).toMatch(/It is printed over foam that is not there yet, and that foam is then laid around and over it\./);
+        expect(message).not.toMatch(/The nozzle may hit printed material there/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('prints foam that is fitted under the roof first, and the roof onto it, without a fallback', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const roots = buildRegionTree(roof(), 1, 0.2);
+        const keptBelow = (foam: SliceRegion, shell: SliceRegion) => layerOf(foam) === layerOf(shell);
+        const chunks = buildChunkForest([{ roots, tipOffset, thickness, keptBelow }], printer);
+        expect(warn).not.toHaveBeenCalled();
+
+        const order = rounds(chunks);
+        let resting = 0;
+        const stack = [...roots];
+        while (stack.length) {
+          const node = stack.pop()!;
+          stack.push(...node.children);
+          for (const foamId of node.shellDependentRegions ?? []) {
+            resting++;
+            expect(order.get(foamId)!).toBeLessThan(order.get(node.region.id)!);
+          }
+        }
+        expect(resting).toBeGreaterThan(0);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('checks the regions near foam against its nozzle where it dips under a roof', () => {
+      // As 'follows how high the nozzle rides over the layer': a nozzle 1 mm over the layer lets
+      // five layers of the stack beside it go under the head body, where one at 2 mm lets six.
+      const dipped = buildChunkForest([{ roots: twoStacks(5), ...CLEARANCE, lowestTipOffset: () => 1 }], printer);
+      expect(chunkSizes(dipped[0])).toEqual([5, 5, 5]);
+      expectPrintable(dipped, () => 1);
+    });
+  });
+});
+
+describe('room under a roof', () => {
+  /** A wall slice of a 20 mm square at height z, two 0.4 mm lines. */
+  const wallAt = (half: number, z: number) => extractShellRegionsFromLayer(z, toSegments(square(0, 0, half, z)), 0.4, 2)[0].wall!;
+
+  it('takes a wall\'s lines from half a line outside its outline to half a line inside its innermost one', () => {
+    const area = wallLineArea(wallAt(10, 0), 0.4);
+    expect(area).toHaveLength(1);
+    const outer = boundsOf(area[0].outer);
+    expect(outer.minX).toBeCloseTo(-10.2, 2);
+    expect(outer.maxX).toBeCloseTo(10.2, 2);
+    expect(area[0].holes).toHaveLength(1);
+    const hole = boundsOf(area[0].holes[0]);
+    expect(hole.minX).toBeCloseTo(-9.4, 2);
+    expect(hole.maxX).toBeCloseTo(9.4, 2);
+  });
+
+  it('keeps the smallest room at each point, and the whole layer where nothing limits it', () => {
+    // A 4 x 4 square limited to 0.5 mm, inside an 8 x 8 one limited to 1 mm.
+    const small = [{ outer: square(0, 0, 2), holes: [] }];
+    const large = [{ outer: square(0, 0, 4), holes: [] }];
+    const room = buildRoofRoom([{ room: 1, area: large, grow: 0 }, { room: 0.5, area: small, grow: 0 }, { room: 2, area: large, grow: 0 }], 0, 1.7);
+
+    // The limit of 2 mm is more than a layer and limits nothing.
+    expect(room.levels.map(level => level.room)).toEqual([0.5, 1]);
+    expect(roofRoomAt(room, 0, 0, 1.7)).toBe(0.5);
+    expect(roofRoomAt(room, 3, 0, 1.7)).toBe(1);
+    expect(roofRoomAt(room, 5, 0, 1.7)).toBe(1.7);
+  });
+
+  it('holds each limit within its own distance and the coils\' reach of its area', () => {
+    const line = [{ outer: rect(0, 0, 10, 1), holes: [] }];
+    const room = buildRoofRoom([{ room: 0.3, area: line, grow: 0.5 }], 1, 1.7);
+    expect(roofRoomAt(room, 5, 2.4, 1.7)).toBe(0.3);
+    expect(roofRoomAt(room, 5, 2.6, 1.7)).toBe(1.7);
+    expect(roofRoomAt(room, -1.4, 0.5, 1.7)).toBe(0.3);
+  });
+
+  it('gives the area where there is less room than a height, the same array each time', () => {
+    const small = [{ outer: square(0, 0, 2), holes: [] }];
+    const large = [{ outer: square(0, 0, 4), holes: [] }];
+    const room = buildRoofRoom([{ room: 0.4, area: small, grow: 0 }, { room: 1, area: large, grow: 0 }], 0, 1.7);
+
+    expect(roofRoomBelow(room, 0.3)).toEqual([]);
+    expect(boundsOf(roofRoomBelow(room, 0.5)[0].outer).maxX).toBeCloseTo(2, 3);
+    expect(boundsOf(roofRoomBelow(room, 1.5)[0].outer).maxX).toBeCloseTo(4, 3);
+    expect(roofRoomBelow(room, 0.5)).toBe(roofRoomBelow(room, 0.9));
   });
 });

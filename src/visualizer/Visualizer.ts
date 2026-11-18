@@ -116,6 +116,7 @@ export default class Visualizer {
         useFermatSpirals: boolean;
         generateBoundary: boolean;
         purgeLine: boolean;
+        thinFoamUnderRoofs: boolean;
         checkCollisions: boolean;
         printHeadMinX: number;
         printHeadMinY: number;
@@ -230,6 +231,7 @@ export default class Visualizer {
             useFermatSpirals: false,
             generateBoundary: false,
             purgeLine: true,
+            thinFoamUnderRoofs: true,
             checkCollisions: false,
             printHeadMinX: -40,
             printHeadMinY: -15,
@@ -852,6 +854,7 @@ export default class Visualizer {
         this.printer.globalVTPSettings.useFermatSpirals = this.config.useFermatSpirals;
         this.printer.generateBoundary = this.config.generateBoundary;
         this.printer.purgeLine = this.config.purgeLine;
+        this.printer.thinFoamUnderRoofs = this.config.thinFoamUnderRoofs;
         this.printer.checkCollisions = this.config.checkCollisions;
         this.printer.bedLeveling = this.config.bedLeveling;
         this.printer.testSweep = this.config.testSweep;

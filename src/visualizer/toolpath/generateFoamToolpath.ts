@@ -30,11 +30,19 @@ import {
     ShellWall,
     wallOverhang,
     keepAwayFrom,
+    wallLineArea,
+    buildRoofRoom,
+    roofRoomAt,
+    roofRoomBelow,
+    RoomLimit,
+    NOZZLE_CLEARANCE,
 } from '../utils/TreeSlicer';
+import { layerResponseOf, nozzleRadiusAt } from '../../printer/Printer';
 import { notify } from '../gui/notify';
 import { FEATURE, type PathPoint } from './pathTypes';
 import { buildToolpathPreview } from './toolpathPreview';
-import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
+import { applyLayerHeight, LayerHeights, LayerStack, ModelContext, RoofFit } from './layerHeights';
+import { hStarForLayerHeight, layerHeightAt, lowestHStar, NominalLayer, thinnestLayer } from './layerModel';
 import { getRequiredZOffset } from './collision';
 import { coilDiameter, coilReach, coilWallInset } from './coilModel';
 import {
@@ -77,6 +85,12 @@ const WALL_OVERHANG_NOISE = 0.02;
  * that would throw the whole area away.
  */
 const POINT_CLOUD_ALPHA_GRID_STEPS = 1.5;
+/**
+ * The room under a roof keeps the foam below the nozzle that prints the roof, which widens upwards
+ * (see nozzleRadiusAt). It is worked out at heights above the nozzle tip this far apart (mm), each
+ * with the nozzle as wide as it is at the next one.
+ */
+const ROOF_NOZZLE_STEP = 0.25;
 
 /**
  * Throws a readable error for a parameter that has to be positive. A zero or negative layer
@@ -977,6 +991,8 @@ function makeChunkPath(
         augmentSamplePoints: modelObj.augmentSamplePoints,
     };
     const usesInitialMaterial = initialConfig.initialFoamLayerCount > 0;
+    const roofFit = context.roofFit;
+    const layerResponse = roofFit ? roofFit.layers[extruder] ?? roofFit.layers[0] : undefined;
 
     // Resolve H*, V* and Edot for every point, then finish off its height.
     for (const point of chunkPath) {
@@ -994,6 +1010,19 @@ function makeChunkPath(
         point.deltaL = configToUse.deltaL;
         if (usesInitialMaterial) {
             point.initialMaterial = useInitial;
+        }
+
+        // Under a roof, the nozzle is lowered so that the layer is only as thick as the room
+        // there; the point is still in model coordinates, at the height of its slice.
+        const room = roofFit?.rooms.get(layerOf(point.point.z));
+        if (room && layerResponse) {
+            const space = roofRoomAt(room, point.point.x, point.point.y, stackDeltaZ);
+            if (space < stackDeltaZ) {
+                const nominal: NominalLayer = { hStar: point.hStar, deltaZ: stackDeltaZ };
+                const lowest = lowestHStar(nominal, threadDiameter, layerResponse, roofFit!.minGap);
+                point.hStar = hStarForLayerHeight(space, nominal, threadDiameter, layerResponse.response, lowest);
+                point.deltaZ = layerHeightAt(point.hStar, nominal, threadDiameter, layerResponse.response);
+            }
         }
         point.point.add(modelObj.mesh.position);
 
@@ -1032,6 +1061,48 @@ function foamClearance(
         nozzleHeight: Math.min(start, end) * threadDiameter,
         reach: coilReach(Math.max(start, end), threadDiameter),
     };
+}
+
+
+/**
+ * How low the nozzle gets over a foam region where it is lowered under a roof (see
+ * ModelContext.roofFit): the lowest H* any point of the region can get there, times the thread
+ * diameter. The chunk builder checks everything but the walls printed before the region against
+ * this (see ChunkSource.lowestTipOffset).
+ *
+ * @param {SliceRegion} region The foam region.
+ * @param {EverydayModel} modelObj The model the region is part of.
+ * @param {ModelContext} context The model's placement, and the room under its roofs.
+ * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
+ * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
+ * @param {number[]} threadDiameters The thread diameter of each extruder (by index).
+ * @returns {number} The nozzle's lowest height (mm) above the region's slice plane. The same as
+ *          foamClearance's where the region is not under a roof.
+ */
+function foamDip(
+    region: SliceRegion,
+    modelObj: EverydayModel,
+    context: ModelContext,
+    layerZeroHeight: number,
+    vtpSettings: VTPSettings,
+    threadDiameters: number[],
+): number {
+    const nozzleHeight = foamClearance(region, modelObj, layerZeroHeight, vtpSettings, threadDiameters).nozzleHeight;
+    const fit = context.roofFit;
+    const deltaZ = modelObj.toolpathConfig.deltaZ;
+    const room = fit?.rooms.get(Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / deltaZ));
+    const widest = room?.levels[room.levels.length - 1]?.bvh;
+    if (!fit || !widest || widest.min.x > region.bounds.max.x || widest.max.x < region.bounds.min.x
+        || widest.min.y > region.bounds.max.y || widest.max.y < region.bounds.min.y) {
+        return nozzleHeight;
+    }
+    const threadDiameter = threadDiameters[region.extruder] ?? threadDiameters[0];
+    const response = fit.layers[region.extruder] ?? fit.layers[0];
+    let lowest = Infinity;
+    for (const hStar of foamHStarRange(region, modelObj, layerZeroHeight, vtpSettings)) {
+        lowest = Math.min(lowest, lowestHStar({ hStar, deltaZ }, threadDiameter, response, fit.minGap));
+    }
+    return Math.min(nozzleHeight, lowest * threadDiameter);
 }
 
 
@@ -1103,6 +1174,11 @@ interface FoamWalls {
     overhang?: PolygonWithHoles[];
     /** How far (mm) the path keeps from `overhang`: a coil's radius and half a wall line. */
     overhangGap: number;
+    /**
+     * Where the room under a roof is less than the thinnest layer the region's foam can be made
+     * (see ModelContext.roofFit): no foam is laid there. Only set with Thin Foam Under Roofs on.
+     */
+    roofBelow?: PolygonWithHoles[];
 }
 
 /**
@@ -1148,10 +1224,25 @@ function foamWalls(
     }
     const threadDiameter = threadDiameters[region.extruder] ?? threadDiameters[0];
     const layer = Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
+    const room = context.roofFit?.rooms.get(layer);
+    let roofBelow: PolygonWithHoles[] | undefined;
+    if (room) {
+        // The thinnest layer is thickest where H* is lowest, so that end of the gradient decides.
+        const fit = context.roofFit!;
+        const response = fit.layers[region.extruder] ?? fit.layers[0];
+        let thinnest = 0;
+        for (const nominalHStar of [start, end]) {
+            const nominal: NominalLayer = { hStar: nominalHStar, deltaZ: modelObj.toolpathConfig.deltaZ };
+            const lowest = lowestHStar(nominal, threadDiameter, response, fit.minGap);
+            thinnest = Math.max(thinnest, thinnestLayer(nominal, threadDiameter, response.response, lowest));
+        }
+        roofBelow = roofRoomBelow(room, thinnest);
+    }
     return {
         inset: coilWallInset(hStar, threadDiameter, context.wallGap),
         overhang: context.wallOverhangs?.get(layer),
         overhangGap: coilDiameter(hStar, threadDiameter) / 2 + (context.wallLineWidth ?? 0) / 2,
+        roofBelow,
     };
 }
 
@@ -1172,6 +1263,8 @@ const foamFillCache = new WeakMap<SliceRegion, { offset: number; walls: FoamWall
  * in the layer lean over it. A region the wall inset would leave nothing of keeps its foam and
  * gives up the inset instead, as there is no room in it for coils that miss the walls. One that
  * only the leaning walls would leave nothing of keeps the inset and gives up keeping clear of them.
+ * Last, where there is too little room under a roof for any foam (`walls.roofBelow`), it is cut
+ * away; a region that leaves nothing of gets no foam, as the roof is printed onto it.
  *
  * @param {SliceRegion} region The foam region.
  * @param {number} offset How much to grow the region by (negative to shrink it), walls aside.
@@ -1181,7 +1274,8 @@ const foamFillCache = new WeakMap<SliceRegion, { offset: number; walls: FoamWall
 function foamFill(region: SliceRegion, offset: number, walls: FoamWalls | undefined): FoamFill {
     const cached = foamFillCache.get(region);
     if (cached && cached.offset === offset && cached.walls?.inset === walls?.inset
-        && cached.walls?.overhangGap === walls?.overhangGap && cached.walls?.overhang === walls?.overhang) {
+        && cached.walls?.overhangGap === walls?.overhangGap && cached.walls?.overhang === walls?.overhang
+        && cached.walls?.roofBelow === walls?.roofBelow) {
         return cached.fill;
     }
 
@@ -1204,6 +1298,12 @@ function foamFill(region: SliceRegion, offset: number, walls: FoamWalls | undefi
         }
     }
     fill ??= { pieces: grown(), wallInset: 0 };
+    if (walls?.roofBelow?.length) {
+        fill = {
+            pieces: keepAwayFrom(fill.pieces, walls.roofBelow, 0, 0).filter(piece => piece.outer.length >= 3),
+            wallInset: fill.wallInset,
+        };
+    }
 
     foamFillCache.set(region, { offset, walls, fill });
     return fill;
@@ -1240,26 +1340,14 @@ function foamReach(
 
 
 /**
- * Works out, for each foam layer of a model printed with walls, where its walls lean over the
- * layer's foam (see ModelContext.wallOverhangs).
- *
- * Only walls printed before the foam count, as only they are there for its coils to land on. A
- * wall is printed before the foam while it stands on the wall below it all the way down to the
- * bottom of the layer. One that rests on the foam anywhere (see shellRestsOnRegion), such as a
- * wall steeper than about 60° or the first wall of a part that starts on top of the foam, waits
- * for the foam, and so does every wall built on it; the foam under it is left where it is.
+ * The walls of a model printed with walls, by the foam layer they are in: one slice per shell
+ * height, from the bottom of the layer up, each holding one region per outline.
  *
  * @param {RegionNode[]} roots The roots of the model's region tree.
  * @param {(z: number) => number} layerOf The foam layer a slice height is in.
- * @param {number} wallLean How far (mm) to the side of a shell line the one above it may be and
- *                          still stand on it.
- * @returns {Map<number, PolygonWithHoles[]>} The overhang of each layer that has one, by layer number.
+ * @returns {Map<number, RegionNode[][]>} The slices of each layer that has walls, by layer number.
  */
-function findWallOverhangs(
-    roots: RegionNode[],
-    layerOf: (z: number) => number,
-    wallLean: number,
-): Map<number, PolygonWithHoles[]> {
+function wallSlicesByLayer(roots: RegionNode[], layerOf: (z: number) => number): Map<number, RegionNode[][]> {
     // Every shell region, by the foam layer it is in. The tree is walked with a stack: the shell
     // regions are one long chain.
     const shellsByLayer = new Map<number, RegionNode[]>();
@@ -1275,39 +1363,155 @@ function findWallOverhangs(
         if (list) list.push(node); else shellsByLayer.set(layer, [node]);
     }
 
-    const near = (a: SliceRegion, b: SliceRegion) =>
-        a.bounds.min.x - wallLean <= b.bounds.max.x && a.bounds.max.x + wallLean >= b.bounds.min.x &&
-        a.bounds.min.y - wallLean <= b.bounds.max.y && a.bounds.max.y + wallLean >= b.bounds.min.y;
-
-    const overhangs = new Map<number, PolygonWithHoles[]>();
+    const slicesByLayer = new Map<number, RegionNode[][]>();
     for (const [layer, nodes] of shellsByLayer) {
-        // One slice per height, from the bottom of the layer up; each holds one region per outline.
         nodes.sort((a, b) => a.region.height - b.region.height);
         const slices: RegionNode[][] = [];
         for (const node of nodes) {
             const last = slices[slices.length - 1];
             if (last && node.region.height - last[0].region.height < LAYER_INDEX_TOLERANCE) last.push(node); else slices.push([node]);
         }
+        slicesByLayer.set(layer, slices);
+    }
+    return slicesByLayer;
+}
+
+
+/**
+ * Which walls of a foam layer, above its bottom slice, are printed before the layer's foam.
+ *
+ * A wall is printed before the foam while it stands on the wall below it all the way down to the
+ * bottom of the layer. One that rests on the foam anywhere (see shellRestsOnRegion), such as a
+ * wall steeper than about 60°, a shallow roof, or the first wall of a part that starts on top of
+ * the foam, waits for the foam, and so does every wall built on it.
+ *
+ * @param {RegionNode[][]} slices The layer's walls (see wallSlicesByLayer).
+ * @param {number} wallLean How far (mm) to the side of a shell line the one above it may be and
+ *                          still stand on it.
+ * @returns {RegionNode[]} The walls printed before the foam, from the bottom up. The bottom slice
+ *          itself is left out; every other wall of the layer is printed after the foam.
+ */
+function wallsBeforeFoam(slices: RegionNode[][], wallLean: number): RegionNode[] {
+    const near = (a: SliceRegion, b: SliceRegion) =>
+        a.bounds.min.x - wallLean <= b.bounds.max.x && a.bounds.max.x + wallLean >= b.bounds.min.x &&
+        a.bounds.min.y - wallLean <= b.bounds.max.y && a.bounds.max.y + wallLean >= b.bounds.min.y;
+
+    let standing = slices[0] ?? [];
+    const before: RegionNode[] = [];
+    for (const slice of slices.slice(1)) {
+        const below = standing;
+        standing = slice.filter(node => !node.shellDependentRegions?.size && below.some(other => near(other.region, node.region)));
+        if (!standing.length) {
+            break;
+        }
+        pushAll(before, standing);
+    }
+    return before;
+}
+
+
+/**
+ * Works out, for each foam layer of a model printed with walls, where its walls lean over the
+ * layer's foam (see ModelContext.wallOverhangs).
+ *
+ * Only walls printed before the foam count, as only they are there for its coils to land on (see
+ * wallsBeforeFoam). The foam under the others is left where it is, or fitted under them (see
+ * findRoofRooms).
+ *
+ * @param {Map<number, RegionNode[][]>} slicesByLayer The model's walls (see wallSlicesByLayer).
+ * @param {number} wallLean How far (mm) to the side of a shell line the one above it may be and
+ *                          still stand on it.
+ * @returns {Map<number, PolygonWithHoles[]>} The overhang of each layer that has one, by layer number.
+ */
+function findWallOverhangs(
+    slicesByLayer: Map<number, RegionNode[][]>,
+    wallLean: number,
+): Map<number, PolygonWithHoles[]> {
+    const overhangs = new Map<number, PolygonWithHoles[]>();
+    for (const [layer, slices] of slicesByLayer) {
         if (slices.length < 2) {
             continue;
         }
-
-        let standing = slices[0];
-        const above: ShellWall[] = [];
-        for (const slice of slices.slice(1)) {
-            const below = standing;
-            standing = slice.filter(node => !node.shellDependentRegions?.size && below.some(other => near(other.region, node.region)));
-            if (!standing.length) {
-                break;
-            }
-            for (const node of standing) above.push(node.region.wall!);
-        }
+        const above: ShellWall[] = wallsBeforeFoam(slices, wallLean).map(node => node.region.wall!);
         const overhang = wallOverhang(slices[0].map(node => node.region.wall!), above);
         if (overhang.length) {
             overhangs.set(layer, overhang);
         }
     }
     return overhangs;
+}
+
+
+/**
+ * Works out, for each foam layer of a model printed with walls, how much room its foam has under
+ * the walls printed after it (see wallsBeforeFoam): a roof that leans in over the foam within its
+ * layer, or a part that starts on top of the foam. Those walls rest on the foam, and the foam
+ * would otherwise stand up through them (C6 in ISSUES.md).
+ *
+ * At a point, the room is how far above the layer's slice plane the foam may reach:
+ *  - under a line of such a wall at height h: h, so the line is laid onto the foam;
+ *  - beside it: below the nozzle that prints the line (its tip at h + shellLayerHeight), which
+ *    widens upwards (nozzleRadiusAt), with NOZZLE_CLEARANCE to spare;
+ *  - and the smallest of these anywhere within `coilRadius`, where the coils laid at the point land.
+ * A whole layer (deltaZ) where nothing limits it.
+ *
+ * @param {Map<number, RegionNode[][]>} slicesByLayer The model's walls (see wallSlicesByLayer).
+ * @param {(layer: number) => number} layerZ The slice height of a foam layer.
+ * @param {number} deltaZ The foam layer thickness (mm).
+ * @param {number} wallLean How far (mm) to the side of a shell line the one above it may be and
+ *                          still stand on it.
+ * @param {number} lineWidth The width (mm) of a wall line.
+ * @param {number} shellLayerHeight The height (mm) of a wall line.
+ * @param {Printer} printer The printer, for the shape of the nozzle that prints each wall.
+ * @param {number} coilRadius How far (mm) the coils laid at a point land from it, at the largest H*.
+ * @returns {Pick<RoofFit, 'rooms' | 'fedBy'>} The room of each layer that has walls printed after
+ *          its foam, and which walls those are.
+ */
+function findRoofRooms(
+    slicesByLayer: Map<number, RegionNode[][]>,
+    layerZ: (layer: number) => number,
+    deltaZ: number,
+    wallLean: number,
+    lineWidth: number,
+    shellLayerHeight: number,
+    printer: Printer,
+    coilRadius: number,
+): Pick<RoofFit, 'rooms' | 'fedBy'> {
+    const rooms: RoofFit['rooms'] = new Map();
+    const fedBy: RoofFit['fedBy'] = new Map();
+    for (const [layer, slices] of slicesByLayer) {
+        if (slices.length < 2) {
+            continue;
+        }
+        const before = new Set(wallsBeforeFoam(slices, wallLean));
+        const after = slices.slice(1).flat().filter(node => !before.has(node));
+        if (!after.length) {
+            continue;
+        }
+
+        const z = layerZ(layer);
+        const limits: RoomLimit[] = [];
+        for (const node of after) {
+            const height = node.region.height - z;
+            const area = wallLineArea(node.region.wall!, lineWidth);
+            const extruder = printer.extruders[node.region.extruder] ?? printer.extruders[0];
+            limits.push({ room: height, area, grow: 0 });
+            // Up the nozzle, a step at a time, as wide as it is at the top of the step.
+            for (let a = 0; height + shellLayerHeight + a < deltaZ; a += ROOF_NOZZLE_STEP) {
+                limits.push({
+                    room: height + shellLayerHeight + a,
+                    area,
+                    grow: nozzleRadiusAt(extruder, a + ROOF_NOZZLE_STEP) + NOZZLE_CLEARANCE,
+                });
+            }
+        }
+        const room = buildRoofRoom(limits, coilRadius, deltaZ);
+        if (room.levels.length) {
+            rooms.set(layer, room);
+            fedBy.set(layer, new Set(after.map(node => node.region.id)));
+        }
+    }
+    return { rooms, fedBy };
 }
 
 
@@ -1816,7 +2020,8 @@ export function generateFoamToolpath(
         // That inset only keeps the foam off the wall at the bottom of its layer; a wall that leans
         // over the foam is further in higher up in the layer.
         const layerOf = (z: number) => Math.floor((z - bbox.min.z + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
-        context.wallOverhangs = findWallOverhangs(regionTree, layerOf, wallLean);
+        const wallSlices = wallSlicesByLayer(regionTree, layerOf);
+        context.wallOverhangs = findWallOverhangs(wallSlices, wallLean);
         regionTree.forEach(root => {
             const height = root.region.height + modelObj.mesh.position.z
             if (height > highestStartHeight) {
@@ -1832,6 +2037,25 @@ export function generateFoamToolpath(
         const threadDiameters = printer.extruders.map((_, i) => printer.threadDiameter(i));
         const stackDeltaZ = modelObj.toolpathConfig.deltaZ;
         const minZ = bbox.min.z;
+
+        // Where walls rest on the foam within its layer (a roof), the foam is fitted under them.
+        if (printer.thinFoamUnderRoofs) {
+            // The coils are as large as the largest H* any of the model's foam gets.
+            let largestCoil = 0;
+            const initial = modelObj.initialConfig;
+            for (const [extruder, settings] of vtpSettings.entries()) {
+                for (const hStar of [settings.H_star, settings.hStarEnd, initial.hStar, initial.hStarEnd]) {
+                    largestCoil = Math.max(largestCoil, coilDiameter(hStar, threadDiameters[extruder] ?? threadDiameters[0]));
+                }
+            }
+            context.roofFit = {
+                ...findRoofRooms(wallSlices, layer => minZ + layer * stackDeltaZ, stackDeltaZ, wallLean, shellLineWidth,
+                    shellLayerHeight, printer, largestCoil / 2),
+                layers: printer.extruders.map(extruder => layerResponseOf(extruder)),
+                // The nozzle stays a wall line and the nozzle clearance above the foam it lays.
+                minGap: shellLayerHeight + NOZZLE_CLEARANCE,
+            };
+        }
         chunkSources.push({
             roots: regionTree,
             position: modelObj.mesh.position,
@@ -1846,6 +2070,10 @@ export function generateFoamToolpath(
             reach: region => region.shell
                 ? shellLineWidth / 2
                 : foamReach(region, modelObj, context, minZ, settingsOf(region.extruder), threadDiameters),
+            keptBelow: (foam, shell) => context.roofFit?.fedBy.get(layerOf(foam.height))?.has(shell.id) ?? false,
+            lowestTipOffset: region => region.shell
+                ? shellLayerHeight
+                : foamDip(region, modelObj, context, minZ, settingsOf(region.extruder), threadDiameters),
         });
     });
 
