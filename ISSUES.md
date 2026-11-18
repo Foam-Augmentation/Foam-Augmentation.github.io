@@ -25,6 +25,7 @@ Nothing here was tested on a physical printer. Visual findings come from DOM mea
 | Product design (D), added in the second pass | 0 | 6 | 17 | 5 | 28 |
 | Objects list and regular prints (R) | 0 | 2 | 3 | 2 | 7 |
 | Review of 2026-11-16 (E, L, K, P, Q), added in the third pass | 5 | 14 | 20 | 14 | 53 |
+| Foam print order, nozzle shape and coils (C), added 2026-11-17 | 0 | 1 | 3 | 1 | 5 |
 
 ---
 
@@ -520,3 +521,23 @@ Third pass (branch `vtp-fixes`, commit `5b210b1`): a full read of the code by ar
 - With PrusaSlicer, bridges, supports, gap fill and outer walls print at Print Speed unless Use Profile Speeds is on.
 - A post-processing script in a PrusaSlicer profile is not run.
 - An object placed after one that did not fit keeps clear of it.
+
+## Foam print order, nozzle shape and coils (2026-11-17)
+
+Not review findings: a change to the order a Foam Print is printed in and to where its foam is laid (commits `07dd2f9` and `120732a`; described in the README under "How a Foam Print Is Printed"). Checked with `npm run typecheck`, `npm test`, a production build, a block sliced in the app, and test plates (posts, posts 5 mm apart, a post on a base, two models, a 40 mm block, a bar leaning 50°) whose toolpaths were walked on a 0.2 mm grid: the nozzle, as wide as it is at each height, touched nothing already printed. **Nothing has been run on a printer.**
+
+### Open (C)
+
+- [ ] **C1 · P1 · verified (simulated) — a wall leaning more than about 60° from vertical is still printed over foam that is not there yet in places.** Such a wall counts as resting on the foam and keeps the old order. On a bar leaning 68° the nozzle passed up to 1.2 mm below material already printed.
+- [ ] **C2 · P2 · unconfirmed — the coil size at the usual H* is extrapolated.** The lab's roads were measured at H* 17.5 to 47.5; at H* 6 and 9 the fitted line is carried down (2.0 and 2.5 mm). If real coils are smaller, foam sits loose from the wall. Other thread diameters are scaled, which nothing has measured either.
+- [ ] **C3 · P2 · verified (simulated) — a leaning wall hangs over the edge of the foam of its own layer.** The foam's inset from the wall is measured in the slice plane at the bottom of the layer. A wall leaning 50° moves 2 mm sideways within one 1.7 mm layer, so on the overhanging side the coils still land on it (about 1 mm).
+- [ ] **C4 · P2 · unconfirmed — `Nozzle Length` (4.5 mm) and the `Print Head` box were not measured on a Prusa XL.** The tip, cone and hex of the nozzle were taken off E3D's drawing.
+- [ ] **C5 · P3 — no setting turns the wall inset off**, for printing the same part with and without it.
+
+### Behaviour changes to check before printing
+
+- The walls of a Foam Print are printed before the foam inside them, up to the height of the foam nozzle; the foam then fills them. Leaning walls up to about 60° from vertical as well, without an ironing pass.
+- A section of a Foam Print is as tall as the shape of the nozzle and the print head allow, where it was a fixed height set by the nozzle length. Pieces close together are built up in turns; pieces out of each other's reach are finished one after the other.
+- The foam path stops a coil radius short of the inner face of the wall: 1.6 mm inside the outline at H* 6 and 1.85 mm at H* 9, where it was 1.2 mm. Less foam is laid near walls: the foam path of a 40 mm block is 6 % shorter at H* 6, that of a 12 mm post 18 %.
+- A part too narrow for that inset is filled as before.
+- With an H* gradient, one inset is used for a whole piece of a layer, sized by the largest H* along its edge.

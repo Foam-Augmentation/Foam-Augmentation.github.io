@@ -48,7 +48,7 @@ Placing objects on the bed:
     <img src="src/images/augmentation.png" width="307">
 </div>
 
-- For `Foam Print` and `Regular Print` objects, press `Slice Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints. When it is done the toolpath shows in the 3D view (see **Preview** below), each object's row says how many layers it has, and a summary under the button says what the file holds: objects, which slicer made the regular parts, about how long it prints, how much filament it uses (metres and grams, per tool), how many pauses it has, tools, height and file size.
+- For `Foam Print` and `Regular Print` objects, press `Slice Prints` at the bottom of the `Objects` list. It slices every such object on the plate into one G-code file: regular prints first, layer by layer, then the foam prints (see **How a Foam Print Is Printed** below). When it is done the toolpath shows in the 3D view (see **Preview** below), each object's row says how many layers it has, and a summary under the button says what the file holds: objects, which slicer made the regular parts, about how long it prints, how much filament it uses (metres and grams, per tool), how many pauses it has, tools, height and file size.
 
 <div align="center" style="margin: 20px;">
     <img src="src/images/foam-slicing.png" width="300" style="margin-bottom: 20px;"><br>
@@ -70,6 +70,18 @@ A bar across the top of the 3D view controls the toolpath preview. It works on t
 - `Only this layer` shows the slider's step alone. `Travel` shows or hides the moves that do not extrude.
 
 The time estimate follows the motion limits the G-code sets (speeds, acceleration, jerk); for a PrusaSlicer-sliced test part it came within 1 % of PrusaSlicer's own estimate. It does not count heating, homing, bed probing, or the time the printer waits for you at a pause, and it allows 20 s per tool change. Every exported file (prints and augmentations) also carries `M73` progress lines, so the printer shows how far along it is, the time left and, when there is a pause ahead, the time until it.
+
+# How a Foam Print Is Printed
+A `Foam Print` is not printed one whole layer at a time. Every layer of it has two parts:
+- **A wall**: two lines of ordinary (non-foam) extrusion around the outline and around every hole, printed in 0.1 mm layers.
+- **Foam** inside the wall, in layers of `Layer Thickness ΔZ`.
+
+The foam nozzle rides H* thread diameters above the layer it prints, so it is always clear of its own layer, but it can come down beside something that already stands taller. The slicer therefore prints in sections and decides their order itself:
+- **Walls first.** A wall is built before the foam inside it, up to the height the foam nozzle will be at, and the foam then fills it. A leaning wall still goes first as long as each wall line is held up by the one below it (up to about 60° from vertical). A steeper one rests on the foam under it and waits for that foam.
+- **As much in one place as the nozzle allows.** A section stops where printing on would put material in the way of something that is still to be printed beside it: the nozzle as wide as it is at that height (the extruder's nozzle settings), or the print head (`Print Head Min/Max X/Y`, from one `Nozzle Length` above the tip). Pieces close together are therefore built up in turns, and pieces out of each other's reach are finished one after the other.
+- **Foam is kept off the walls.** Foam is laid as a road of loops (coils) that is wider than the path the nozzle follows, so the path stops one coil radius short of the inner face of the wall. A part too narrow to keep its coils clear of the walls is still filled, to the edge of its foam area, and its coils land on the walls there. An `Augmentation` has no walls and is filled to the edge of the selected area.
+
+The coil size comes from the lab's measurements of single foam roads (NinjaFlex 85A, 0.4 mm nozzle, H* 17.5 to 47.5): a loop is about `0.165 × H* + 1.0` mm across with a 0.4 mm thread, so about 2.0 mm at an H* of 6 and 2.5 mm at 9. For another thread diameter the size is scaled with it. Below an H* of 17.5 nothing was measured and the same line is carried on. With a gradient, the coils are sized by the largest H* along the edge of the foam, so foam with a lower H* stops a little short of the wall.
 
 # Other Features
 
@@ -109,6 +121,11 @@ Every control in the panel has a tooltip with the same description as below; hov
     - `Extruders` folder, one `Extruder N` folder per extruder:
         - `Nozzle Diameter (mm)`: The diameter of the extruder's nozzle.
         - `Nozzle Length (mm)`: The length of the nozzle from the tip to the base of the print head.
+        - `Nozzle Tip Width (mm)`: Outer diameter of the flat tip of the nozzle, around the hole. About 1 mm on a Prusa XL.
+        - `Nozzle Cone Height (mm)`: How far up from its tip the nozzle widens as a cone. 2 mm on a Prusa XL.
+        - `Nozzle Cone Width (mm)`: Outer diameter of the nozzle at the top of its cone. 3.7 mm on a Prusa XL.
+        - `Nozzle Body Width (mm)`: Outer diameter of the nozzle above its cone, up to the print head: across the corners of its hex. 8 mm on a Prusa XL.
+        - The four nozzle widths and heights above describe the outside of the nozzle. A Foam Print uses them to decide how much it can print in one place before the nozzle would no longer fit beside it (see **How a Foam Print Is Printed**). The defaults are the Prusa Nextruder nozzle.
         - `Die Swell Factor`: The die swelling factor.
         - `Print Temperature (°C)`: Nozzle temperature while the extruder is printing.
         - `Idle Temperature (°C)`: Standby temperature while the extruder is parked.
@@ -235,3 +252,60 @@ Then, from the project folder:
 - `npm run build` makes the production build in `dist/`.
 - `npm test` runs the tests, and `npm run typecheck` checks the types of the app and the tests.
 - `npm run desktop` builds the page and starts the desktop app (see above).
+
+# Tests
+
+`npm test` runs every test file once; the whole suite takes a few seconds. The tests run in Node with [Vitest](https://vitest.dev/): no browser, no PrusaSlicer and no printer are needed, so they check the toolpaths and G-code the app works out, not how a print comes out. Each test file sits beside the code it tests, and the pushes to `main` and the pull requests are checked with `npm run typecheck`, `npm test` and `npm run build`.
+
+- `npx vitest run src/visualizer/toolpath/coilModel.test.ts` runs one file.
+- `npx vitest run --reporter=verbose` lists every test by name.
+- A code in a test's name, such as `(G5)` or `(S9)`, is the entry in [ISSUES.md](ISSUES.md) the test was written for.
+
+The tables say what each test file is there to keep working. A file that fails points at the part of the app in its row. All paths are under `src/visualizer/` unless they start with `electron/`.
+
+**Slicing foam** (Foam Prints and Augmentations)
+
+| Test file | What it supports | What it checks |
+|---|---|---|
+| `utils/TreeSlicer.test.ts` | Cutting a model into layers, and the order a Foam Print is printed in (see **How a Foam Print Is Printed**) | Closed outlines with their holes from a mesh; insetting an outline, including ones that split or leave slivers; which piece of a layer sits on which; when a wall rests on foam and when it stands on the wall below; the shape of the nozzle; how much is printed in one place before the nozzle or head would be in the way, for one model and for several; outlines of a selected area |
+| `toolpath/generateFoamToolpath.test.ts` | The foam toolpath of an Augmentation and of `Slice Prints`, from model to path | Purge line and purge tower; initial layers and their offset; curved augmentation and its extra flat layers; bumps; the line spacing ramp; sensing areas; the boundary outline; foam kept a coil radius from the walls; the object, layer and feature tags the preview uses; sampling the selected area |
+| `toolpath/coilModel.test.ts` | The size of foam coils, used for how wide foam is and how far it stays from walls | The lab's measurements and the lines fitted to them; coil size against the AugPrint paper; the wall inset; loop overlap and spacing against V* |
+| `toolpath/layerHeights.test.ts` | The height of the nozzle at every foam point, and layers draped over a surface (`Curved Augmentation`) | Finite heights for every layer count; the surface height under a point; layers that never step down |
+| `toolpath/collision.test.ts` | `Check Collisions` when augmenting | The H* offset needed for the print head to clear the object |
+| `loaders/modelLoader.test.ts` | Importing models, `Load Example`, gradients and copies | Reading STL files and refusing broken ones; the built-in example model; sampling the top surface of a mesh; looking colours up in a gradient image; the names of copies |
+
+**Regular Prints**
+
+| Test file | What it supports | What it checks |
+|---|---|---|
+| `toolpath/regularSlicer.test.ts` | The built-in slicer for `Regular Print` objects | Layers, walls, top and bottom layers, infill density, holes, stepped parts, several parts at once; refusing settings that cannot be printed; the G-code that comes out |
+| `toolpath/prusaSlicer.test.ts` | Slicing Regular Prints with PrusaSlicer in the desktop app | What is sent to PrusaSlicer, with which profiles; falling back to the built-in slicer; where the tool changes between two groups of parts |
+| `toolpath/prusaGcode.test.ts` | Reading PrusaSlicer's G-code back into the app's own file | Parsing moves and object labels; the config written for PrusaSlicer and the checks on its options; keeping its acceleration and pressure advance |
+| `toolpath/prusaProfiles.test.ts` | `PrusaSlicer Printer`, `Print Profile` and `Filament Profile` | Reading Prusa's profile bundle; which printers and profiles are offered; the bed, height and nozzles taken from a printer profile |
+| `electron/requestChecks.test.js` | The desktop app's guard on what the page may ask it to run | Checking a slicing request and its settings; removing settings that would run a program; which page may talk to it |
+
+**G-code, the sliced plate and the preview**
+
+| Test file | What it supports | What it checks |
+|---|---|---|
+| `toolpath/buildGcode.test.ts` | Writing the G-code file | Tool changes and heaters across several models; refusing a toolpath outside the machine; purge positions; the material swap for initial layers; start G-code and feed rates; the part cooling fan; `Test Sweep (Dry Run)` |
+| `toolpath/gcodeActions.test.ts` | The `Slice Prints` and export buttons | The approach to the start of a print from above; exporting only while the slice is up to date |
+| `toolpath/plateSlice.test.ts` | The slice summary, and marking a slice out of date | Layer counts per object; time and filament per tool; noticing every change to the plate |
+| `toolpath/printEstimate.test.ts` | The time and filament estimate, and the `M73` progress lines | Move times with acceleration and jerk; filament per tool; pauses and tool changes; progress that only counts up |
+| `toolpath/toolpathPreview.test.ts` | The **Preview** bar | The steps of the slider; `Colour by` and its legend; the speeds shown |
+
+**Objects, placement and the panel**
+
+| Test file | What it supports | What it checks |
+|---|---|---|
+| `utils/arrange.test.ts` | `Arrange`, where a new object is put, and the warning about objects in the print head's reach | Finding free space; packing objects clear of each other and of fixed ones; objects that do not fit |
+| `utils/geometryUtils.test.ts` | Area selection | Convex hulls and counting crossings of a ray |
+| `gui/placement.test.ts` | `Snap Model to Plate` and `Lay on Face` | A turned model resting its lowest point on the bed |
+| `gui/modelActions.test.ts` | Deleting and moving an object | Everything that belongs to an object going with it |
+| `gui/objectSummary.test.ts` | The status text in the `Objects` list and the slice summary | What each object still needs; sizes, durations and the estimate in words |
+| `gui/presetFormat.test.ts` | `Export Preset` and `Import Preset` | Every setting written and read back; older preset files; refusing a file with an invalid line |
+| `gui/downloadName.test.ts` | The names of saved G-code files | The date and time stamp, and names that are safe as file names |
+| `gui/keyTarget.test.ts` | Keyboard shortcuts | Shortcuts and `Esc` not firing while a field is being typed in |
+| `interactions/pointerToNdc.test.ts` | Selecting and moving objects with the pointer | Turning a pointer position into a position in the 3D view |
+
+When a test file is added, removed or changes what it covers, change its row here.
