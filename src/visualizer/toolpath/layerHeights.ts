@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { PathPoint } from './pathTypes';
 import type { EverydayModel } from '../types/modelTypes';
+import type { PolygonWithHoles } from '../utils/TreeSlicer';
 
 /**
  * Facts about one model that the chunk path generator needs but that depend on how the model is
@@ -32,6 +33,17 @@ export interface ModelContext {
      * a coil's radius away from the wall, so the coils end at it instead of landing on it.
      */
     wallGap?: number;
+    /** The width (mm) of a line of the model's walls. Set with `wallGap`. */
+    wallLineWidth?: number;
+    /**
+     * Where the walls of a model printed with walls lean over the foam of their own layer, by
+     * layer number (from 0): the area that the walls higher up in the layer cover, up to the
+     * middle of their innermost line, inside the middle of the innermost line at the bottom of the
+     * layer. The foam path keeps a coil's radius and half a wall line from it too. Only walls
+     * printed before the foam count (see findWallOverhangs). A layer whose walls do not lean over
+     * its foam has no entry.
+     */
+    wallOverhangs?: Map<number, PolygonWithHoles[]>;
 }
 
 /**

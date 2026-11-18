@@ -610,8 +610,9 @@ describe('helpers shared with the foam generator', () => {
         expect(hasPurgeLine(withDefault)).toBe(true);
         expect(withEmptyOptions.length).toBe(withDefault.length);
         expect(hasPurgeLine(without)).toBe(false);
-        // Nothing but the purge line is left out.
-        expect(without.length).toBe(withDefault.filter(point => point.role !== 'purgeLine').length);
+        // Nothing but the purge line is left out, and the lift off it on the way to the print.
+        const printed = (toolpath: PathPoint[]) => toolpath.filter(point => point.role !== 'purgeLine' && point.role !== 'approach');
+        expect(printed(without).length).toBe(printed(withDefault).length);
 
         printer.purgeLine = false;
         expect(hasPurgeLine(generateFoamToolpath(visualizer(printer), [foamModel()]))).toBe(false);
