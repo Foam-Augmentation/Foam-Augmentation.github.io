@@ -26,13 +26,17 @@ import {
     extractShellRegionsFromLayer,
     subtractRegions,
     PolygonWithHoles,
+    RegionNode,
+    ShellWall,
+    wallOverhang,
+    keepAwayFrom,
 } from '../utils/TreeSlicer';
 import { notify } from '../gui/notify';
 import { FEATURE, type PathPoint } from './pathTypes';
 import { buildToolpathPreview } from './toolpathPreview';
 import { applyLayerHeight, LayerHeights, LayerStack, ModelContext } from './layerHeights';
 import { getRequiredZOffset } from './collision';
-import { coilReach, coilWallInset } from './coilModel';
+import { coilDiameter, coilReach, coilWallInset } from './coilModel';
 import {
     BOUNDARY_FIRST_LAYER_Z,
     BOUNDARY_LAYER_HEIGHT,
@@ -62,6 +66,11 @@ const SCAN_EDGE_INSET = 1e-6;
 const MIN_SCAN_LINE_LENGTH = 0.01;
 /** A foam region's edge is checked for the H* its gradient gives there at its corners and this often (mm) in between. */
 const WALL_GRADIENT_SAMPLE_SPACING = 1;
+/**
+ * Parts narrower than this (mm) of where a wall leans over the foam of its layer are taken for
+ * rounding and ignored. In a 1.7 mm layer, a wall has to lean less than about 0.7° for that.
+ */
+const WALL_OVERHANG_NOISE = 0.02;
 /**
  * The alpha radius of a sampled area, in sampling grid steps, when that is more than
  * POINT_CLOUD_ALPHA. A grid's own triangles have a circumradius of 0.71 steps; anything below
@@ -871,11 +880,11 @@ function makeChunkPath(
             const edot = useInitial ? initialConfig.edot : VTPSettings.Edot;
 
             // The initial layers are printed inside the region offset by `initialOffset`, and foam
-            // inside walls is kept a coil's radius away from them. The whole region is offset at
-            // once (outer and holes together), so a region that splits apart prints every piece,
-            // and holes that grow into the wall are clipped against it.
-            const wallInset = foamWallInset(region, modelObj, context, modelHeight, VTPSettings, layerHeights.threadDiameters);
-            const { pieces } = foamFill(region, useInitial ? initialOffset : 0, wallInset);
+            // inside walls is kept a coil's radius away from them, at every height of the layer.
+            // The whole region is offset at once (outer and holes together), so a region that
+            // splits apart prints every piece, and holes that grow into the wall are clipped against it.
+            const walls = foamWalls(region, modelObj, context, modelHeight, VTPSettings, layerHeights.threadDiameters);
+            const { pieces } = foamFill(region, useInitial ? initialOffset : 0, walls);
             const isOffset = pieces.length !== 1 || pieces[0].outer !== region.contour;
 
             path = [];
@@ -1080,29 +1089,45 @@ function gradientPercent(x: number, y: number, z: number, modelObj: EverydayMode
 }
 
 
+/** How a foam region's path keeps its coils off the walls around it. */
+interface FoamWalls {
+    /**
+     * How far in from the region's edge the path is moved, so that the coils end at the wall at
+     * the bottom of the layer instead of landing on it (mm).
+     */
+    inset: number;
+    /**
+     * Where the walls higher up in the layer lean over its foam, up to the middle of their
+     * innermost line (see ModelContext.wallOverhangs).
+     */
+    overhang?: PolygonWithHoles[];
+    /** How far (mm) the path keeps from `overhang`: a coil's radius and half a wall line. */
+    overhangGap: number;
+}
+
 /**
- * How far in from its edge a foam region's path is moved so that its coils end at the wall around
- * it instead of landing on it. The coils are as large as the largest H* gives anywhere along the
- * edge, so where the gradient lowers H* the foam stops a little short of the wall.
+ * How a foam region's path keeps its coils off the walls around it. The coils are as large as the
+ * largest H* gives anywhere along the edge, so where the gradient lowers H* the foam stops a
+ * little short of the wall.
  *
  * @param {SliceRegion} region The foam region.
  * @param {EverydayModel} modelObj The model the region is part of.
- * @param {ModelContext} context The model's placement, and how far its foam regions are from its walls.
+ * @param {ModelContext} context The model's placement, and where its walls are.
  * @param {number} layerZeroHeight The slice height layer 0 starts at, in the region's coordinates.
  * @param {VTPSettings} vtpSettings The settings of the extruder that prints the region.
  * @param {number[]} threadDiameters The thread diameter of each extruder (by index).
- * @returns {number} The inset (mm). 0 for a shell, and for a model that is printed without walls.
+ * @returns {FoamWalls | undefined} Undefined for a shell, and for a model printed without walls.
  */
-function foamWallInset(
+function foamWalls(
     region: SliceRegion,
     modelObj: EverydayModel,
     context: ModelContext,
     layerZeroHeight: number,
     vtpSettings: VTPSettings,
     threadDiameters: number[],
-): number {
+): FoamWalls | undefined {
     if (region.shell || context.wallGap === undefined) {
-        return 0;
+        return undefined;
     }
     const [start, end] = foamHStarRange(region, modelObj, layerZeroHeight, vtpSettings);
     let hStar = start;
@@ -1122,7 +1147,12 @@ function foamWallInset(
         }
     }
     const threadDiameter = threadDiameters[region.extruder] ?? threadDiameters[0];
-    return coilWallInset(hStar, threadDiameter, context.wallGap);
+    const layer = Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
+    return {
+        inset: coilWallInset(hStar, threadDiameter, context.wallGap),
+        overhang: context.wallOverhangs?.get(layer),
+        overhangGap: coilDiameter(hStar, threadDiameter) / 2 + (context.wallLineWidth ?? 0) / 2,
+    };
 }
 
 
@@ -1134,37 +1164,48 @@ interface FoamFill {
 }
 
 /** The last fill worked out for each region: the chunk builder and the path generator both ask. */
-const foamFillCache = new WeakMap<SliceRegion, { offset: number; wallInset: number; fill: FoamFill }>();
+const foamFillCache = new WeakMap<SliceRegion, { offset: number; walls: FoamWalls | undefined; fill: FoamFill }>();
 
 /**
  * The area a foam region's infill is laid in: the region grown by `offset` (the initial layers'
- * own offset) and shrunk by `wallInset`. A region the wall inset would leave nothing of keeps its
- * foam and gives up the inset instead, as there is no room in it for coils that miss the walls.
+ * own offset), shrunk by the wall inset, and kept a coil's radius from where the walls higher up
+ * in the layer lean over it. A region the wall inset would leave nothing of keeps its foam and
+ * gives up the inset instead, as there is no room in it for coils that miss the walls. One that
+ * only the leaning walls would leave nothing of keeps the inset and gives up keeping clear of them.
  *
  * @param {SliceRegion} region The foam region.
  * @param {number} offset How much to grow the region by (negative to shrink it), walls aside.
- * @param {number} wallInset How far to keep the path from the region's edge (see foamWallInset).
+ * @param {FoamWalls | undefined} walls How to keep the coils off the walls (see foamWalls).
  * @returns {FoamFill} The pieces to fill, and the wall inset they were made with.
  */
-function foamFill(region: SliceRegion, offset: number, wallInset: number): FoamFill {
+function foamFill(region: SliceRegion, offset: number, walls: FoamWalls | undefined): FoamFill {
     const cached = foamFillCache.get(region);
-    if (cached && cached.offset === offset && cached.wallInset === wallInset) {
+    if (cached && cached.offset === offset && cached.walls?.inset === walls?.inset
+        && cached.walls?.overhangGap === walls?.overhangGap && cached.walls?.overhang === walls?.overhang) {
         return cached.fill;
     }
 
+    const grown = (): PolygonWithHoles[] =>
+        offset ? offsetRegion(region.contour, region.holes, offset) : [{ outer: region.contour, holes: region.holes }];
     let fill: FoamFill | undefined;
-    if (wallInset > 0) {
-        const pieces = offsetRegion(region.contour, region.holes, offset - wallInset).filter(piece => piece.outer.length >= 3);
+    if (walls && (walls.inset > 0 || walls.overhang)) {
+        let pieces = walls.inset > 0
+            ? offsetRegion(region.contour, region.holes, offset - walls.inset).filter(piece => piece.outer.length >= 3)
+            : grown();
+        if (pieces.length && walls.overhang) {
+            const clear = keepAwayFrom(pieces, walls.overhang, walls.overhangGap, WALL_OVERHANG_NOISE)
+                .filter(piece => piece.outer.length >= 3);
+            if (clear.length) {
+                pieces = clear;
+            }
+        }
         if (pieces.length) {
-            fill = { pieces, wallInset };
+            fill = { pieces, wallInset: walls.inset };
         }
     }
-    fill ??= {
-        pieces: offset ? offsetRegion(region.contour, region.holes, offset) : [{ outer: region.contour, holes: region.holes }],
-        wallInset: 0,
-    };
+    fill ??= { pieces: grown(), wallInset: 0 };
 
-    foamFillCache.set(region, { offset, wallInset, fill });
+    foamFillCache.set(region, { offset, walls, fill });
     return fill;
 }
 
@@ -1191,9 +1232,82 @@ function foamReach(
 ): number {
     const layer = Math.floor((region.height - layerZeroHeight + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
     const offset = layer < modelObj.initialConfig.initialFoamLayerCount ? modelObj.initialOffset : 0;
-    const wallInset = foamWallInset(region, modelObj, context, layerZeroHeight, vtpSettings, threadDiameters);
+    const walls = foamWalls(region, modelObj, context, layerZeroHeight, vtpSettings, threadDiameters);
     const reach = foamClearance(region, modelObj, layerZeroHeight, vtpSettings, threadDiameters).reach;
-    return reach - foamFill(region, offset, wallInset).wallInset + Math.max(0, offset);
+    // Where the foam keeps clear of a leaning wall it reaches less far; the largest reach counts.
+    return reach - foamFill(region, offset, walls).wallInset + Math.max(0, offset);
+}
+
+
+/**
+ * Works out, for each foam layer of a model printed with walls, where its walls lean over the
+ * layer's foam (see ModelContext.wallOverhangs).
+ *
+ * Only walls printed before the foam count, as only they are there for its coils to land on. A
+ * wall is printed before the foam while it stands on the wall below it all the way down to the
+ * bottom of the layer. One that rests on the foam anywhere (see shellRestsOnRegion), such as a
+ * wall steeper than about 60° or the first wall of a part that starts on top of the foam, waits
+ * for the foam, and so does every wall built on it; the foam under it is left where it is.
+ *
+ * @param {RegionNode[]} roots The roots of the model's region tree.
+ * @param {(z: number) => number} layerOf The foam layer a slice height is in.
+ * @param {number} wallLean How far (mm) to the side of a shell line the one above it may be and
+ *                          still stand on it.
+ * @returns {Map<number, PolygonWithHoles[]>} The overhang of each layer that has one, by layer number.
+ */
+function findWallOverhangs(
+    roots: RegionNode[],
+    layerOf: (z: number) => number,
+    wallLean: number,
+): Map<number, PolygonWithHoles[]> {
+    // Every shell region, by the foam layer it is in. The tree is walked with a stack: the shell
+    // regions are one long chain.
+    const shellsByLayer = new Map<number, RegionNode[]>();
+    const stack = [...roots];
+    while (stack.length) {
+        const node = stack.pop()!;
+        pushAll(stack, node.children);
+        if (!node.shell || !node.region.wall) {
+            continue;
+        }
+        const layer = layerOf(node.region.height);
+        const list = shellsByLayer.get(layer);
+        if (list) list.push(node); else shellsByLayer.set(layer, [node]);
+    }
+
+    const near = (a: SliceRegion, b: SliceRegion) =>
+        a.bounds.min.x - wallLean <= b.bounds.max.x && a.bounds.max.x + wallLean >= b.bounds.min.x &&
+        a.bounds.min.y - wallLean <= b.bounds.max.y && a.bounds.max.y + wallLean >= b.bounds.min.y;
+
+    const overhangs = new Map<number, PolygonWithHoles[]>();
+    for (const [layer, nodes] of shellsByLayer) {
+        // One slice per height, from the bottom of the layer up; each holds one region per outline.
+        nodes.sort((a, b) => a.region.height - b.region.height);
+        const slices: RegionNode[][] = [];
+        for (const node of nodes) {
+            const last = slices[slices.length - 1];
+            if (last && node.region.height - last[0].region.height < LAYER_INDEX_TOLERANCE) last.push(node); else slices.push([node]);
+        }
+        if (slices.length < 2) {
+            continue;
+        }
+
+        let standing = slices[0];
+        const above: ShellWall[] = [];
+        for (const slice of slices.slice(1)) {
+            const below = standing;
+            standing = slice.filter(node => !node.shellDependentRegions?.size && below.some(other => near(other.region, node.region)));
+            if (!standing.length) {
+                break;
+            }
+            for (const node of standing) above.push(node.region.wall!);
+        }
+        const overhang = wallOverhang(slices[0].map(node => node.region.wall!), above);
+        if (overhang.length) {
+            overhangs.set(layer, overhang);
+        }
+    }
+    return overhangs;
 }
 
 
@@ -1692,10 +1806,17 @@ export function generateFoamToolpath(
         // inner face is half a line width further in. What is between the two is the room the
         // foam's coils have before they are on the wall.
         context.wallGap = Math.max(0, foamEdgeSpacing * (SHELL_LAYER_COUNT + 1) - shellLineWidth * (SHELL_LAYER_COUNT - 0.5));
+        context.wallLineWidth = shellLineWidth;
 
         // A shell line is one nozzle diameter wide, and is held up by the line below it as long
         // as it is no more than half its width to the side of it.
-        const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ, printer.extruders[0].nozzleDiameter / 2);
+        const wallLean = printer.extruders[0].nozzleDiameter / 2;
+        const regionTree = buildRegionTree(allRegions, modelObj.toolpathConfig.deltaZ, wallLean);
+
+        // That inset only keeps the foam off the wall at the bottom of its layer; a wall that leans
+        // over the foam is further in higher up in the layer.
+        const layerOf = (z: number) => Math.floor((z - bbox.min.z + LAYER_INDEX_TOLERANCE) / modelObj.toolpathConfig.deltaZ);
+        context.wallOverhangs = findWallOverhangs(regionTree, layerOf, wallLean);
         regionTree.forEach(root => {
             const height = root.region.height + modelObj.mesh.position.z
             if (height > highestStartHeight) {
