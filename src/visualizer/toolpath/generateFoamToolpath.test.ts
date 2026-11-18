@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import Printer from '../../printer/Printer';
 import type Visualizer from '../Visualizer';
 import type { EverydayModel, PointCloudPoint, ToolpathConfig } from '../types/modelTypes';
@@ -344,6 +345,98 @@ describe('foam inside walls', () => {
         const [low, high] = span(foam, 'x');
         expect(low).toBeCloseTo(98.5 + 3 * p.threadDiameter(0), 3);
         expect(high).toBeCloseTo(101.5 - 3 * p.threadDiameter(0), 3);
+    });
+
+    /** A 10 x 10 x 20 mm bar standing at (100, 100), leaning `degrees` from vertical towards +x. */
+    function leaningBar(degrees: number): EverydayModel {
+        const lean = Math.tan(degrees * Math.PI / 180);
+        const geometry = new THREE.BoxGeometry(10, 10, 20).translate(0, 0, 10);
+        const position = geometry.attributes.position;
+        for (let i = 0; i < position.count; i++) {
+            position.setX(i, position.getX(i) + position.getZ(i) * lean);
+        }
+        const model = blockModel();
+        model.geometry = geometry;
+        model.mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+        model.mesh.position.set(100, 100, 0);
+        return model;
+    }
+
+    /** How far a point is from a line segment, in x and y. */
+    function distanceToSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): number {
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const lengthSq = dx * dx + dy * dy;
+        const t = lengthSq > 0 ? Math.min(1, Math.max(0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq)) : 0;
+        return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    }
+
+    /**
+     * For each foam point: how much room is left between the edge of its coil and the face of the
+     * nearest wall line printed within the same foam layer. Negative where the coil lands on a wall.
+     */
+    function coilRoom(toolpath: PathPoint[], p: Printer): { point: PathPoint; room: number }[] {
+        const lineWidth = p.extruders[0].nozzleDiameter;
+        const walls = new Map<number, [THREE.Vector3, THREE.Vector3][]>();
+        for (let i = 1; i < toolpath.length; i++) {
+            const point = toolpath[i];
+            if (point.travel || (point.feature !== FEATURE.shell && point.feature !== FEATURE.ironing)) continue;
+            const list = walls.get(point.layer!) ?? [];
+            list.push([toolpath[i - 1].point, point.point]);
+            walls.set(point.layer!, list);
+        }
+        return foamOf(toolpath).map(point => {
+            let nearest = Infinity;
+            for (const [a, b] of walls.get(point.layer!) ?? []) {
+                nearest = Math.min(nearest, distanceToSegment(point.point, a, b));
+            }
+            return { point, room: nearest - lineWidth / 2 - coilRadius(p, point.hStar!) };
+        });
+    }
+
+    it.each([0, 30, 50])('keeps the coils off a wall leaning %i° over the foam, at every height of the layer', degrees => {
+        const p = printer();
+        const toolpath = generateFoamToolpath(fakeVisualizer(p), [leaningBar(degrees)]);
+        const rooms = coilRoom(toolpath, p);
+        expect(rooms.length).toBeGreaterThan(0);
+
+        // No coil reaches a wall line printed anywhere within its layer (1 µm Clipper rounding, and
+        // a little for the arcs Clipper draws as chords).
+        const worst = rooms.reduce((a, b) => (b.room < a.room ? b : a));
+        expect(worst.room).toBeGreaterThan(-0.01);
+
+        // The foam still comes right up to the walls on both sides: on the side the wall leans
+        // over, it stops where its coils meet the highest line of the wall in the layer.
+        const layers = new Set(rooms.map(r => r.point.layer!));
+        expect(layers.size).toBe(12);
+        for (const layer of layers) {
+            const inLayer = rooms.filter(r => r.point.layer === layer);
+            const middle = inLayer.reduce((sum, r) => sum + r.point.point.x, 0) / inLayer.length;
+            for (const side of [inLayer.filter(r => r.point.point.x < middle), inLayer.filter(r => r.point.point.x > middle)]) {
+                expect(Math.min(...side.map(r => r.room))).toBeLessThan(0.05);
+            }
+        }
+    });
+
+    it('leaves the foam under a wall that rests on it', () => {
+        // A 10 mm post on a 30 x 30 x 4.5 mm base. The post's wall starts at 4.5 mm, in the layer
+        // 3.4-5.1 mm, on top of the base's foam: it is printed after that foam, onto it.
+        const base = new THREE.BoxGeometry(30, 30, 4.5).translate(0, 0, 2.25).toNonIndexed();
+        const post = new THREE.BoxGeometry(10, 10, 15.5).translate(0, 0, 4.5 + 7.75).toNonIndexed();
+        const model = blockModel();
+        model.geometry = mergeGeometries([base, post])!;
+        model.mesh = new THREE.Mesh(model.geometry, new THREE.MeshBasicMaterial());
+        model.mesh.position.set(100, 100, 0);
+        const p = printer();
+        const toolpath = generateFoamToolpath(fakeVisualizer(p), [model]);
+
+        const layer = 2;
+        const postWall = toolpath.filter(point => point.layer === layer && point.feature === FEATURE.shell && !point.travel
+            && Math.max(Math.abs(point.point.x - 100), Math.abs(point.point.y - 100)) < 5.5);
+        expect(postWall.length).toBeGreaterThan(0);
+        // The base's foam runs on under the post's wall, as it did before walls were kept clear of.
+        const foam = foamOf(toolpath).filter(point => point.layer === layer);
+        const nearest = Math.min(...foam.map(f => Math.min(...postWall.map(w => Math.hypot(f.point.x - w.point.x, f.point.y - w.point.y)))));
+        expect(nearest).toBeLessThan(0.5);
     });
 
     it('leaves an augmentation, which has no walls, filled to its edge', () => {

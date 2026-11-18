@@ -69,6 +69,19 @@ export interface SliceRegion {
      * region's own contour and holes are used instead.
      */
     footprint?: PolygonWithHoles;
+    /** For a shell region: where its wall is (see ShellWall). */
+    wall?: ShellWall;
+}
+
+/**
+ * Where the wall of one outline of a slice is: from the outline, which the outer shell line runs
+ * along, to the middle of the innermost shell line.
+ */
+export interface ShellWall {
+    /** The outline, holes included. */
+    outline: PolygonWithHoles;
+    /** The area inside the middle of the innermost shell line. */
+    inside: PolygonWithHoles[];
 }
 
 /** An outer contour together with the hole contours that are directly inside of it. */
@@ -488,8 +501,10 @@ export function extractShellRegionsFromLayer(z: number, segments: LineSegment[],
         // shell lines inside the outer wall, and shell lines around the holes
         const outerRings: THREE.Vector3[][] = [];
         const holeRings: THREE.Vector3[][] = [];
+        let inside: PolygonWithHoles[] = [outline];
         for (let n = 1; n < shellLayers; n++) {
-          for (const piece of offsetRegion(outline.outer, outline.holes, -(linewidth * n))) {
+          inside = offsetRegion(outline.outer, outline.holes, -(linewidth * n));
+          for (const piece of inside) {
             outerRings.push(piece.outer);
             holeRings.push(...piece.holes);
           }
@@ -507,6 +522,7 @@ export function extractShellRegionsFromLayer(z: number, segments: LineSegment[],
             extruder: 0, // Default to left extruder
             BVH: buildSliceRegionBVH(getBoundarySegments(outline.outer, shellLines)),
             shell: true,
+            wall: { outline: { outer: outline.outer, holes: outline.holes }, inside },
         });
     }
 
@@ -2457,6 +2473,182 @@ export function subtractRegions(regions: SliceRegion[], cutters: SliceRegion[]):
         BVH: buildSliceRegionBVH(getBoundarySegments(piece.outer, piece.holes)),
       });
     });
+  }
+  return result;
+}
+
+
+/**
+ * Turns polygons into Clipper paths that the non-zero rule reads as their area: each outer
+ * counter clockwise and each hole clockwise, so that polygons which overlap add up.
+ *
+ * @param {PolygonWithHoles[]} polygons The polygons. They are not modified.
+ * @returns {ClipperLib.Paths} Their paths, in Clipper's scaled units.
+ */
+function areaPaths(polygons: PolygonWithHoles[]): ClipperLib.Paths {
+  const paths: ClipperLib.Paths = [];
+  const add = (contour: THREE.Vector3[], counterClockwise: boolean) => {
+    if (contour.length < 3) return;
+    const path = toClipperPath(contour);
+    if ((clipperArea(path) > 0) !== counterClockwise) path.reverse();
+    paths.push(path);
+  };
+  for (const polygon of polygons) {
+    if (polygon.outer.length < 3) continue;
+    add(polygon.outer, true);
+    polygon.holes.forEach(hole => add(hole, false));
+  }
+  return paths;
+}
+
+
+/**
+ * Whether two sets of Clipper paths are the same, point for point and in the same order.
+ *
+ * @param {ClipperLib.Paths} a One set of paths.
+ * @param {ClipperLib.Paths} b The other.
+ * @returns {boolean} True if they are the same.
+ */
+function samePaths(a: ClipperLib.Paths, b: ClipperLib.Paths): boolean {
+  return a.length === b.length && a.every((path, i) =>
+    path.length === b[i].length && path.every((pt, j) => pt.X === b[i][j].X && pt.Y === b[i][j].Y));
+}
+
+
+/**
+ * Turns the paths Clipper gives back into polygons with holes. Each hole goes to the smallest
+ * outer around it, so an island inside the hole of another polygon keeps its own holes.
+ *
+ * @param {ClipperLib.Paths} solution Clipper's paths: outers with a positive area, holes with a negative one.
+ * @param {number} z The height to give the points.
+ * @returns {PolygonWithHoles[]} The polygons. Every contour, holes included, is wound counter clockwise.
+ */
+function polygonsFromPaths(solution: ClipperLib.Paths, z: number): PolygonWithHoles[] {
+  const toContour = (path: ClipperLib.Path) =>
+    fromClipperPath(path).map(pt => new THREE.Vector3(pt.x, pt.y, z));
+  const polygons: { polygon: PolygonWithHoles; area: number }[] = [];
+  const holePaths: ClipperLib.Path[] = [];
+  for (const path of solution) {
+    if (path.length < 3) continue;
+    const area = clipperArea(path);
+    if (area > 0) {
+      polygons.push({ polygon: { outer: toContour(path), holes: [] }, area });
+    } else if (area < 0) {
+      holePaths.push(path);
+    }
+  }
+  for (const path of holePaths) {
+    const hole = toContour(path).reverse();
+    let owner: { polygon: PolygonWithHoles; area: number } | undefined;
+    for (const candidate of polygons) {
+      if ((!owner || candidate.area < owner.area) && pointInPolygon(hole[0], candidate.polygon.outer)) {
+        owner = candidate;
+      }
+    }
+    owner?.polygon.holes.push(hole);
+  }
+  return polygons.map(({ polygon }) => polygon);
+}
+
+
+/**
+ * Where the walls of one layer of a Foam Print lean over the layer's foam: the parts of the walls
+ * higher up in the layer that lie inside the wall at the bottom of the layer. A wall is taken from
+ * its outline to the middle of its innermost line (see ShellWall). A vertical wall gives nothing,
+ * as long as the outlines of its slices are the same.
+ *
+ * @param {ShellWall[]} bottom The walls at the bottom of the layer.
+ * @param {ShellWall[]} above The walls higher up in the layer that the foam has to keep clear of.
+ * @returns {PolygonWithHoles[]} The area those walls cover inside the middle of the innermost line
+ *          at the bottom of the layer. Empty where they cover none of it.
+ */
+export function wallOverhang(bottom: ShellWall[], above: ShellWall[]): PolygonWithHoles[] {
+  if (!bottom.length || !above.length) return [];
+  const z = bottom[0].outline.outer[0]?.z ?? 0;
+  const clear = areaPaths(bottom.flatMap(wall => wall.inside));
+  if (!clear.length) return [];
+
+  const covered: ClipperLib.Paths = [];
+  let previousInside: ClipperLib.Paths | undefined;
+  for (const wall of above) {
+    const inside = areaPaths(wall.inside);
+    // A wall the same as the one before it covers nothing new.
+    if (previousInside && samePaths(inside, previousInside)) continue;
+    previousInside = inside;
+
+    // Even-odd: the outline with the area inside the wall taken out is the wall.
+    const clipper = new ClipperLib.Clipper();
+    clipper.AddPaths(areaPaths([wall.outline]), ClipperLib.PolyType.ptSubject, true);
+    clipper.AddPaths(inside, ClipperLib.PolyType.ptSubject, true);
+    clipper.AddPaths(clear, ClipperLib.PolyType.ptClip, true);
+    const solution: ClipperLib.Paths = [];
+    clipper.Execute(
+      ClipperLib.ClipType.ctIntersection,
+      solution,
+      ClipperLib.PolyFillType.pftEvenOdd,
+      ClipperLib.PolyFillType.pftNonZero,
+    );
+    for (const path of solution) covered.push(path);
+  }
+  if (!covered.length) return [];
+
+  // The walls of different heights overlap: add them up.
+  const clipper = new ClipperLib.Clipper();
+  clipper.AddPaths(covered, ClipperLib.PolyType.ptSubject, true);
+  const union: ClipperLib.Paths = [];
+  clipper.Execute(ClipperLib.ClipType.ctUnion, union, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+  return polygonsFromPaths(union, z);
+}
+
+
+/**
+ * Takes away from some polygons everything within a distance of an area. Parts of the area
+ * narrower than `noise` are ignored: they are what rounding leaves where two outlines that should
+ * be the same are not quite.
+ *
+ * @param {PolygonWithHoles[]} polygons The polygons to cut. They are not modified.
+ * @param {PolygonWithHoles[]} area The area to keep away from.
+ * @param {number} distance How far (mm) to keep away from it.
+ * @param {number} noise How wide (mm) a part of the area has to be to count.
+ * @returns {PolygonWithHoles[]} What is left. A polygon the area does not come near is returned
+ *          as it is; one can also come back as several pieces, or not at all.
+ */
+export function keepAwayFrom(polygons: PolygonWithHoles[], area: PolygonWithHoles[], distance: number, noise: number): PolygonWithHoles[] {
+  // Shrinking by half the noise width and growing back by as much plus the distance drops the
+  // thin parts and grows the rest by the distance.
+  const keepOut = executeOffset(executeOffset(areaPaths(area), -noise / 2), noise / 2 + distance);
+  if (!keepOut.length) return polygons;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const path of keepOut) {
+    for (const pt of path) {
+      minX = Math.min(minX, pt.X); maxX = Math.max(maxX, pt.X);
+      minY = Math.min(minY, pt.Y); maxY = Math.max(maxY, pt.Y);
+    }
+  }
+
+  const result: PolygonWithHoles[] = [];
+  for (const polygon of polygons) {
+    const paths = areaPaths([polygon]);
+    const outer = paths[0];
+    if (!outer || outer.every(pt => pt.X < minX) || outer.every(pt => pt.X > maxX)
+        || outer.every(pt => pt.Y < minY) || outer.every(pt => pt.Y > maxY)) {
+      result.push(polygon);
+      continue;
+    }
+    const clipper = new ClipperLib.Clipper();
+    clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
+    clipper.AddPaths(keepOut, ClipperLib.PolyType.ptClip, true);
+    const solution: ClipperLib.Paths = [];
+    clipper.Execute(ClipperLib.ClipType.ctDifference, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+
+    const before = paths.reduce((sum, path) => sum + clipperArea(path), 0);
+    const after = solution.reduce((sum, path) => sum + clipperArea(path), 0);
+    if (after >= before) {
+      result.push(polygon); // the area only comes near it, and takes nothing away
+      continue;
+    }
+    for (const piece of polygonsFromPaths(solution, polygon.outer[0].z)) result.push(piece);
   }
   return result;
 }
