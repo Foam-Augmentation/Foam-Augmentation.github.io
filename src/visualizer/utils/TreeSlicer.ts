@@ -1481,11 +1481,11 @@ export function buildChunkForest(
   };
 
   /**
-   * Whether a region can be printed in a round, before every region that is not in an earlier
-   * round: the rest of its own chunk aside, those are printed after it, or in the same round in
-   * either order.
+   * What stops a region from being printed in a round, before every region that is not in an
+   * earlier round (the rest of its own chunk aside, those are printed after it, or in the same
+   * round in either order): the first region in the way and why, or null if nothing is.
    */
-  const canPrint = (slot: ChunkSlot, own: ChunkNode | null, round: number): boolean => {
+  const blockerOf = (slot: ChunkSlot, own: ChunkNode | null, round: number): { other: ChunkSlot; reason: string } | null => {
     // Only a region lower than the top of this one can be covered by it or have the nozzle or head reach it.
     for (let i = firstOpen; i < byHeight.length && byHeight[i].z < slot.top; i++) {
       const other = byHeight[i];
@@ -1498,7 +1498,7 @@ export function buildChunkForest(
       const covers = slot.region.shell && !other.region.shell
         ? slot.source === other.source && (slot.node.shellDependentRegions?.has(other.region.id) ?? false)
         : other.z < slot.z - HEIGHT_EPSILON && materialOverlaps(slot, other);
-      if (covers) return false;
+      if (covers) return { other, reason: 'which it covers from above' };
 
       // How far this region would stand above the nozzle tip while the other one is printed.
       const above = slot.top - other.tipZ;
@@ -1506,12 +1506,19 @@ export function buildChunkForest(
       if (above > other.extruder.nozzleLength + HEIGHT_EPSILON
           && other.minX + head.min.x <= slot.maxX && other.maxX + head.max.x >= slot.minX
           && other.minY + head.min.y <= slot.maxY && other.maxY + head.max.y >= slot.minY) {
-        return false;
+        return { other, reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, where the print head body passes` };
       }
-      if (isCloserThan(slot, other, nozzleRadiusAt(other.extruder, above) + slot.margin + NOZZLE_CLEARANCE)) return false;
+      if (isCloserThan(slot, other, nozzleRadiusAt(other.extruder, above) + slot.margin + NOZZLE_CLEARANCE)) {
+        return { other, reason: `and stands ${above.toFixed(2)} mm above that region's nozzle tip, beside the nozzle` };
+      }
     }
-    return true;
+    return null;
   };
+  const canPrint = (slot: ChunkSlot, own: ChunkNode | null, round: number): boolean => blockerOf(slot, own, round) === null;
+  /** A region for a message: the model, shell or foam, its id and height. */
+  const describe = (slot: ChunkSlot): string =>
+    `${slot.region.shell ? 'shell' : 'foam'} region ${slot.region.id}`
+    + `${slot.source.modelObj ? ` of "${slot.source.modelObj.name}"` : ''} at z ${slot.z.toFixed(2)} mm`;
 
   // Stacks that never come within reach of each other, nozzle or head, cannot get in each
   // other's way. They are grouped by reach, and each group is finished before the next is
@@ -1573,6 +1580,14 @@ export function buildChunkForest(
       const starting = free.length
         ? free.filter(entry => entry.slot.tipZ <= lowestTip + HEIGHT_EPSILON)
         : [candidates.find(entry => entry.slot.tipZ <= lowestTip)!];
+      if (!free.length) {
+        const forced = starting[0].slot;
+        const blocker = blockerOf(forced, null, round);
+        console.warn(`Chunk builder: no stack can print without getting in the way of another, so the ${describe(forced)} `
+          + `(extruder ${forced.region.extruder}, nozzle tip at z ${forced.tipZ.toFixed(2)} mm) is printed anyway`
+          + (blocker ? ` before the ${describe(blocker.other)}, ${blocker.reason}.` : '.')
+          + ' The nozzle may hit printed material there.');
+      }
       pending = pending.filter(entry => !starting.includes(entry));
 
       for (const { slot: first, siblings, index, parent } of starting) {
