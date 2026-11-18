@@ -20,7 +20,7 @@ import {
     type ArrangeSpace,
     type Point2,
 } from '../utils/arrange';
-import { PURGE_LINE_COUNT, PURGE_LINE_SEPARATION } from '../toolpath/toolpathConstants';
+import { BOUNDARY_OFFSET, PURGE_LINE_COUNT, PURGE_LINE_SEPARATION } from '../toolpath/toolpathConstants';
 import { notify } from './notify';
 
 /** The smallest gap (mm) between two objects when arranging, as in PrusaSlicer. */
@@ -47,12 +47,15 @@ export function arrangeSpace(printer: Printer): ArrangeSpace {
         reserved.push(circlePolygon({ x: center.x, y: center.y }, printer.purgeTowerRadius));
     }
     const head = printer.printHeadDims;
+    // With Print Boundary on, the nozzle also goes round each foam print and augmentation
+    // BOUNDARY_OFFSET outside its outline, so the head body reaches that much further.
+    const boundary = printer.generateBoundary ? BOUNDARY_OFFSET : 0;
     return {
         width: printer.machine_depth,
         depth: printer.machine_depth_y,
         margin: printer.bedMargin,
         spacing: ARRANGE_SPACING,
-        head: { minX: head.min.x, minY: head.min.y, maxX: head.max.x, maxY: head.max.y },
+        head: { minX: head.min.x - boundary, minY: head.min.y - boundary, maxX: head.max.x + boundary, maxY: head.max.y + boundary },
         // The shortest nozzle decides how close the head body comes to a part.
         nozzleLength: Math.min(...printer.extruders.map(e => e.nozzleLength)),
         reserved,

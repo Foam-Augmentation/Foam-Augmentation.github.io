@@ -644,6 +644,30 @@ function approachTravelPoint(from: THREE.Vector3, to: PathPoint): PathPoint {
 }
 
 /**
+ * Like {@link approachTravelPoint}, but never crosses below a height: if both ends are lower, the
+ * head lifts straight up to it, crosses there and comes straight down.
+ *
+ * @param {THREE.Vector3} from Where the print head currently is.
+ * @param {PathPoint} to The first point of the path being approached.
+ * @param {number} floor The lowest height (mm) to cross at.
+ * @returns {PathPoint[]} The travel points to insert before `to`. The last one is above `to`.
+ */
+function approachTravelPoints(from: THREE.Vector3, to: PathPoint, floor: number): PathPoint[] {
+    if (floor <= Math.max(from.z, to.point.z)) {
+        return [approachTravelPoint(from, to)];
+    }
+    const at = (x: number, y: number): PathPoint => ({
+        point: new THREE.Vector3(x, y, floor),
+        travel: true,
+        role: 'approach',
+        hStar: to.hStar,
+        vStar: to.vStar,
+        edot: to.edot,
+    });
+    return [at(from.x, from.y), at(to.point.x, to.point.y)];
+}
+
+/**
  * Finds the point on a closed contour that is nearest to a target, measured in XY.
  *
  * @returns The distance, the index of the segment (contour[i] -> contour[i + 1]) the point lies on,
@@ -1246,6 +1270,9 @@ function makeExtraFlatLayers(modelPoints: PathPoint[], layerCount: number, delta
  * @param {PurgeTowerSpec} [purgeTower] The purge tower to build alongside the print. Leave out for no tower.
  * @param {number} purgeTowerStartHeight How tall the purge tower already is (mm), e.g. from a model printed before this one.
  * @param {PathInterlude} [interlude] A stretch of path to print once between the chunks.
+ * @param {number} crossObjectsAbove The lowest height (mm) the head may cross at when it goes
+ *                                   from one object's chunk to another's, e.g. above parts printed
+ *                                   before this toolpath. Moves within one object ignore it.
  * @returns {PathPoint[]} The toolpath that minimizes travel movements as a list of points.
  */
 function makeChunkTreePath(
@@ -1257,9 +1284,12 @@ function makeChunkTreePath(
     purgeTower?: PurgeTowerSpec,
     purgeTowerStartHeight: number = 0,
     interlude?: PathInterlude,
+    crossObjectsAbove: number = -Infinity,
 ): PathPoint[] {
     const toolpath: PathPoint[] = [];
     let lastPoint = startPoint;
+    // The object the last chunk belonged to. Undefined before the first chunk.
+    let lastObjectId: number | undefined = undefined;
     // Whether the next chunk's first layer scans the x or y axis. Only applies to rectilinear paths.
     let scanX = false;
     // The extruder that is currently picked, so chunks that need it are preferred over ones that
@@ -1386,12 +1416,17 @@ function makeChunkTreePath(
 
         pushAll(toolpath, towerPath);
         if (chunkPath.length) {
-            const approach = approachTravelPoint(
+            // Going over to another object, the head may pass over parts printed before this
+            // toolpath (a regular print between the two): it crosses above them.
+            const floor = lastObjectId !== undefined && objectId !== lastObjectId ? crossObjectsAbove : -Infinity;
+            const approach = approachTravelPoints(
                 towerPath.length ? towerPath[towerPath.length - 1].point : lastPoint,
                 chunkPath[0],
+                floor,
             );
-            approach.extruder = printExtruder; // the swap happens here, after the purge
-            toolpath.push(approach);
+            approach[approach.length - 1].extruder = printExtruder; // the swap happens here, above the bed and after the purge
+            pushAll(toolpath, approach);
+            lastObjectId = objectId;
         }
 
         replaceByChildren(printIndex);
@@ -1520,6 +1555,47 @@ export interface FoamToolpathOptions {
      * Defaults to true. Pass false when the caller draws a bigger toolpath it is part of.
      */
     preview?: boolean;
+    /**
+     * The lowest height (mm) the head may cross the bed at on its way to the print: above the
+     * parts printed earlier in the same file. Left out, only what this toolpath prints counts.
+     */
+    minimumSafeZ?: number;
+}
+
+/**
+ * Adds a stretch of path that starts somewhere else on the bed, and the moves that get the head
+ * there from where the path so far ends: straight up, across TRAVEL_CLEARANCE above everything
+ * printed so far (the bed if nothing) and at least at `floor`, and straight down. The stretch's
+ * own opening travel is dropped, except its last point, which is where printing starts.
+ *
+ * @param {PathPoint[]} toolpath The path so far. Added to.
+ * @param {PathPoint[]} piece The stretch to add.
+ * @param {number} floor The lowest height (mm) to cross at.
+ */
+function appendFromAbove(toolpath: PathPoint[], piece: PathPoint[], floor: number): void {
+    const firstPrint = piece.findIndex(point => !point.travel);
+    if (firstPrint === -1) {
+        return;
+    }
+    let printedTop = 0;
+    for (const point of toolpath) {
+        if (!point.travel && point.point.z > printedTop) printedTop = point.point.z;
+    }
+    const landing: PathPoint = firstPrint > 0
+        ? piece[firstPrint - 1]
+        : { point: piece[0].point.clone(), travel: true, role: 'approach' };
+    const crossZ = Math.max(floor, printedTop + TRAVEL_CLEARANCE, landing.point.z);
+
+    const from = toolpath.length ? toolpath[toolpath.length - 1].point : undefined;
+    if (from && from.z < crossZ) {
+        toolpath.push({ point: new THREE.Vector3(from.x, from.y, crossZ), travel: true, role: 'approach' });
+    }
+    // The tool is named above the bed, as the dropped approach did (see makeChunkTreePath).
+    const above: PathPoint = { point: new THREE.Vector3(landing.point.x, landing.point.y, crossZ), travel: true, role: 'approach' };
+    const extruder = piece.slice(0, firstPrint + 1).find(point => point.extruder !== undefined)?.extruder;
+    if (extruder !== undefined) above.extruder = extruder;
+    toolpath.push(above, landing);
+    pushAll(toolpath, piece.slice(firstPrint));
 }
 
 /**
@@ -1667,6 +1743,10 @@ export function generateFoamToolpath(
             shellLayerHeight,
             models,
         },
+        undefined,
+        0,
+        undefined,
+        options.minimumSafeZ,
     );
 
     if (!modelPath.length) {
@@ -1677,8 +1757,19 @@ export function generateFoamToolpath(
     if (options.purgeLine ?? printer.purgeLine) {
         pushAll(toolpath, makePurgeLine(printer));
     }
-    pushAll(toolpath, boundaryPath);
-    pushAll(toolpath, modelPath);
+    // The purge line, each boundary outline and the model are joined by moves across the bed.
+    // Each one lifts straight up, crosses above everything printed so far (and minimumSafeZ) and
+    // comes straight down where printing starts: crossing at printing height would drag the
+    // nozzle through the purge line, a boundary, or a part printed earlier in the same file.
+    const pieces: PathPoint[][] = [];
+    for (const point of boundaryPath) {
+        if (point.travel || !pieces.length) pieces.push([]);
+        pieces[pieces.length - 1].push(point);
+    }
+    pieces.push(modelPath);
+    for (const piece of pieces) {
+        appendFromAbove(toolpath, piece, options.minimumSafeZ ?? -Infinity);
+    }
 
     if (options.preview ?? true) {
         const visualizationGroup = new THREE.Group();

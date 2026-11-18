@@ -130,7 +130,7 @@ export const SETTING_SPECS = {
   useFermatSpirals: bool('Fermat Spiral Infill', 'Fill each layer with Fermat spirals. Unchecked: straight back-and-forth (rectilinear) lines.'),
   generateBoundary: bool('Print Boundary', 'Print a boundary around the model. When augmenting, the print also pauses after the boundary so the object can be placed inside it.'),
   purgeLine: bool('Purge Line', 'Print a purge line before the model.'),
-  checkCollisions: bool('Check Collisions', 'When augmenting, check whether the print head would hit the object and suggest an H* that avoids it. Makes slicing slower.'),
+  checkCollisions: bool('Check Collisions', 'Check whether the print head would hit something. When augmenting: the object, with a suggested H* that avoids it. In Slice Prints: the parts printed earlier in the same file, such as a foam print started beside a finished part. Makes slicing slower.'),
   bedLeveling: bool('Bed Leveling', 'Probe the bed for automatic leveling before printing.'),
   testSweep: bool('Test Sweep (Dry Run)', 'Follow the toolpath without heating or extruding, to check that the print head clears the object.'),
   prusaPrinterProfile: text('PrusaSlicer Printer', `The Prusa printer you print on, from PrusaSlicer's own profiles. Picking one sets Printer Settings to match (bed size, print height, nozzles, and Multiple Toolheads for an XL), and the desktop app slices Regular Prints with its retraction, wipe and other printer settings (a multi-tool XL as the single-tool XL with the same nozzle: the app makes the tool changes). It also decides which print and filament profiles each object can choose. ${PRUSA_ONLY_TIP}`),

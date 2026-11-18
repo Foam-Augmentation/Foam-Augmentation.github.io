@@ -10,6 +10,7 @@ import { sampleSelectedMesh } from './sampleSelectedMesh';
 import { pointInsideSensing } from './addSensingIntersectionGeo';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 import { coilDiameter } from './coilModel';
+import { TRAVEL_CLEARANCE } from './toolpathConstants';
 
 /** Just enough of a Visualizer for the toolpath generators: a scene to draw into and a printer. */
 function fakeVisualizer(printer: Printer = new Printer()): Visualizer {
@@ -267,6 +268,79 @@ describe('generateFoamToolpath (Slice Plate)', () => {
         expect(toolpath.every(isFinitePoint)).toBe(true);
         const gcode = buildPrintGcode(printer, [toolpath]);
         expect(gcode).not.toMatch(/NaN|Infinity|undefined/);
+    });
+
+    /**
+     * The travel moves across the bed, before the first point of the model itself, that are lower
+     * than `clearance` above what the toolpath has printed by then (the bed, before anything), or
+     * lower than `floor`. A move straight up or down crosses nothing and is not counted.
+     */
+    function lowCrossings(toolpath: PathPoint[], clearance: number, floor = -Infinity): PathPoint[] {
+        const firstModelPoint = toolpath.findIndex(isModelExtrusion);
+        let printedTop = 0;
+        const low: PathPoint[] = [];
+        for (let i = 1; i < firstModelPoint; i++) {
+            const from = toolpath[i - 1].point;
+            const to = toolpath[i].point;
+            if (!toolpath[i].travel) {
+                printedTop = Math.max(printedTop, from.z, to.z);
+                continue;
+            }
+            const across = Math.hypot(to.x - from.x, to.y - from.y) > 1e-6;
+            if (across && Math.min(from.z, to.z) < Math.max(printedTop + clearance, floor) - 1e-6) {
+                low.push(toolpath[i]);
+            }
+        }
+        return low;
+    }
+
+    /** Two 40 mm blocks 20 mm apart, each with a boundary around it. */
+    function twoBlocksWithBoundaries() {
+        const printer = new Printer();
+        printer.generateBoundary = true;
+        const second = { ...blockModel(), objectId: 2 };
+        second.mesh.position.set(160, 100, 0);
+        return { printer, models: [blockModel(), second] };
+    }
+
+    it('crosses the bed above the purge line and the boundaries on its way to the model', () => {
+        const { printer, models } = twoBlocksWithBoundaries();
+        const toolpath = generateFoamToolpath(fakeVisualizer(printer), models);
+
+        // The purge line, then one boundary around each block, then the model.
+        expect(toolpath[0].role).toBe('purgeLine');
+        expect(toolpath.filter(p => p.role === 'boundary' && p.travel)).toHaveLength(2);
+        // Every move across the bed in between lifts off what was printed last, and comes down
+        // only where printing starts again: it never drags the nozzle through the purge line or
+        // a boundary, nor goes back to the origin at printing height.
+        expect(lowCrossings(toolpath, TRAVEL_CLEARANCE)).toEqual([]);
+        const firstModelPoint = toolpath.findIndex(isModelExtrusion);
+        expect(toolpath.slice(0, firstModelPoint).some(p => p.point.x === 0 && p.point.y === 0)).toBe(false);
+    });
+
+    it('crosses above the parts printed before it in the same file (minimumSafeZ)', () => {
+        const { printer, models } = twoBlocksWithBoundaries();
+        const toolpath = generateFoamToolpath(fakeVisualizer(printer), models, { purgeLine: false, minimumSafeZ: 40 });
+
+        expect(toolpath.some(p => p.role === 'purgeLine')).toBe(false);
+        expect(lowCrossings(toolpath, TRAVEL_CLEARANCE, 40)).toEqual([]);
+        // There are such crossings: to each boundary, and from the last boundary to the model.
+        const crossings = toolpath.filter(p => p.travel && p.role === 'approach');
+        expect(crossings.some(p => p.point.z >= 40)).toBe(true);
+    });
+
+    it('arrives from above when nothing is printed before the model', () => {
+        const printer = new Printer();
+        printer.purgeLine = false;
+        const toolpath = generateFoamToolpath(fakeVisualizer(printer), [blockModel()]);
+        const firstModelPoint = toolpath.findIndex(isModelExtrusion);
+        const landing = toolpath[firstModelPoint - 1].point;
+
+        // Above where printing starts, and straight down onto it.
+        expect(toolpath[0].point.z).toBeGreaterThanOrEqual(TRAVEL_CLEARANCE);
+        expect(lowCrossings(toolpath, TRAVEL_CLEARANCE)).toEqual([]);
+        expect(toolpath[firstModelPoint - 2].point.x).toBeCloseTo(landing.x, 6);
+        expect(toolpath[firstModelPoint - 2].point.y).toBeCloseTo(landing.y, 6);
     });
 });
 

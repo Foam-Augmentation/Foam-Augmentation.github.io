@@ -26,6 +26,7 @@ Nothing here was tested on a physical printer. Visual findings come from DOM mea
 | Objects list and regular prints (R) | 0 | 2 | 3 | 2 | 7 |
 | Review of 2026-11-16 (E, L, K, P, Q), added in the third pass | 5 | 14 | 20 | 14 | 53 |
 | Foam print order, nozzle shape and coils (C), added 2026-11-17 | 0 | 1 | 3 | 1 | 5 |
+| Moves across the bed in Slice Prints and placement (V), added 2026-11-17 | 2 | 1 | 0 | 0 | 3 |
 
 ---
 
@@ -91,7 +92,7 @@ Files: `src/printer/Printer.ts`, `src/visualizer/toolpath/*`.
 - [x] **G18 · P2 · read — toolpath performance hot spots.** `fillToolpath` re-runs over the remaining path at every recursion level (`:1389`); one `THREE.Points` object per sample point (`:3029-3051`); `unshift` per point (`:2011,2156,2194`); `getImageData(1×1)` per gradient sample (`modelLoader.ts:278`).
 - [x] **G19 · P3 · read — `changeTool` heats to print temperature even in `testSweep`** (`Printer.ts:418`); `saveGcodeToFile.ts:23` revokes the blob URL synchronously.
 - [ ] **G20 · P3 · unconfirmed — printer-behaviour questions to check on hardware.** `approachTravelPoint` crosses at `max(from.z, to.z)` and could hit a taller printed chunk in between; the purge tower is printed by the outgoing tool so the incoming one is never primed; `G92 X0 Y0` after homing may be wrong on XL firmware (the start G-code no longer writes `M900 K30`: pressure advance is now turned off with `M572 S0` on the XL and `M900 K0` on the MK3S); `initGUI.ts:357` carries a TODO asking whether end G-code is added twice.
-  **Status: not fixed.** Needs a printer. Firmware commands untouched; in-print travel to the purge tower still crosses at `max(from.z, to.z)`.
+  **Status: not fixed.** Needs a printer. Firmware commands untouched; in-print travel to the purge tower still crosses at `max(from.z, to.z)`. So do moves between chunks, except from one object to another on a plate with Regular Prints, which cross at least 10 mm above the regular parts (V2).
 
 ---
 
@@ -521,6 +522,23 @@ Third pass (branch `vtp-fixes`, commit `5b210b1`): a full read of the code by ar
 - With PrusaSlicer, bridges, supports, gap fill and outer walls print at Print Speed unless Use Profile Speeds is on.
 - A post-processing script in a PrusaSlicer profile is not run.
 - An object placed after one that did not fit keeps clear of it.
+
+## Moves across the bed in Slice Prints and placement (2026-11-17)
+
+Found while checking the coil model on 2026-11-17: sliced Foam Prints were walked in print order, and the G-code of a foam-only file was read. Checked with `npm run typecheck`, `npm test`, a production build and an export from the app (see the status lines). **Nothing has been run on a printer.**
+
+- [x] **V1 · P0 · verified (emitted G-code) — a Foam Print went back to the bed origin at printing height and crossed the bed there.** After the purge line the file lifted 2 mm, went down to `X0 Y0 Z0.1` and crossed the bed at 0.1 mm to the first layer: through the start of the purge line (0.3 mm tall) and, with `Print Boundary` on, across the boundary it had just printed. With `Print Boundary` on and a Regular Print on the plate, the move from the boundary crossed the finished regular part (the toolpath check found the head 25 mm inside a 30 mm post). Augmentations were not affected.
+  **Fixed:** every move from the purge line to a boundary outline, from one outline to the next, and from there to the first layer lifts straight up, crosses 10 mm above everything printed so far (and at least 10 mm above the regular parts on the plate), then comes straight down where printing starts. In an export from the app (a 30 mm Regular Print and a Foam Print, `Print Boundary` on), the head left the boundary straight up to 40 mm, crossed, and came straight down onto the first layer.
+- [x] **V2 · P0 · verified (toolpath check) — on a plate with Regular Prints, the move from one foam object to another crossed at foam height**, through a regular part standing between them (18 mm deep into a 30 mm post in the test).
+  **Fixed:** from one object to another, the head crosses at least 10 mm above the regular parts. Moves within one object, and between foam objects on a plate without Regular Prints, still cross at the higher of their two ends (G20).
+- [x] **V3 · P1 · verified (app, toolpath check) — placement did not allow for the boundary outline.** New objects and Arrange kept a tall part out of the print head's reach around a Foam Print's outline, but with `Print Boundary` on the boundary is printed 1 mm (`BOUNDARY_OFFSET`) further out. In the app, a 30 mm Regular Print placed 15 mm in front of a Foam Print was hit by the head body while the front edge of the boundary printed (12 moves at z 0.1; `Check Collisions` reported it).
+  **Fixed:** with Print Boundary on, the head's reach is grown by the boundary offset on every side, for new objects, copies, Arrange and the warning after slicing. Objects already on the plate do not move until Arrange is pressed; the warning names them.
+
+### Behaviour changes to check before printing
+
+- A Foam Print no longer goes to the front-left corner of the bed after the purge line. It lifts 10 mm above the purge line, crosses to the first boundary outline or the first layer, and comes straight down; the same before each further boundary outline.
+- On a plate with Regular Prints, the foam goes to its boundaries, to its first layer and from one foam object to another at least 10 mm above the tallest regular part. With many turns between two foam objects this adds travel time.
+- With `Print Boundary` on, new objects, copies and Arrange keep tall parts 1 mm further from a Foam Print or Augmentation than before, and the warning after slicing counts that 1 mm. The G-code itself is unchanged by this.
 
 ## Foam print order, nozzle shape and coils (2026-11-17)
 

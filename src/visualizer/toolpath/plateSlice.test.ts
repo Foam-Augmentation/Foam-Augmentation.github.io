@@ -48,6 +48,13 @@ describe('summarizePlate: time and filament', () => {
         expect(summary.estimate.seconds).toBeGreaterThan(0);
     });
 
+    it('carries what the head collision check found, and leaves it out when the check was off', () => {
+        const options = { estimate: { seconds: 60, filament: [500], stops: 0, toolChanges: 0 }, filamentDiameter: 1.75, densities: [1.21] };
+        const headCollisions = { collisions: [], moves: 0, depth: 0 };
+        expect(summarizePlate([], '', { ...options, headCollisions }).headCollisions).toBe(headCollisions);
+        expect('headCollisions' in summarizePlate([], '', options)).toBe(false);
+    });
+
     it('takes an estimate it is given instead of working it out again', () => {
         const estimate = { seconds: 60, filament: [500], stops: 1, toolChanges: 0 };
         expect(summarizePlate([], '', { estimate, filamentDiameter: 1.75, densities: [1.21] }).estimate).toBe(estimate);

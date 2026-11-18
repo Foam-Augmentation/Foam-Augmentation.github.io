@@ -86,6 +86,17 @@ describe('the plate slice in the object list', () => {
     expect(plateSummaryLines(slice())[0]).toBe('Sliced 2 objects');
   });
 
+  it('adds what the head collision check found, when the plate was sliced with it on', () => {
+    const clear = slice();
+    clear.summary.headCollisions = { collisions: [], moves: 0, depth: 0 };
+    expect(plateSummaryLines(clear)).toHaveLength(4);
+    expect(plateSummaryLines(clear)[3]).toBe('No print head collisions found');
+
+    const colliding = slice();
+    colliding.summary.headCollisions = { collisions: [], moves: 5373, depth: 1.5 };
+    expect(plateSummaryLines(colliding)[3]).toBe('Print head collides: 5373 moves, up to 1.50 mm too low');
+  });
+
   it('says when the slice is out of date', () => {
     expect(plateSummaryLines(slice(true))).toEqual([expect.stringMatching(/^Out of date/)]);
   });

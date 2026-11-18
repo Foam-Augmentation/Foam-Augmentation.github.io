@@ -17,6 +17,7 @@ import { plateFingerprint, summarizePlate } from './plateSlice';
 import { buildPrintGcodeWithEstimate, combineToolpaths, getPurgeTowerHeight } from './buildGcode';
 import { describeEstimate } from '../gui/objectSummary';
 import { describeHeadConflicts } from '../gui/placement';
+import { describeHeadCollisions, findHeadCollisions, type HeadCollisionReport } from './printCollision';
 import { saveGcodeToFile } from './saveGcodeToFile';
 import { defaultDownloadName } from '../gui/downloadName';
 import { TRAVEL_CLEARANCE, TRAVEL_PREVIEW_COLOR } from './toolpathConstants';
@@ -114,6 +115,24 @@ function warnAboutHeadConflicts(visualizer: Visualizer, models: EverydayModel[])
         `${conflicts.slice(0, MAX_REPORTED_CONFLICTS).join(' ')}${more > 0 ? ` (and ${more} more)` : ''} Move them apart, or press Arrange.`,
         'warning'
     );
+}
+
+/**
+ * Checks a sliced plate for the print head running into what the same file prints before it
+ * (see printCollision.ts): a foam print started beside a finished regular part, a chunk of foam
+ * printed beside one that already stands taller, a move that crosses a part too low.
+ *
+ * @param {Visualizer} visualizer The visualizer, for the printer's head and nozzles.
+ * @param {PathPoint[]} toolpath The whole plate in print order, moves between objects included.
+ * @returns {HeadCollisionReport} What the head would hit. Empty if it stays clear.
+ */
+export function checkPlateForHeadCollisions(visualizer: Visualizer, toolpath: PathPoint[]): HeadCollisionReport {
+    const printer = visualizer.printer;
+    return findHeadCollisions(toolpath, {
+        box: printer.printHeadDims,
+        nozzleLengths: printer.extruders.map(extruder => extruder.nozzleLength),
+        threadDiameters: printer.extruders.map((_, i) => printer.threadDiameter(i)),
+    });
 }
 
 /**
@@ -217,6 +236,10 @@ function highestZ(toolpath: PathPoint[]): number {
  * foam point at that height. Augmentation objects are not part of this file (see
  * {@link saveAugmentGcode}).
  *
+ * With "Check Collisions" on, the sliced toolpath is then checked for the print head running into
+ * parts printed earlier in the file (see {@link checkPlateForHeadCollisions}). What it finds is
+ * shown as a toast and kept in the slice's summary; the file can still be exported.
+ *
  * Problems are reported to the user as toasts; the returned promise never rejects.
  *
  * @param {Visualizer} visualizer The visualizer holding the models and the printer.
@@ -245,8 +268,10 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
         // its own when it is the only thing printed; with regular prints first, it goes in front
         // of those instead.
         // The whole plate is drawn below, in print order; the foam slicer need not draw its part.
+        // The foam's moves across the bed must clear the finished regular parts.
+        const regularSafeZ = highestZ(regularPath) + TRAVEL_CLEARANCE;
         const foamPath = foamModels.length
-            ? generateFoamToolpath(visualizer, foamModels, { preview: false, ...(regularPath.length ? { purgeLine: false } : {}) })
+            ? generateFoamToolpath(visualizer, foamModels, { preview: false, ...(regularPath.length ? { purgeLine: false, minimumSafeZ: regularSafeZ } : {}) })
             : [];
 
         const toolpaths: PathPoint[][] = [];
@@ -272,16 +297,22 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
         }
 
         const { gcode, estimate } = buildPrintGcodeWithEstimate(printer, toolpaths);
+        // The whole file in the order it prints, moves between objects included.
+        const plateToolpath = combineToolpaths(toolpaths);
+        // With "Check Collisions" on, the finished toolpath is checked against what it has
+        // printed by then. Without it, only the objects' outlines are compared (see below).
+        const headCollisions = printer.checkCollisions ? checkPlateForHeadCollisions(visualizer, plateToolpath) : undefined;
         const summary = summarizePlate(toolpaths.flat(), gcode, {
             regularSlicer: regularModels.length ? regular.slicer : undefined,
             estimate,
             filamentDiameter: printer.diameter_filament,
             densities: printer.extruders.map(extruder => extruder.filamentDensity),
+            headCollisions,
         });
 
-        // One preview of the whole file, in the order it prints, moves between objects included.
+        // One preview of the whole file.
         const preview = new THREE.Group();
-        visualizeToolpath(combineToolpaths(toolpaths), preview, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
+        visualizeToolpath(plateToolpath, preview, printer.extruders.map(e => e.color), TRAVEL_PREVIEW_COLOR,
             (point, extruder) => printer.moveSpeed(point, extruder));
         visualizer.scene.add(preview);
         const previews = [preview];
@@ -296,7 +327,17 @@ export function slicePlate(visualizer: Visualizer): Promise<void> {
         });
 
         notify('Plate sliced. Check the preview and the summary, then press Export Print G-Code.', 'success');
-        warnAboutHeadConflicts(visualizer, models);
+        if (headCollisions) {
+            // The toolpath itself was checked, which says more than the outlines can: it knows
+            // what is printed by the time the head gets somewhere.
+            const message = describeHeadCollisions(
+                headCollisions,
+                id => visualizer.everydayModelList.find(model => model.objectId === id)?.name ?? 'object',
+            );
+            if (message) notify(message, 'error');
+        } else {
+            warnAboutHeadConflicts(visualizer, models);
+        }
     }).catch(error => {
         // withBusy has already shown the message; keep the details for debugging.
         console.error(error);

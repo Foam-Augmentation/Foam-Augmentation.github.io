@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { exportPlateGcode, leadInFromAbove } from './gcodeActions';
+import { exportPlateGcode, leadInFromAbove, slicePlate } from './gcodeActions';
 import type { PathPoint } from './pathTypes';
 import type Visualizer from '../Visualizer';
-import type { EverydayModel } from '../types/modelTypes';
+import Printer from '../../printer/Printer';
+import type { EverydayModel, ToolpathConfig } from '../types/modelTypes';
 import { plateFingerprint, type PlateSlice } from './plateSlice';
 import { DEFAULT_REGULAR_CONFIG } from './regularSlicer';
 import { notify } from '../gui/notify';
 import { saveGcodeToFile } from './saveGcodeToFile';
 
-// Both touch the DOM; only whether and how they are called matters here.
-vi.mock('../gui/notify', () => ({ notify: vi.fn(), withBusy: vi.fn() }));
+// Both touch the DOM; only whether and how they are called matters here. The busy overlay just
+// runs the work.
+vi.mock('../gui/notify', () => ({
+  notify: vi.fn(),
+  withBusy: vi.fn(async (_message: string, work: () => unknown) => work()),
+}));
 vi.mock('./saveGcodeToFile', () => ({ saveGcodeToFile: vi.fn() }));
 
 /** A travel point. */
@@ -63,6 +68,108 @@ describe('leadInFromAbove', () => {
     const onlyTravel = [travel(0, 0, 0.2), travel(5, 5, 0.2)];
     expect(leadInFromAbove(onlyTravel, 16)).toBe(onlyTravel);
     expect(leadInFromAbove([], 16)).toEqual([]);
+  });
+});
+
+describe('slicePlate: head collisions', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const VTP: ToolpathConfig = {
+    deltaZ: 1.7, hStar: 6, hStarEnd: 6, vStar: 0.15, vStarEnd: 0.15, deltaL: 1.7, deltaLEnd: 1.7,
+    senseDeltaZ: 1.7, senseHStar: 6, senseHStarEnd: 6, senseVStar: 0.15, SenseVStarEnd: 0.15,
+    senseDeltaL: 1.7, senseDeltaLEnd: 1.7,
+    gridSize: 4, initialFoamLayerCount: 0, middleSenseLayerCount: 0, finalFoamLayerCount: 0,
+    edot: 50, senseEdot: 50, bumpSpacingX: 10, bumpSpacingY: 10, bumpScale: 1, generateBumps: false,
+    curveAugment: false, steepnessThreshold: 60, flatLayerZOffset: 3, additionalCurveLayers: 0,
+  };
+
+  /** A box standing on the bed. */
+  function box(objectId: number, kind: EverydayModel['kind'], name: string, x: number, size: [number, number, number]): EverydayModel {
+    const geometry = new THREE.BoxGeometry(...size).translate(0, 0, size[2] / 2);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.position.set(x, 100, 0);
+    return {
+      objectId, kind, name, mesh, geometry,
+      regularConfig: { ...DEFAULT_REGULAR_CONFIG },
+      transformType: 'move',
+      transformX: { x: 0 }, transformY: { y: 0 }, transformZ: { z: 0 },
+      gradient: { width: 1, height: 1, sampleColor: () => ({ r: 255, g: 255, b: 255, a: 255 }) },
+      toolpathConfig: { ...VTP },
+      initialConfig: { ...VTP },
+      initialOffset: 0,
+    };
+  }
+
+  /** A 30 mm regular post with a 6 mm foam print 5 mm beside it, well inside the head's reach. */
+  function plate(checkCollisions: boolean) {
+    const printer = new Printer();
+    printer.checkCollisions = checkCollisions;
+    const setPlateSlice = vi.fn();
+    const visualizer = {
+      printer, scene: new THREE.Scene(), config: {},
+      everydayModelList: [box(1, 'regular', 'post', 100, [10, 10, 30]), box(2, 'foam', 'pad', 115, [10, 10, 6])],
+      invalidatePlateSlice: vi.fn(), setPlateSlice,
+    } as unknown as Visualizer;
+    return { visualizer, setPlateSlice };
+  }
+
+  const summaryOf = (setPlateSlice: ReturnType<typeof vi.fn>) => (setPlateSlice.mock.calls[0][0] as PlateSlice).summary;
+
+  it('checks the sliced plate when Check Collisions is on, and says what the head would hit', async () => {
+    const { visualizer, setPlateSlice } = plate(true);
+    await slicePlate(visualizer);
+
+    // The regular post is finished before the foam starts at its foot.
+    const { headCollisions } = summaryOf(setPlateSlice);
+    expect(headCollisions!.moves).toBeGreaterThan(0);
+    expect(headCollisions!.depth).toBeGreaterThan(20);
+    expect(headCollisions!.collisions.every(c => c.obstacle.objectId === 1)).toBe(true);
+    expect(notify).toHaveBeenCalledWith(
+      expect.stringMatching(/^Collision detected: .*“pad” prints, the print head would hit “post”, which is already printed.* Move the objects apart, or press Arrange\.$/),
+      'error',
+    );
+    // The check of the toolpath stands in for the comparison of the outlines.
+    expect(notify).not.toHaveBeenCalledWith(expect.stringMatching(/would reach/), expect.anything());
+  });
+
+  it('only compares the outlines when Check Collisions is off', async () => {
+    const { visualizer, setPlateSlice } = plate(false);
+    await slicePlate(visualizer);
+
+    expect(summaryOf(setPlateSlice).headCollisions).toBeUndefined();
+    expect(notify).not.toHaveBeenCalledWith(expect.stringMatching(/^Collision detected/), expect.anything());
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/the print head would reach “post”/), 'warning');
+  });
+
+  it('reports a clear plate as clear', async () => {
+    const { visualizer, setPlateSlice } = plate(true);
+    // The foam print alone: its head is always above what it has printed.
+    (visualizer as { everydayModelList: EverydayModel[] }).everydayModelList.shift();
+    await slicePlate(visualizer);
+
+    expect(summaryOf(setPlateSlice).headCollisions).toEqual({ collisions: [], moves: 0, depth: 0 });
+    expect(notify).not.toHaveBeenCalledWith(expect.anything(), 'error');
+  });
+
+  it('crosses to the boundaries and the foam above the regular parts printed before them', async () => {
+    const printer = new Printer();
+    printer.checkCollisions = true;
+    printer.generateBoundary = true;
+    const setPlateSlice = vi.fn();
+    // A 30 mm regular post between two foam pads, far enough from both for the head to clear it
+    // while they print: only a move across the plate can hit it.
+    const visualizer = {
+      printer, scene: new THREE.Scene(), config: {},
+      everydayModelList: [
+        box(1, 'foam', 'left pad', 100, [10, 10, 6]),
+        box(2, 'regular', 'post', 160, [10, 10, 30]),
+        box(3, 'foam', 'right pad', 220, [10, 10, 6]),
+      ],
+      invalidatePlateSlice: vi.fn(), setPlateSlice,
+    } as unknown as Visualizer;
+    await slicePlate(visualizer);
+
+    expect(summaryOf(setPlateSlice).headCollisions).toEqual({ collisions: [], moves: 0, depth: 0 });
   });
 });
 

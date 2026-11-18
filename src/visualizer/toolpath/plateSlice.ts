@@ -12,6 +12,7 @@ import type { RegularSlicerUsed } from './prusaSlicer';
 import { getExtruderUsage } from './buildGcode';
 import { SETTING_SPECS } from '../gui/paramSpecs';
 import { estimateGcode, type PrintEstimate } from './printEstimate';
+import type { HeadCollisionReport } from './printCollision';
 
 /** What a slice holds for one object. */
 export interface SlicedObject {
@@ -35,6 +36,11 @@ export interface PlateSummary {
     estimate: PrintEstimate;
     /** The weight (g) of the filament each tool uses, by tool number. */
     filamentGrams: number[];
+    /**
+     * Where the print head would run into parts printed earlier in the file (see
+     * printCollision.ts). Undefined when the plate was sliced with "Check Collisions" off.
+     */
+    headCollisions?: HeadCollisionReport;
 }
 
 /** What {@link summarizePlate} needs besides the toolpath and the G-code. */
@@ -47,6 +53,8 @@ export interface SummaryOptions {
     filamentDiameter: number;
     /** Each extruder's filament density (g/cm³), for the filament weight. */
     densities: number[];
+    /** What the head collision check found, if it was run. */
+    headCollisions?: HeadCollisionReport;
 }
 
 /** A sliced plate, ready to be exported. */
@@ -112,6 +120,8 @@ export function summarizePlate(toolpath: PathPoint[], gcode: string, options: Su
         bytes: new TextEncoder().encode(gcode).length,
         estimate,
         filamentGrams,
+        // Left out rather than undefined when the check was off, so the summary reads the same.
+        ...(options.headCollisions ? { headCollisions: options.headCollisions } : {}),
     };
 }
 

@@ -98,11 +98,19 @@ export function plateSummaryLines(slice: PlateSlice): string[] {
     ? ', regular parts with PrusaSlicer'
     : summary.regularSlicer === 'builtin' ? ', regular parts with the built-in slicer' : '';
   const tools = summary.tools.length ? summary.tools.map(tool => `T${tool}`).join(', ') : 'none';
-  return [
+  const lines = [
     `Sliced ${plural(summary.objects.size, 'object')}${slicer}`,
     describeEstimate(summary.estimate, summary.filamentGrams),
     `Tools ${tools} · ${summary.height.toFixed(1)} mm tall · ${formatBytes(summary.bytes)}`,
   ];
+  // Only when the plate was sliced with "Check Collisions" on.
+  const collisions = summary.headCollisions;
+  if (collisions) {
+    lines.push(collisions.moves
+      ? `Print head collides: ${plural(collisions.moves, 'move')}, up to ${collisions.depth.toFixed(2)} mm too low`
+      : 'No print head collisions found');
+  }
+  return lines;
 }
 
 /**
